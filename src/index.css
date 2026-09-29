@@ -1,0 +1,77 @@
+:root {
+  --text: #1d2330;
+  --muted: #6b7385;
+  --panel: #ffffff;
+  --input: #f6f7fa;
+  --border: #d5d9e2;
+  --accent: #7b5bd6;
+  --select: #14b8a6; /* the selection (nodes, groups, connections) */
+  --grid: #e3e6ec;
+  --axis: #6b7385;
+  --line: #7b5bd6;
+  --dip: #d9534f;
+  --err: #a12a26; --err-bg: #fbe6e5;
+  --warn: #8a5a00; --warn-bg: #fff3d6;
+  --ok: #1e6b47; --ok-bg: #e2f5ec;
+  --run: #2e8b57; --run-hover: #267349; --stop: #c0392b; --stop-hover: #a33024;
+  --best: #9a6a00;
+  --canvas: #f4f5f8;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark theme: forced with data-theme="dark", or from the system unless light is forced. */
+:root[data-theme='dark'] {
+  --text: #e6e9f0;
+  --muted: #a3abbd;
+  --panel: #1f232c;
+  --input: #282d38;
+  --border: #3d4454;
+  --accent: #a590f3;
+  --select: #2dd4bf;
+  --grid: #333948;
+  --axis: #a3abbd;
+  --line: #a590f3;
+  --dip: #f07a75;
+  --best: #f2b701;
+  --err: #ffb3ae; --err-bg: #4a2323;
+  --warn: #ffd98a; --warn-bg: #45381c;
+  --ok: #9ae6c1; --ok-bg: #1d3b2d;
+  --run: #2f9e62; --run-hover: #37b571; --stop: #cf4a3c; --stop-hover: #e0574a;
+  --canvas: #161920;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --text: #e6e9f0;
+    --muted: #a3abbd;
+    --panel: #1f232c;
+    --input: #282d38;
+    --border: #3d4454;
+    --accent: #a590f3;
+  --select: #2dd4bf;
+    --grid: #333948;
+    --axis: #a3abbd;
+    --line: #a590f3;
+    --dip: #f07a75;
+    --best: #f2b701;
+    --err: #ffb3ae; --err-bg: #4a2323;
+    --warn: #ffd98a; --warn-bg: #45381c;
+    --ok: #9ae6c1; --ok-bg: #1d3b2d;
+    --run: #2f9e62; --run-hover: #37b571; --stop: #cf4a3c; --stop-hover: #e0574a;
+    --canvas: #161920;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='light'] { color-scheme: light; }
+.react-flow { --xy-background-color: var(--canvas); --xy-minimap-background-color: var(--panel);
+  --xy-controls-button-background-color: var(--input); --xy-controls-button-color: var(--text);
+  --xy-controls-button-border-color: var(--border); --xy-controls-button-background-color-hover: var(--border);
+  --xy-node-color: var(--text); --xy-edge-label-color: var(--text); }
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+/* the page itself never scrolls (the canvas pans and zooms, the toolbar stays on top) */
+html, body { overflow: hidden; }
+body { background: var(--input); color: var(--text); }
