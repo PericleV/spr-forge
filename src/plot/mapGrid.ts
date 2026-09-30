@@ -80,3 +80,33 @@ export function capValues(values: Float64Array, cap: number | undefined, hide: b
   if (cap === undefined || !Number.isFinite(cap)) return values;
   return values.map((v) => (v > cap ? (hide ? NaN : cap) : v));
 }
+
+// A map from points (x, y, z) in any order: the distinct x and y values as the grid when they form one (a sweep over
+// two parameters), holes left empty; scattered points are averaged into 120 × 120 cells.
+export function gridFromPoints(xs: ArrayLike<number>, ys: ArrayLike<number>, zs: ArrayLike<number>): { x: number[]; y: number[]; values: Float64Array } | null {
+  const key = (v: number) => +v.toPrecision(10);
+  const ok: number[] = [];
+  for (let i = 0; i < zs.length; i++) if (Number.isFinite(xs[i]) && Number.isFinite(ys[i]) && Number.isFinite(zs[i])) ok.push(i);
+  if (!ok.length) return null;
+  const ux = [...new Set(ok.map((i) => key(xs[i])))].sort((a, b) => a - b);
+  const uy = [...new Set(ok.map((i) => key(ys[i])))].sort((a, b) => a - b);
+  if (ux.length * uy.length <= 4 * ok.length && ux.length <= 2000 && uy.length <= 2000) {
+    const ix = new Map(ux.map((v, i) => [v, i]));
+    const iy = new Map(uy.map((v, i) => [v, i]));
+    const values = new Float64Array(ux.length * uy.length).fill(NaN);
+    for (const i of ok) values[iy.get(key(ys[i]))! * ux.length + ix.get(key(xs[i]))!] = zs[i];
+    return { x: ux, y: uy, values };
+  }
+  const N = 120;
+  const [x0, x1, y0, y1] = [ux[0], ux[ux.length - 1], uy[0], uy[uy.length - 1]];
+  const sum = new Float64Array(N * N);
+  const cnt = new Float64Array(N * N);
+  for (const i of ok) {
+    const a = Math.min(N - 1, Math.floor(((xs[i] - x0) / (x1 - x0 || 1)) * N));
+    const b = Math.min(N - 1, Math.floor(((ys[i] - y0) / (y1 - y0 || 1)) * N));
+    sum[b * N + a] += zs[i];
+    cnt[b * N + a]++;
+  }
+  const at = (lo: number, hi: number) => Array.from({ length: N }, (_, k) => lo + ((k + 0.5) * (hi - lo)) / N);
+  return { x: at(x0, x1), y: at(y0, y1), values: sum.map((s, k) => (cnt[k] ? s / cnt[k] : NaN)) };
+}

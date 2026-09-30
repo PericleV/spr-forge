@@ -3,6 +3,7 @@ import { FORMULA_TEXT, refractiveIndex, validRange, type EmaMethod, type Materia
 import { parseTable, type TableColumns, type TableUnit } from '../physics/importers.ts';
 import { LinePlot } from '../plot/LinePlot.tsx';
 import { useLibrary } from './context.ts';
+import { groupOf, MATERIAL_GROUPS, USER_GROUP } from '../physics/library.ts';
 
 const COLORS = ['#e07b39', '#59a14f', '#4e79a7', '#b07aa1', '#edc948', '#76b7b2', '#ff9da7', '#9c755f'];
 const TYPES: [MaterialModel['type'], string][] = [
@@ -39,6 +40,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
   const { list, setUser } = useLibrary();
   const [sel, setSel] = useState<string>(list[0]?.id ?? '');
   const [msg, setMsg] = useState('');
+  const [query, setQuery] = useState('');
   const file = useRef<HTMLInputElement>(null);
   const current = list.find((m) => m.id === sel);
 
@@ -80,14 +82,29 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
       </div>
       {msg && <div className="hint">{msg}</div>}
 
+      <input className="lib-search" value={query} placeholder="Search: name, formula or source…" onChange={(e) => setQuery(e.target.value)} />
       <div className="lib-list">
-        {list.map((m) => (
-          <button key={m.id} className={`lib-item ${m.id === sel ? 'active' : ''}`} onClick={() => setSel(m.id)}>
-            <i className="swatch" style={{ background: m.color }} />
-            <span>{m.name}</span>
-            <span className="muted">{m.builtin ? 'built-in' : m.model.type}{m.monolayer ? ' · 2D' : ''}</span>
-          </button>
-        ))}
+        {[...MATERIAL_GROUPS, USER_GROUP].map((g) => {
+          const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+          const ms = list.filter((m) => groupOf(m) === g && words.every((w) => `${m.name} ${m.id} ${m.source ?? ''}`.toLowerCase().includes(w)));
+          if (!ms.length) return null;
+          // a search opens every section with a match; otherwise the section of the selected material
+          const open = words.length > 0 || ms.some((m) => m.id === sel) || (g === USER_GROUP && !query);
+          return (
+            <details key={`${g}:${open}`} open={open} className="lib-group">
+              <summary>
+                {g} <span className="muted">({ms.length})</span>
+              </summary>
+              {ms.map((m) => (
+                <button key={m.id} className={`lib-item ${m.id === sel ? 'active' : ''}`} onClick={() => setSel(m.id)}>
+                  <i className="swatch" style={{ background: m.color }} />
+                  <span>{m.name}</span>
+                  <span className="muted">{m.builtin ? 'built-in' : m.model.type}{m.monolayer ? ' · 2D' : ''}</span>
+                </button>
+              ))}
+            </details>
+          );
+        })}
       </div>
 
       {current && (

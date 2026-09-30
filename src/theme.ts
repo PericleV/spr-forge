@@ -23,10 +23,10 @@ export function applyTheme(t: Theme) {
 }
 
 // Canvas: snap nodes to a grid (step in px), arrows on the connections, curved or right-angle connections.
-export type CanvasPrefs = { snap: boolean; step: number; arrows: boolean; shape: 'curved' | 'orthogonal' };
+export type CanvasPrefs = { snap: boolean; step: number; arrows: boolean; shape: 'curved' | 'orthogonal'; minimap: boolean };
 export const STEPS = [10, 20, 40];
 const PREFS = 'spr-flow:canvas';
-const DEFAULT_PREFS: CanvasPrefs = { snap: false, step: 20, arrows: false, shape: 'curved' };
+const DEFAULT_PREFS: CanvasPrefs = { snap: false, step: 20, arrows: false, shape: 'curved', minimap: true };
 
 export function loadPrefs(): CanvasPrefs {
   try {

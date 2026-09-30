@@ -41,10 +41,37 @@ const pages: [id: string, name: string, color: string, page: string, extra?: Par
   ['GeO2', 'GeO₂', '#ece4cf', 'main/GeO2/nk/Fleming.yml'],
   ['K-FIR97UV', 'K-FIR97UV (Sumita)', '#e3eef5', 'specs/sumita/optical/K-FIR97UV.yml'],
   ['FSL3', 'FSL3 (Ohara)', '#e6f0f5', 'specs/ohara/optical/FSL3.yml'],
+  // uniaxial crystals and nematic liquid crystals: the ordinary (o) and extraordinary (e) indices, a pair for the two
+  // ports of the Anisotropic material node
+  ['E7-o', 'E7 liquid crystal (n_o)', '#d9b3e6', 'other/liquid crystals/E7/nk/Li-o.yml'],
+  ['E7-e', 'E7 liquid crystal (n_e)', '#a45cc0', 'other/liquid crystals/E7/nk/Li-e.yml'],
+  ['5CB-o', '5CB liquid crystal (n_o)', '#e0c3ea', 'other/liquid crystals/5CB/nk/Li-o.yml'],
+  ['5CB-e', '5CB liquid crystal (n_e)', '#b27ccc', 'other/liquid crystals/5CB/nk/Li-e.yml'],
+  ['Quartz-o', 'Quartz, crystalline SiO₂ (n_o)', '#d6e6f0', 'main/SiO2/nk/Ghosh-o.yml'],
+  ['Quartz-e', 'Quartz, crystalline SiO₂ (n_e)', '#b4cfe0', 'main/SiO2/nk/Ghosh-e.yml'],
+  ['Calcite-o', 'Calcite, CaCO₃ (n_o)', '#efe6d2', 'main/CaCO3/nk/Ghosh-o.yml'],
+  ['Calcite-e', 'Calcite, CaCO₃ (n_e)', '#dccfae', 'main/CaCO3/nk/Ghosh-e.yml'],
+  ['Sapphire-o', 'Sapphire, Al₂O₃ (n_o)', '#e3dfd3', 'main/Al2O3/nk/Malitson-o.yml'],
+  ['Sapphire-e', 'Sapphire, Al₂O₃ (n_e)', '#cdc6b3', 'main/Al2O3/nk/Malitson-e.yml'],
+  ['MgF2-e', 'MgF₂ (n_e)', '#b6d9c2', 'main/MgF2/nk/Dodge-e.yml'],
+  ['LiNbO3-o', 'Lithium niobate, LiNbO₃ (n_o)', '#e8d6c9', 'main/LiNbO3/nk/Zelmon-o.yml'],
+  ['LiNbO3-e', 'Lithium niobate, LiNbO₃ (n_e)', '#d4b8a3', 'main/LiNbO3/nk/Zelmon-e.yml'],
+  ['Rutile-o', 'Rutile, crystalline TiO₂ (n_o)', '#f0ecde', 'main/TiO2/nk/Devore-o.yml'],
+  ['Rutile-e', 'Rutile, crystalline TiO₂ (n_e)', '#ddd6bd', 'main/TiO2/nk/Devore-e.yml'],
 ];
+// sections of the library (MATERIAL_GROUPS in src/physics/library.ts)
+const GROUP: Record<string, string> = {
+  Air: 'Media and glasses', BK7: 'Media and glasses', Water: 'Media and glasses', 'K-FIR97UV': 'Media and glasses', FSL3: 'Media and glasses',
+  SiO2: 'Dielectrics', TiO2: 'Dielectrics', Al2O3: 'Dielectrics', MgF2: 'Dielectrics', Ta2O5: 'Dielectrics', Nb2O5: 'Dielectrics', HfO2: 'Dielectrics',
+  ZnS: 'Dielectrics', ZnSe: 'Dielectrics', Si3N4: 'Dielectrics', CaF2: 'Dielectrics', GeO2: 'Dielectrics',
+  Ag: 'Metals', Au: 'Metals', Cr: 'Metals', Al: 'Metals', Cu: 'Metals',
+  Si: 'Semiconductors', Ge: 'Semiconductors',
+  Graphene: '2D materials', hBN: '2D materials', MoS2: '2D materials', WS2: '2D materials',
+};
+const groupOf = (id: string) => GROUP[id] ?? (/-(o|e)$/.test(id) ? 'Anisotropic (n_o, n_e)' : 'Dielectrics');
 
 const out: MaterialDef[] = [
-  { id: 'Air', name: 'Air', color: '#f4f6fa', model: { type: 'constant', n: 1, k: 0 }, source: 'n = 1', builtin: true },
+  { id: 'Air', name: 'Air', color: '#f4f6fa', model: { type: 'constant', n: 1, k: 0 }, source: 'n = 1', builtin: true, group: groupOf('Air') },
 ];
 // Ramer–Douglas–Peucker on (λ, n, k): the indices to keep.
 function thin(l: number[], n: number[], k: number[], tol: number): number[] {
@@ -85,7 +112,7 @@ for (const [id, name, color, page, extra] of pages) {
     range = [L[0] * 1000, L[L.length - 1] * 1000];
     console.log(`  ${id}: ${t.lambda.length} → ${idx.length} points (${range.map((x) => x.toFixed(0)).join('–')} nm)`);
   }
-  out.push({ id, name, color, model, range, source: `refractiveindex.info ${page}${r.source ? ` — ${r.source}` : ''}`, builtin: true, ...rest });
+  out.push({ id, name, color, model, range, source: `refractiveindex.info ${page}${r.source ? ` — ${r.source}` : ''}`, builtin: true, group: groupOf(id), ...rest });
 }
 writeFileSync('src/physics/builtins.json', JSON.stringify(out) + '\n');
 console.log(out.map((m) => `${m.id}: ${m.model.type} ${m.range?.map((x) => x.toFixed(0)).join('–') ?? ''}`).join('\n'));

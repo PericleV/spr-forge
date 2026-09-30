@@ -40,6 +40,7 @@ import {
   FORMULA_DEFAULTS,
   INFO_DEFAULTS,
   REVERSE_DEFAULTS,
+  ROUGH_DEFAULTS,
   TOLERANCE_DEFAULTS,
   GRATING_DEFAULTS,
   RCWA_DEFAULTS,
@@ -67,7 +68,7 @@ import { FlowEdge } from './FlowEdge.tsx';
 import { withShell } from './nodes/NodeShell.tsx';
 import { FrameNodeView } from './nodes/FrameNode.tsx';
 import { applyTheme, loadPrefs, loadTheme, savePrefs, STEPS, type CanvasPrefs, type Theme } from './theme.ts';
-import { autosave, decodeProject, loadAutosave, parseProject, stringifyProject, toProject, type Project } from './project.ts';
+import { autosave, decodeProject, keepLastSession, parseProject, stringifyProject, toProject, type Project } from './project.ts';
 import { ExtremumNodeView, FwhmNodeView, SensitivityNodeView } from './nodes/AnalysisNodes.tsx';
 import { CompareNodeView } from './nodes/CompareNode.tsx';
 import { FieldNodeView } from './nodes/FieldNode.tsx';
@@ -76,10 +77,12 @@ import { ObjectiveNodeView, VariableNodeView, ZonesNodeView } from './nodes/Obje
 import { ImportNodeView, MatchNodeView, TargetNodeView } from './nodes/TargetNodes.tsx';
 import { FormulaNodeView, InfoNodeView } from './nodes/NoteNodes.tsx';
 import { ReverseNodeView } from './nodes/StackNodes.tsx';
+import { RoughNodeView } from './nodes/RoughNode.tsx';
 import { FilterNodeView } from './nodes/FilterNode.tsx';
 import { ToleranceNodeView } from './nodes/ToleranceNode.tsx';
 import { DrawGratingNodeView, GratingNodeView, RcwaNodeView } from './nodes/RcwaNodes.tsx';
 import { RcwaFieldNodeView } from './nodes/RcwaFieldNode.tsx';
+import { CustomNodeView, ExtractNodeView, MergeNodeView } from './nodes/DataNodes.tsx';
 import { FILTER_DEFAULTS } from './engine/filters.ts';
 import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeTitle } from './nodeColors.ts';
 import { OptimizerNodeView } from './nodes/OptimizerNode.tsx';
@@ -90,6 +93,7 @@ import { AnisoNodeView, LayerNodeView, MaterialNodeView, MaterialSweepNodeView }
 import { PlotNodeView } from './nodes/PlotNode.tsx';
 import { NotesNodeView } from './nodes/NotesNode.tsx';
 import { Welcome } from './Welcome.tsx';
+import { FindNode } from './FindNode.tsx';
 import { welcomeSeen } from './welcomeState.ts';
 import { CombineNodeView, DbrNodeView } from './nodes/StackNodes.tsx';
 import type { AppNode } from './types.ts';
@@ -123,12 +127,16 @@ const baseNodeTypes = {
   formula: FormulaNodeView,
   info: InfoNodeView,
   reverse: ReverseNodeView,
+  rough: RoughNodeView,
   filter: FilterNodeView,
   tolerance: ToleranceNodeView,
   grating: GratingNodeView,
   rcwa: RcwaNodeView,
   drawgrating: DrawGratingNodeView,
   rcwafield: RcwaFieldNodeView,
+  extract: ExtractNodeView,
+  merge: MergeNodeView,
+  custom: CustomNodeView,
 };
 // every node inside the common frame (title bar, label, collapse, error mark); group frames draw themselves
 const nodeTypes: NodeTypes = {
@@ -153,6 +161,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'aniso', label: 'Anisotropic material', data: ANISO_DEFAULTS },
       { type: 'layer', label: 'Layer', data: { label: '', thickness: 100, layers2D: 1 } },
       { type: 'grating', label: 'Grating layer', data: GRATING_DEFAULTS },
+      { type: 'rough', label: 'Roughness', data: ROUGH_DEFAULTS },
       { type: 'combine', label: 'Combine stack', data: { name: '', count: 3 } },
       { type: 'reverse', label: 'Reverse stack', data: REVERSE_DEFAULTS },
       {
@@ -197,6 +206,9 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'field', label: 'Field profile', data: FIELD_DEFAULTS },
       { type: 'tolerance', label: 'Tolerance (Monte Carlo)', data: TOLERANCE_DEFAULTS },
       { type: 'rcwafield', label: 'RCWA field map', data: RCWAFIELD_DEFAULTS },
+      { type: 'extract', label: 'Extract data', data: { name: '', fields: [], fixed: {} } },
+      { type: 'merge', label: 'Merge data', data: { name: '', labels: {} } },
+      { type: 'custom', label: 'Custom data', data: { name: '', rows: [{ name: '', expr: '' }], aliases: {} } },
     ],
   },
   {
@@ -230,11 +242,14 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
   },
 ];
 
-// The example projects are a separate chunk, loaded after the first render (or when there is no autosaved project).
-type ExampleList = { group: string; name: string; make: () => Project }[];
+// The example projects are a separate chunk, loaded after the first render.
+type ExampleList = { group: string; name: string; desc: string; make: () => Project }[];
 const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as ExampleList);
-const autosaved = loadAutosave();
-const initial: Project = autosaved ?? { app: 'spr-flow', version: 3, nodes: [], edges: [], materials: [] };
+// The page starts with Welcome, or (Welcome turned off) an empty project; the project open when the page was left is the
+// last session (Welcome: “Continue the last project”, Projects: “Last session”).
+const lastSession = keepLastSession();
+const EMPTY: Project = { app: 'spr-flow', version: 3, nodes: [], edges: [], materials: [] };
+const initial: Project = EMPTY;
 
 function Flow() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initial.nodes);
@@ -254,6 +269,18 @@ function Flow() {
   const togglePanel = (p: 'library' | 'projects' | 'help') => setPanel((cur) => (cur === p ? null : p));
   const { screenToFlowPosition, fitBounds, getNodesBounds, getNodes, getNode, setViewport, deleteElements, updateNodeData } = useReactFlow<AppNode>();
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Find a node (Ctrl+F or the ⌕ button of the canvas controls)
+  const [finding, setFinding] = useState(false);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setFinding(true);
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [prefs, setPrefs] = useState<CanvasPrefs>(loadPrefs);
   const setPref = (patch: Partial<CanvasPrefs>) => setPrefs((p) => savePrefs({ ...p, ...patch }));
@@ -318,30 +345,31 @@ function Flow() {
     };
   }, []);
 
-  // Start: the example list (a separate chunk); a shared link (#p=…), else — without an autosaved project — the SPR example.
+  // Start: the example list (a separate chunk); a shared link (#p=…) opens that project (without Welcome).
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return; // (StrictMode runs effects twice in development)
     started.current = true;
     const shared = location.hash.startsWith('#p=') ? location.hash.slice(3) : '';
     if (shared) window.history.replaceState(null, '', location.pathname + location.search);
-    loadExamples().then((list) => {
-      setExamples(list);
-      if (!autosaved && !shared) load(list[0].make(), list[0].name);
-    });
+    loadExamples().then(setExamples);
     if (shared)
       decodeProject(shared).then((p) => {
         if (typeof p === 'string') alert(p);
-        else if (!autosaved || confirm(`Open the shared project “${p.name || 'untitled'}”? It replaces the project open in this browser.`)) load(p, p.name ?? 'Shared project');
+        else {
+          setWelcomeState(null);
+          load(p, p.name ?? 'Shared project');
+        }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const continueLast = lastSession ? () => load(lastSession.project, lastSession.project.name) : undefined;
 
 
   // Empty project: no nodes, no connections, no custom materials.
   const newProject = () => {
     const text = 'Start a new, empty project?\n\nAll nodes, connections and your custom materials will be removed. Use Save first to keep the current project.';
-    if (confirm(text)) load({ app: 'spr-flow', version: 3, nodes: [], edges: [], materials: [] });
+    if (confirm(text)) load(EMPTY);
   };
 
   const isValidConnection: IsValidConnection = useCallback(
@@ -665,8 +693,14 @@ function Flow() {
                 <ControlButton className={prefs.arrows ? 'on' : ''} onClick={() => setPref({ arrows: !prefs.arrows })} title={prefs.arrows ? 'Arrows on the connections (direction of the data): on' : 'Arrows on the connections (direction of the data): off'} aria-label="Arrows">
                   →
                 </ControlButton>
+                <ControlButton onClick={() => setFinding(true)} title="Find a node (Ctrl+F)" aria-label="Find a node">
+                  ⌕
+                </ControlButton>
+                <ControlButton className={prefs.minimap ? 'on' : ''} onClick={() => setPref({ minimap: !prefs.minimap })} title={prefs.minimap ? 'Minimap: on — click to hide it' : 'Minimap: off — click to show it'} aria-label="Minimap">
+                  ▣
+                </ControlButton>
               </Controls>
-              <MiniMap pannable zoomable nodeColor={miniColor} nodeStrokeColor={miniStroke} nodeBorderRadius={3} />
+              {prefs.minimap && <MiniMap pannable zoomable nodeColor={miniColor} nodeStrokeColor={miniStroke} nodeBorderRadius={3} />}
             </ReactFlow>
             <Suspense fallback={null}>
               {panel === 'library' && <LibraryPanel onClose={() => setPanel(null)} />}
@@ -675,6 +709,7 @@ function Flow() {
                   onClose={() => setPanel(null)}
                   current={() => toProject(nodes, edges, userMaterials, projectName)}
                   name={projectName}
+                  last={lastSession}
                   onOpen={(p, name) => {
                     load(p, name);
                     setPanel(null);
@@ -683,21 +718,23 @@ function Flow() {
               )}
               {panel === 'help' && <HelpPanel onClose={() => setPanel(null)} examples={examples} onWelcome={() => setWelcome(true)} />}
             </Suspense>
+            {finding && <FindNode onClose={() => setFinding(false)} />}
             {welcome && (
               <Welcome
                 onClose={() => setWelcomeState(null)}
-                onExamples={() => {
-                  // the Examples menu opened (or focused where the browser cannot open it)
-                  const sel = document.querySelector<HTMLSelectElement>('.examples-menu');
-                  sel?.focus();
-                  try {
-                    sel?.showPicker();
-                  } catch {
-                    // not supported: focused
-                  }
+                examples={examples}
+                // at start the page holds an empty project (nothing to confirm); from Help it replaces the current one
+                onExample={(i) => {
+                  const ex = examples[i];
+                  if (ex && (welcome === 'start' || !nodes.length || confirm(`Replace the current project with the “${ex.name}” example?`))) load(ex.make(), ex.name);
                 }}
-                onEmpty={() => (welcome === 'start' ? load({ app: 'spr-flow', version: 3, nodes: [], edges: [], materials: [] }) : newProject())}
+                onEmpty={() => (welcome === 'start' ? load(EMPTY) : newProject())}
                 onHelp={() => setPanel('help')}
+                last={
+                  lastSession && continueLast
+                    ? { name: lastSession.project.name ?? '', saved: lastSession.saved, open: () => (welcome === 'start' || confirm('Open the last project? It replaces the current one.')) && continueLast() }
+                    : undefined
+                }
               />
             )}
             {menu && (

@@ -34,6 +34,7 @@ export function sourcePort(node: AppNode, handle?: string | null): PortType | nu
       return 'material';
     case 'layer':
     case 'grating':
+    case 'rough':
       return 'layer';
     case 'combine':
     case 'dbr':
@@ -75,6 +76,9 @@ export function sourcePort(node: AppNode, handle?: string | null): PortType | nu
     case 'sensitivity':
     case 'fit':
     case 'field':
+    case 'extract':
+    case 'merge':
+    case 'custom':
       return 'data';
     case 'compare':
       return null;
@@ -105,6 +109,8 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return /^(ridge|groove|m2)$/.test(handle) ? ['material'] : /^(d|period|fill|fillTop)$/.test(handle) ? ['sweep-number'] : [];
     case 'drawgrating':
       return handle === 'in' ? ['layer', 'stack'] : [];
+    case 'rough':
+      return handle === 'in' ? ['layer'] : /^(size|cl|seed)$/.test(handle) ? ['sweep-number'] : [];
     case 'rcwafield':
       return handle === 'in' ? ['data'] : [];
     case 'rcwa':
@@ -121,6 +127,9 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'sensitivity':
     case 'fit':
     case 'field':
+    case 'extract':
+    case 'merge':
+    case 'custom':
       return handle === 'in' ? ['data'] : [];
     case 'draw':
     case 'reverse':
@@ -149,7 +158,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
 
 // Target handles that accept any number of incoming edges.
 export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) =>
-  ((node?.type === 'compare' || node?.type === 'matsweep' || node?.type === 'formula') && handle === 'in') || (node?.type === 'optimizer' && handle === 'obj') || (node?.type === 'filter' && handle === 'target') || (node?.type === 'tolerance' && handle === 'criteria');
+  ((node?.type === 'compare' || node?.type === 'matsweep' || node?.type === 'formula' || node?.type === 'merge' || node?.type === 'custom') && handle === 'in') || (node?.type === 'optimizer' && handle === 'obj') || (node?.type === 'filter' && handle === 'target') || (node?.type === 'tolerance' && handle === 'criteria');
 
 export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: string | null, sourceHandle?: string | null) {
   if (!source || !target || source.id === target.id) return false;

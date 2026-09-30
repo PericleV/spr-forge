@@ -70,6 +70,23 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
     info?.mapY && data.layers
       ? info.boundaries.map((z, i) => ({ key: `t${i}`, x: [z, z], y: [info.mapY!.values[0], info.mapY!.values.at(-1)!], color: '#ffffff' }))
       : [];
+  // penetration depth: the band from the edge to where |E| is 1/e of its edge value (profile), its line across the map
+  const dp = data.depth;
+  const dep = dp?.on ? info?.depth : undefined;
+  const DEPTH_COLOR = '#d6336c';
+  if (dp?.on && dp.overlay && dep && Number.isFinite(dep.delta)) {
+    const zEnd = dep.edge + dep.dir * dep.delta;
+    bandOverlays.push({ kind: 'band', key: 'depth', lo: Math.min(dep.edge, zEnd), hi: Math.max(dep.edge, zEnd), color: DEPTH_COLOR, label: `δ = ${fmt(dep.delta, 1)} nm` });
+    bandOverlays.push({ kind: 'vline', key: 'depth-end', x: zEnd, color: DEPTH_COLOR });
+  }
+  if (dp?.on && dp.overlay && info?.depthMap) {
+    const m = info.depthMap;
+    const k = m.ys.map((_, j) => j).filter((j) => Number.isFinite(m.at[j]));
+    if (k.length) traces.push({ key: 'depth', x: k.map((j) => m.at[j]), y: k.map((j) => m.ys[j]), color: DEPTH_COLOR });
+  }
+  const setDepth = (patch: Partial<NonNullable<FieldData['depth']>>) => set({ depth: { on: false, region: 'exit', edge: 'auto', overlay: true, ...dp, ...patch } });
+  const dRegion = dp?.region ?? 'exit';
+  const finiteRegion = dRegion.startsWith('layer:');
 
   const cut = info?.rcwa; // a profile cut from an RCWA field map
   const csv = () => {
@@ -77,7 +94,7 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
     if (out?.type !== 'data' || !out.dataset) return;
     const f = out.dataset.fields;
     const z = out.dataset.axes[0].values;
-    if (cut) exportCsv(['z [nm]', q.label], z.map((v, i) => [v, f.f[i]]), `field-profile_x${+cut.x.toFixed(1)}nm`);
+    if (cut) exportCsv([`${cut.along} [nm]`, q.label], z.map((v, i) => [v, f.f[i]]), cut.along === 'x' ? `field-profile_z${+cut.zAt.toFixed(1)}nm` : `field-profile_x${+cut.x.toFixed(1)}nm`);
     else exportCsv(['z [nm]', '|E|²/|E0|²', '|H|²/|H0|²', 'absorption [1/nm]'], z.map((v, i) => [v, f.E2[i], f.H2[i], f.abs[i]]), 'field-profile');
   };
 
@@ -93,22 +110,32 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
 
       {cut && (
         <>
-          <div className="hint">Profile along z cut from the RCWA field map (the quantity is chosen there).</div>
-          <label className="slider">
-            <span>x [nm]</span>
-            <input
-              className="nodrag nowheel"
-              type="range"
-              min={0}
-              max={cut.xs.length - 1}
-              step={1}
-              value={cut.index}
-              onChange={(e) => setAt('x', Number(e.target.value))}
-            />
-            <span className="val">
-              {cut.x.toFixed(1)} ({(((cut.x / cut.period) % 1)).toFixed(3)} Λ)
-            </span>
-          </label>
+          <div className="row wrap">
+            <label className="radio" title="A cross-section of the RCWA field map (the quantity is chosen there): through the depth at one x, or across the periods at one depth z">
+              cut
+              <select className="nodrag" value={cut.along} onChange={(e) => set({ cut: e.target.value as 'z' | 'x' })}>
+                <option value="z">along z (at x)</option>
+                <option value="x">along x (at z)</option>
+              </select>
+            </label>
+          </div>
+          {cut.along === 'z' ? (
+            <label className="slider">
+              <span>x [nm]</span>
+              <input className="nodrag nowheel" type="range" min={0} max={cut.xs.length - 1} step={1} value={cut.index} onChange={(e) => setAt('x', Number(e.target.value))} />
+              <span className="val">
+                {cut.x.toFixed(1)} ({((cut.x / cut.period) % 1).toFixed(3)} Λ)
+              </span>
+            </label>
+          ) : (
+            <label className="slider">
+              <span>z [nm]</span>
+              <input className="nodrag nowheel" type="range" min={0} max={cut.zs.length - 1} step={1} value={cut.zIndex} onChange={(e) => setAt('z', Number(e.target.value))} />
+              <span className="val" title={cut.where}>
+                {cut.zAt.toFixed(1)} · {cut.where}
+              </span>
+            </label>
+          )}
         </>
       )}
 
@@ -183,10 +210,45 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
         </label>
       </div>
 
+      {!cut && info && (
+        <div className="row wrap">
+          <label className="radio" title="Where |E| has fallen to 1/e of its value at the edge of a region (as for surface plasmons: 1/Im k_z for an evanescent wave), measured on the profile">
+            <input className="nodrag" type="checkbox" checked={!!dp?.on} onChange={(e) => setDepth({ on: e.target.checked })} />
+            penetration depth
+          </label>
+          {dp?.on && (
+            <>
+              <label className="radio">
+                in
+                <select className="nodrag" value={dRegion} onChange={(e) => setDepth({ region: e.target.value })}>
+                  {info.depthRegions.map((r) => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </label>
+              {finiteRegion && (
+                <label className="radio" title="The edge of the layer it is measured from (auto: where |E| is larger)">
+                  from
+                  <select className="nodrag" value={dp.edge} onChange={(e) => setDepth({ edge: e.target.value as NonNullable<FieldData['depth']>['edge'] })}>
+                    <option value="auto">auto</option>
+                    <option value="top">its top</option>
+                    <option value="bottom">its bottom</option>
+                  </select>
+                </label>
+              )}
+              <label className="radio">
+                <input className="nodrag" type="checkbox" checked={dp.overlay} onChange={(e) => setDepth({ overlay: e.target.checked })} />
+                on the plot
+              </label>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="nodrag nowheel chart" ref={chart}>
         {info?.z && info.y && (data.view === 'profile' || cut) ? (
           <LinePlot
-            xAxis={{ id: 'z', label: 'z', unit: 'nm', values: Array.from(info.z) }}
+            xAxis={{ id: cut?.along ?? 'z', label: cut?.along ?? 'z', unit: 'nm', values: Array.from(info.z) }}
             series={[{ key: 'f', label: q.label, color: NODE_COLORS.field, y: info.y, width: 2 }]}
             yLabel={q.label}
             yUnit={q.unit}
@@ -205,6 +267,24 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
       </div>
 
       {cut && <div className="stack-rows results"><div className="val">{info!.point}</div></div>}
+      {dp?.on && dep && (
+        <div className="stack-rows results">
+          <div className="val">
+            {Number.isFinite(dep.delta)
+              ? `δ = ${fmt(dep.delta, 2)} nm in ${dep.label}, from z = ${fmt(dep.edge, 2)} nm (|E| from ${fmt(dep.e0, 3)} to ${fmt(dep.e0 / Math.E, 3)} of the incident field)`
+              : `No penetration depth in ${dep.label}`}
+            {dep.analytic !== undefined && Number.isFinite(dep.delta) ? ` · 1/Im k_z = ${fmt(dep.analytic, 2)} nm` : ''}
+          </div>
+          {dep.note && <div className="hint">{dep.note}</div>}
+        </div>
+      )}
+      {dp?.on && info?.depthMap && (
+        <div className="stack-rows results">
+          <div className="val">
+            δ in {info.depthRegions.find((r) => r.id === dRegion)?.label}: {fmt(Math.min(...Array.from(info.depthMap.delta).filter(Number.isFinite)), 1)} … {fmt(Math.max(...Array.from(info.depthMap.delta).filter(Number.isFinite)), 1)} nm over the map (output: δ vs {data.mapAxis === 'theta' ? 'θ' : 'λ'})
+          </div>
+        </div>
+      )}
       {info && Number.isFinite(info.R) && (
         <div className="stack-rows results">
           <div className="val">{info.point}</div>
@@ -232,6 +312,12 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
         absorption per layer
         <Port kind="source" id="metrics" port="data" />
       </div>
+      {dp?.on && (
+        <div className="port-row out">
+          penetration depth
+          <Port kind="source" id="depth" port="data" />
+        </div>
+      )}
     </div>
   );
 }

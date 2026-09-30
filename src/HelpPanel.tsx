@@ -66,16 +66,15 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
         <div className="hint">loading…</div>
       )}
       <h4>Validation</h4>
-      <table className="help-table">
-        <tbody>
-          {VALIDATION.map(([k, v]) => (
-            <tr key={k}>
-              <td>{k}</td>
-              <td>{v}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* a list (title, then its text), not a table: the texts are long for the width of the panel */}
+      <dl className="help-validation">
+        {VALIDATION.map(([k, v]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
       <div className="hint">All the checks run with every change of the code (npm run check:tmm).</div>
     </aside>
   );

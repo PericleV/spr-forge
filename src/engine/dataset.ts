@@ -9,6 +9,14 @@ export const TMM_META: FieldMeta[] = [
   { key: 'phiT', label: 'φt — phase of t', short: 'φt', unit: '°', domain: [-180, 180] },
 ];
 
+// Group delay and its dispersion of r and t (from the phase along λ; a computation with at least 3 wavelengths).
+export const GD_META: FieldMeta[] = [
+  { key: 'GDR', label: 'GD of r — group delay in reflection', short: 'GD r', unit: 'fs' },
+  { key: 'GDT', label: 'GD of t — group delay in transmission', short: 'GD t', unit: 'fs' },
+  { key: 'GDDR', label: 'GDD of r — group delay dispersion in reflection', short: 'GDD r', unit: 'fs²' },
+  { key: 'GDDT', label: 'GDD of t — group delay dispersion in transmission', short: 'GDD t', unit: 'fs²' },
+];
+
 export const metaOf = (ds: Dataset, key: string): FieldMeta | undefined => ds.meta.find((m) => m.key === key);
 
 export function strides(axes: Axis[]): number[] {

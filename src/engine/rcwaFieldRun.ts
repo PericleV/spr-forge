@@ -1,7 +1,7 @@
 // RCWA field maps: computed on demand (Run) in a worker. The results are kept here (not in the project file) and read
 // by the graph evaluator; a node shows a result only when its key matches the current inputs.
 import { useSyncExternalStore } from 'react';
-import type { FieldMap, FieldPart, FieldQuantity } from '../physics/rcwaField.ts';
+import type { FieldMap, FieldPart, FieldQuantity, GibbsSmoothing } from '../physics/rcwaField.ts';
 import type { Polarization } from '../physics/tmm.ts';
 import type { TmmSpec } from './types.ts';
 
@@ -20,6 +20,13 @@ export type FieldJob = {
   nz: number;
   zIn: number;
   zOut: number;
+  // a window of the map (nm): x from x0 to x1, depth z from z0 to z1 (0 = top of the first layer); absent = the default grid
+  x0?: number;
+  x1?: number;
+  z0?: number;
+  z1?: number;
+  orders?: number; // N of the map (absent: the Compute RCWA's)
+  sigma?: GibbsSmoothing; // Gibbs smoothing of the Fourier sums in x
 };
 export type FieldMsg = { type: 'progress'; p: number } | { type: 'done'; map: FieldMap; period: number } | { type: 'error'; message: string };
 

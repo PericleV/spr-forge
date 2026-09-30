@@ -77,6 +77,24 @@ export function autosave(p: Project) {
   }
 }
 
+// ---- The last session: the page starts with an empty project (or Welcome), so the project open when the page was
+// left is kept aside at start — from the autosave, only when it has nodes (a reload of an empty page keeps the older one) ----
+const LAST_KEY = 'spr-flow:last-session';
+export type LastSession = { project: Project; saved: number };
+export function keepLastSession(): LastSession | null {
+  const p = loadAutosave();
+  try {
+    if (p && p.nodes.length) localStorage.setItem(LAST_KEY, JSON.stringify({ saved: Date.now(), text: stringifyProject(p) }));
+    const raw = localStorage.getItem(LAST_KEY);
+    if (!raw) return null;
+    const { saved, text } = JSON.parse(raw) as { saved: number; text: string };
+    const q = parseProject(text);
+    return typeof q === 'string' ? null : { project: q, saved };
+  } catch {
+    return p && p.nodes.length ? { project: p, saved: Date.now() } : null;
+  }
+}
+
 // ---- Share links: the project, compressed (deflate), in the URL fragment (#p=…) — nothing is sent to a server ----
 
 const toBase64Url = (bytes: Uint8Array) => {

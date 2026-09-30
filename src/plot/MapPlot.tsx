@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { axisTitle, axisValueText } from '../engine/dataset.ts';
 import type { Axis } from '../engine/types.ts';
-import { VIRIDIS_LUT, VIRIDIS_STOPS } from './colors.ts';
-import type { Trace } from './overlays.ts';
+import { COLOR_MAPS, colorLut } from './colors.ts';
+import type { MapZone, Trace } from './overlays.ts';
+import { zoneAt } from '../engine/metrics.ts';
 import type { MapView } from '../types.ts';
 import { bilinear, capValues, fracIndex, gaussianBlur, logTicks } from './mapGrid.ts';
 import { applyLim, axisTicks, nearest, niceTicks } from './scale.ts';
@@ -20,7 +21,11 @@ type Props = {
   width?: number;
   height?: number;
   traces?: Trace[]; // analysis results drawn across the map (e.g. resonance position)
+  zones?: MapZone[]; // analysis zones following the other axis: drawn, their points dragged
+  onZone?: (zone: MapZone, pts: MapZone['pts']) => void; // a zone edited on the map (drag, double-click to add / remove a point)
 };
+
+type Drag = { key: string; i: number; edge: 'lo' | 'hi'; pts: MapZone['pts'] };
 
 const M = { l: 54, r: 74, t: 10, b: 38 };
 
@@ -28,13 +33,14 @@ const M = { l: 54, r: 74, t: 10, b: 38 };
 const cellExtent = (v: number[]): [number, number] =>
   v.length < 2 ? [v[0] - 0.5, v[0] + 0.5] : [v[0] - (v[1] - v[0]) / 2, v[v.length - 1] + (v[v.length - 1] - v[v.length - 2]) / 2];
 
-export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yLim, view, width = 520, height = 300, traces = [] }: Props) {
+export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yLim, view, width = 520, height = 300, traces = [], zones = [], onZone }: Props) {
   const pw = width - M.l - M.r;
   const ph = height - M.t - M.b;
   const canvas = useRef<HTMLCanvasElement>(null);
   const grad = useId();
   const clip = useId();
   const [hover, setHover] = useState<[number, number] | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
   const nx = xAxis.values.length;
 
   const xData = cellExtent(xAxis.values);
@@ -47,6 +53,9 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
   // what is coloured: log10 of the values (≤ 0 left empty) and / or blurred; the data themselves are not changed
   const cap = view?.cap;
   const capHide = !!view?.capHide;
+  const cmap = COLOR_MAPS[view?.cmap ?? 'viridis'] ?? COLOR_MAPS.viridis;
+  const diverging = !!cmap.diverging;
+  const lut = colorLut(view?.cmap);
   const grid = useMemo(() => {
     // the cap first (in the units of the data), then log and blur
     const c = capValues(values, cap, capHide);
@@ -66,10 +75,15 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
       }
       if (Number.isFinite(lo)) auto = hi - lo < 1e-12 ? [lo - 0.5, hi + 0.5] : [lo, hi];
     }
+    // a diverging map (wave): the automatic range symmetric about 0 when the values have both signs
+    if (diverging && !log && auto[0] < 0 && auto[1] > 0) {
+      const m = Math.max(-auto[0], auto[1]);
+      auto = [-m, m];
+    }
     const lim = view?.zLim;
     const t = (v: number) => (log ? (v > 0 ? Math.log10(v) : NaN) : v);
     return applyLim(auto, lim && [t(lim[0]), t(lim[1])]);
-  }, [grid, zDomain, log, view?.zLim]);
+  }, [grid, zDomain, log, view?.zLim, diverging]);
 
   useEffect(() => {
     const cv = canvas.current;
@@ -97,21 +111,67 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
         const p = (r * W + c) * 4;
         if (!Number.isFinite(v)) continue;
         const k = Math.round(Math.min(1, Math.max(0, (v - z0) / span)) * 255) * 3;
-        img.data[p] = VIRIDIS_LUT[k];
-        img.data[p + 1] = VIRIDIS_LUT[k + 1];
-        img.data[p + 2] = VIRIDIS_LUT[k + 2];
+        img.data[p] = lut[k];
+        img.data[p + 1] = lut[k + 1];
+        img.data[p + 2] = lut[k + 2];
         img.data[p + 3] = 255;
       }
     ctx.putImageData(img, 0, 0);
-  }, [values, grid, smooth, xAxis, yAxis, nx, x0, x1, y0, y1, z0, z1, pw, ph]);
+  }, [values, grid, smooth, xAxis, yAxis, nx, x0, x1, y0, y1, z0, z1, pw, ph, lut]);
 
   const sx = (v: number) => M.l + ((v - x0) / (x1 - x0)) * pw;
   const sy = (v: number) => M.t + ph - ((v - y0) / (y1 - y0)) * ph;
   const sz = (v: number) => M.t + ph - ((v - z0) / (z1 - z0 || 1)) * ph;
 
-  const point = (e: MouseEvent<SVGRectElement>): [number, number] => {
+  const point = (e: MouseEvent<SVGElement>): [number, number] => {
     const r = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
     return [((e.clientX - r.left) * width) / r.width, ((e.clientY - r.top) * height) / r.height];
+  };
+  // screen → data
+  const dataAt = ([px, py]: [number, number]): [number, number] => [x0 + ((px - M.l) / pw) * (x1 - x0), y0 + ((M.t + ph - py) / ph) * (y1 - y0)];
+
+  // Zones: along = the analysed coordinate (start / end), at = the followed one; on screen (x, y) or swapped.
+  const zPos = (z: MapZone, along: number, at: number): [number, number] => (z.swap ? [sx(at), sy(along)] : [sx(along), sy(at)]);
+  const zData = (z: MapZone, p: [number, number]): { along: number; at: number } => {
+    const [dx, dy] = dataAt(p);
+    return z.swap ? { along: dy, at: dx } : { along: dx, at: dy };
+  };
+  const zoneShape = (z: MapZone, pts: MapZone['pts']) => {
+    const s = [...pts].sort((a, b) => a.y - b.y);
+    // constant beyond the first and last point: to the edges of the view along the followed axis
+    const [a0, a1] = z.swap ? [x0, x1] : [y0, y1];
+    const ys = [Math.min(a0, s[0].y), ...s.map((q) => q.y), Math.max(a1, s[s.length - 1].y)];
+    const at = (y: number) => zoneAt(s, y);
+    const lo = ys.map((y) => zPos(z, at(y)[0], y));
+    const hi = ys.map((y) => zPos(z, at(y)[1], y)).reverse();
+    return [...lo, ...hi].map(([px, py], i) => `${i ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join('') + 'Z';
+  };
+  const shown = zones.map((z) => ({ z, pts: drag?.key === z.key ? drag.pts : z.pts }));
+  const moveHandle = (e: MouseEvent<SVGElement>) => {
+    if (!drag) return;
+    const z = zones.find((q) => q.key === drag.key);
+    if (!z) return;
+    const { along, at } = zData(z, point(e));
+    const pts = drag.pts.map((q, i) => (i === drag.i ? { ...q, y: +at.toPrecision(6), [drag.edge]: +along.toPrecision(6) } : q));
+    setDrag({ ...drag, pts });
+  };
+  const endDrag = () => {
+    if (!drag) return;
+    const z = zones.find((q) => q.key === drag.key);
+    if (z && onZone) onZone(z, drag.pts);
+    setDrag(null);
+  };
+  // double-click inside a zone: a new point there (its start / end on the zone's edges)
+  const addPoint = (e: MouseEvent<SVGElement>) => {
+    if (!onZone) return;
+    for (const z of zones) {
+      const { along, at } = zData(z, point(e));
+      const [lo, hi] = zoneAt(z.pts, at);
+      if (along >= Math.min(lo, hi) && along <= Math.max(lo, hi)) {
+        onZone(z, [...z.pts, { y: +at.toPrecision(6), lo: +lo.toPrecision(6), hi: +hi.toPrecision(6) }].sort((a, b) => a.y - b.y));
+        return;
+      }
+    }
   };
 
   let tip: { x: number; y: number; lines: string[] } | null = null;
@@ -138,8 +198,8 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
       <svg width={width} height={height} className="plot">
         <defs>
           <linearGradient id={grad} x1="0" y1="1" x2="0" y2="0">
-            {VIRIDIS_STOPS.map((c, k) => (
-              <stop key={c} offset={k / (VIRIDIS_STOPS.length - 1)} stopColor={c} />
+            {cmap.stops.map((c, k) => (
+              <stop key={k} offset={k / (cmap.stops.length - 1)} stopColor={c} />
             ))}
           </linearGradient>
         </defs>
@@ -167,6 +227,9 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
               stroke={t.color}
               strokeWidth={2}
             />
+          ))}
+          {shown.map(({ z, pts }) => (
+            <path key={z.key} d={zoneShape(z, pts)} fill={z.color} fillOpacity={0.12} stroke={z.color} strokeWidth={1.5} strokeDasharray="5 3" pointerEvents="none" />
           ))}
         </g>
         <rect x={M.l} y={M.t} width={pw} height={ph} className="frame" />
@@ -202,7 +265,43 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
           className="nodrag"
           onMouseMove={(e) => setHover(point(e))}
           onMouseLeave={() => setHover(null)}
+          onDoubleClick={zones.length ? addPoint : undefined}
         />
+        {onZone &&
+          shown.map(({ z, pts }) =>
+            pts.flatMap((q, i) =>
+              (['lo', 'hi'] as const).map((edge) => {
+                const [cx, cy] = zPos(z, q[edge], q.y);
+                return (
+                  <circle
+                    key={`${z.key}:${i}:${edge}`}
+                    data-export="skip"
+                    className="nodrag zone-handle"
+                    cx={cx}
+                    cy={cy}
+                    r={5}
+                    fill="var(--panel)"
+                    stroke={z.color}
+                    strokeWidth={2}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      setDrag({ key: z.key, i, edge, pts });
+                    }}
+                    onPointerMove={moveHandle}
+                    onPointerUp={endDrag}
+                    onDoubleClick={(e) => {
+                      // double-click on a point: removed (a zone keeps at least two)
+                      e.stopPropagation();
+                      if (pts.length > 2) onZone(z, pts.filter((_, j) => j !== i));
+                    }}
+                  >
+                    <title>{`drag: move this point · double-click: remove it${pts.length > 2 ? '' : ' (at least two points)'} · double-click inside the zone: add one`}</title>
+                  </circle>
+                );
+              }),
+            ),
+          )}
       </svg>
     </div>
   );

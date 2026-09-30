@@ -114,8 +114,11 @@ export function TargetNodeView({ id, data }: NodeProps<TargetNode>) {
   const info = result?.info as TargetInfo | undefined;
   const fromInput = data.mode === 'data' || data.mode === 'fit';
   const xUnit = info?.unit ?? (data.axis === 'lambda' ? 'nm' : '°');
-  const span = Number.isFinite(data.max - data.min) ? data.max - data.min : 100;
-  const mid = Number.isFinite(data.min + data.max) ? (data.min + data.max) / 2 : 0;
+  // a grid in wavenumbers: min / max / step in cm⁻¹, the target itself on λ (nm)
+  const perCm = !fromInput && data.axis === 'lambda' && data.gridUnit === 'cm-1';
+  const [xLo, xHi] = perCm ? [1e7 / data.max, 1e7 / data.min] : [data.min, data.max];
+  const span = Number.isFinite(xHi - xLo) ? xHi - xLo : 100;
+  const mid = Number.isFinite(xLo + xHi) ? (xLo + xHi) / 2 : 0;
   const addComponent = (type: ComponentType) => {
     const c = newComponent(type);
     for (const p of COMPONENTS[type].params)
@@ -164,7 +167,7 @@ export function TargetNodeView({ id, data }: NodeProps<TargetNode>) {
           <Radios<TargetData['axis']> name={`${id}-axis`} value={data.axis} options={[['lambda', 'λ (nm)'], ['theta', 'θ (°)']]} onChange={(axis) => set({ axis })} />
         )}
         <span className="interval">
-          {fromInput ? 'window' : AXIS_LABEL[data.axis]}
+          {fromInput ? 'window' : perCm ? 'ν̃' : AXIS_LABEL[data.axis]}
           <NumInput className="short" value={data.min} placeholder="min" onChange={(min) => set({ min })} />–
           <NumInput className="short" value={data.max} placeholder="max" onChange={(max) => set({ max })} />
           {!fromInput && (
@@ -173,6 +176,25 @@ export function TargetNodeView({ id, data }: NodeProps<TargetNode>) {
             </>
           )}
         </span>
+        {!fromInput && data.axis === 'lambda' && (
+          <select
+            className="nodrag"
+            value={data.gridUnit ?? 'nm'}
+            title="Grid points evenly spaced in λ (nm) or in wavenumber (cm⁻¹, as in infrared spectroscopy); the target is always drawn and matched on λ"
+            onChange={(e) => {
+              const gridUnit = e.target.value as 'nm' | 'cm-1';
+              if (gridUnit === (data.gridUnit ?? 'nm')) return;
+              // the same range in the other unit (the step keeps the point count about the same)
+              const conv = (v: number) => (v > 0 ? +(1e7 / v).toPrecision(6) : NaN);
+              const [min, max] = [conv(data.max), conv(data.min)];
+              const n = Math.max(1, Math.round((data.max - data.min) / data.step));
+              set({ gridUnit, min, max, step: Number.isFinite(max - min) ? +((max - min) / n).toPrecision(3) : data.step });
+            }}
+          >
+            <option value="nm">nm</option>
+            <option value="cm-1">cm⁻¹</option>
+          </select>
+        )}
       </div>
       <div className="row wrap">
         <span className="muted" title="What the target is: quantity ('matched' = the quantity chosen in Curve match / the Filter designer), polarization, angle, kind and tolerance (the error is divided by it: 0.01 gives MF = 100·RMS). Bands can override each of them.">target is</span>
@@ -272,7 +294,7 @@ export function TargetNodeView({ id, data }: NodeProps<TargetNode>) {
           components={data.components}
           onChange={(components) => set({ components })}
           onAdd={addComponent}
-          xRange={[data.min, data.max]}
+          xRange={[xLo, xHi]}
           yRange={yRange}
           xUnit={xUnit}
           yUnit=""
@@ -364,6 +386,26 @@ export function MatchNodeView({ id, data }: NodeProps<MatchNode>) {
           <NumInput className="short" value={data.hi} placeholder="max" onChange={(hi) => set({ hi })} />
         </span>
         <label className="radio">weight <NumInput className="tiny" value={data.weight} step={0.1} onChange={(weight) => set({ weight })} /></label>
+      </div>
+      <div className="row wrap">
+        <label className="radio" title="Compare only the target points below (or above) a level, e.g. the resonances of a target with dips on a baseline of 1: target < 0.95">
+          <input
+            className="nodrag"
+            type="checkbox"
+            checked={!!data.only && Number.isFinite(data.only.level)}
+            onChange={(e) => set({ only: e.target.checked ? { op: 'lt', level: 0.95 } : undefined })}
+          />
+          only where the target is
+        </label>
+        {data.only && Number.isFinite(data.only.level) && (
+          <>
+            <select className="nodrag" value={data.only.op} onChange={(e) => set({ only: { ...data.only!, op: e.target.value as 'lt' | 'gt' } })}>
+              <option value="lt">&lt;</option>
+              <option value="gt">&gt;</option>
+            </select>
+            <NumInput className="tiny" value={data.only.level} step={0.01} onChange={(level) => set({ only: { ...data.only!, level } })} />
+          </>
+        )}
       </div>
       <div className="nodrag nowheel chart">
         {xs.length ? (

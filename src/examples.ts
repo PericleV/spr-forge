@@ -8,8 +8,8 @@ import { refractiveIndex } from './physics/materials.ts';
 import { tmmPoint } from './physics/tmm.ts';
 import type { MaterialDef } from './physics/materials.ts';
 import type { Project } from './project.ts';
-import type { AppNode, ComputeData, FilterData, ParamData } from './types.ts';
-import { LAYER_GA_DEFAULTS, PLOT_DEFAULTS, COMPARE_DEFAULTS, DRAW_DEFAULTS, FIELD_DEFAULTS, ZONES_DEFAULTS, IMPORT_DEFAULTS, TARGET_DEFAULTS, MATCH_DEFAULTS, TOLERANCE_DEFAULTS, GRATING_DEFAULTS, RCWA_DEFAULTS, DRAWGRATING_DEFAULTS, RCWAFIELD_DEFAULTS, INFO_DEFAULTS, OPTIMIZER_DEFAULTS, fitDefaults, ANALYSIS_DEFAULTS, ANISO_DEFAULTS, materialData } from './defaults.ts';
+import type { AppNode, ComputeData, FilterData, ParamData, TargetData } from './types.ts';
+import { ROUGH_DEFAULTS, LAYER_GA_DEFAULTS, PLOT_DEFAULTS, COMPARE_DEFAULTS, DRAW_DEFAULTS, FIELD_DEFAULTS, ZONES_DEFAULTS, IMPORT_DEFAULTS, TARGET_DEFAULTS, MATCH_DEFAULTS, TOLERANCE_DEFAULTS, GRATING_DEFAULTS, RCWA_DEFAULTS, DRAWGRATING_DEFAULTS, RCWAFIELD_DEFAULTS, INFO_DEFAULTS, OPTIMIZER_DEFAULTS, fitDefaults, ANALYSIS_DEFAULTS, ANISO_DEFAULTS, materialData } from './defaults.ts';
 export * from './defaults.ts';
 
 const lib = makeLibrary([]);
@@ -224,6 +224,10 @@ export const strongCouplingAngleExample = (): Project => {
       if (n.type === 'dbr') return { ...n, data: { ...n.data, cavities: n.data.cavities.map((c) => ({ ...c, d: 215 })) } };
       if (n.id === 'th') return { ...n, data: param('theta', 'range', 0, 0, 40, 0.5) } as AppNode;
       if (n.type === 'plot') return { ...n, data: { ...n.data, y: 'theta' } };
+      // the upper-λ branch (684 nm at 0°, 663.5 nm at 40°) in a zone that follows θ: a fixed 652.5–720 nm interval takes
+      // the edge of the mirror stop band instead (R ≈ 0 at 750 → 724 nm from 30° on)
+      if (n.type === 'fwhm')
+        return { ...n, data: { ...n.data, intervals: [n.data.intervals[0], { lo: 652.5, hi: 720, path: { at: 'theta', pts: [{ y: 0, lo: 652.5, hi: 705 }, { y: 40, lo: 645, hi: 690 }] } }] } };
       // beyond ~32° the lower branch (exciton-like) is too weak for FWHM: fit 0–30°
       if (n.type === 'fit') return { ...n, data: { ...n.data, along: 'theta', mode2: 'angle', lo: 0, hi: 30 } };
       return n;
@@ -1345,6 +1349,30 @@ export function he2021TargetCsv(resonanceOnly: boolean): string {
   const rows = lam.map((l, i) => `${l.toFixed(6)},${R[i].toFixed(9)},${resonanceOnly ? (R[i] < 0.95 ? 1 : 0) : 1}`).reverse();
   return `wavelength,target,weight\n${rows.join('\n')}`;
 }
+// The same target as a Target node (model): baseline 1, a Lorentzian dip (HWHM = the Cauchy scale) and a Gaussian dip,
+// each of depth 1 / (its largest grid value), on the wavenumber grid 1500 … 3499 cm⁻¹ of the code.
+function he2021Target(name: string, color: string): TargetData {
+  const lam = Array.from({ length: 2000 }, (_, i) => 1e7 / (1500 + i));
+  const lMax = Math.max(...lam.map((l) => 1 / (1 + ((l - HE2021.dips[0]) / HE2021.cauchyScale) ** 2)));
+  const gMax = Math.max(...lam.map((l) => Math.exp(-(((l - HE2021.dips[1]) / HE2021.gaussSigma) ** 2) / 2)));
+  const P = (value: number) => ({ value, fixed: false });
+  return {
+    ...TARGET_DEFAULTS,
+    name,
+    color,
+    mode: 'components',
+    axis: 'lambda',
+    gridUnit: 'cm-1',
+    min: 1500,
+    max: 3499,
+    step: 1,
+    components: [
+      { id: 'base', type: 'baseline', params: { c: P(1), s: P(0) } },
+      { id: 'co2', type: 'lorentz', params: { A: P(-1 / lMax), x0: P(HE2021.dips[0]), w: P(2 * HE2021.cauchyScale) } },
+      { id: 'g', type: 'gauss', params: { A: P(-1 / gMax), x0: P(HE2021.dips[1]), w: P(2 * Math.sqrt(2 * Math.LN2) * HE2021.gaussSigma) } },
+    ],
+  };
+}
 export const heTammExample = (): Project => {
   const layers = ['Ge', 'SiO', 'Ge', 'SiO', 'Ge', 'SiO', 'Ge', 'SiO', 'Ge', 'CdO'];
   const matOf = (name: string) => (name === 'Ge' ? 'ge' : name === 'SiO' ? 'sio' : 'cdo');
@@ -1358,7 +1386,7 @@ export const heTammExample = (): Project => {
         title: 'Inverse design of a Tamm emitter by gradient descent (He et al. 2021, benchmark)',
         text:
           'M. He et al., Nat. Mater. 20, 1663 (2021), after their published code: air / (Ge / SiO)⁴ Ge / CdO / SiO; Ge n = 4.0, SiO n = 2.25 (as in the code), CdO: doped-semiconductor Drude (Nolen 2020) with the carrier density N as a Design variable.\n\n' +
-          'Target (their set_target): reflectance 1 − Lorentzian dip at 4237.3 nm (CO₂) − Gaussian dip at 3500 nm, 1500–3499 cm⁻¹. Loss: MSE + 0.01·max squared error (Curve match, metric “MSE + λ·max error²”).\n\n' +
+          'Target (their set_target), a Target node (model): reflectance = baseline 1 − Lorentzian dip at 4237.3 nm (CO₂, FWHM 60 nm) − Gaussian dip at 3500 nm (σ = 20 nm), on their grid 1500–3499 cm⁻¹ (step 1 cm⁻¹). Two Curve match nodes compare with it: the full spectrum, and only the resonances (“only where the target is < 0.95”). Loss: MSE + 0.01·max squared error (metric “MSE + λ·max error²”).\n\n' +
           'Optimization Engine: Adam with their schedule (the default settings of Adam): stage 1 = 200 steps at lr 0.01 on the resonance points only (Curve match “resonances”), stage 2 = 450 steps at lr 0.05 on the full spectrum, lr × 0.7 every 100 steps, 4 starts. Thicknesses 50–850 nm, N 0.4–4·10²⁰ cm⁻³ (sigmoid bounds, as in the code).\n\n' +
           'Differences from the code: the gradient is by finite differences (not automatic differentiation) and the whole spectrum is used at each step (no random mini-batches of wavelengths); the vacuum first layer of the code has no effect and is left out; their CdO effective mass uses (3πn)^⅔, reproduced here by C = 1.47·(3.14/π²)^⅔ in the standard (3π²n)^⅔ form.',
         width: 440,
@@ -1370,24 +1398,13 @@ export const heTammExample = (): Project => {
     { id: 'sio', type: 'material', position: { x: -700, y: 60 }, data: { ...materialData('user-sio-225'), color: '#9ec5e8' } },
     { id: 'cdo', type: 'material', position: { x: -700, y: 240 }, data: { ...materialData('user-cdo-nolen'), color: '#c98b3a' } },
     { id: 'vN', type: 'variable', position: { x: -1100, y: 240 }, data: { name: 'N CdO (10²⁰ cm⁻³)', value: 2.2, min: HE2021.N[0], max: HE2021.N[1], integer: false } },
-    {
-      id: 'tAll',
-      type: 'import',
-      position: { x: 500, y: -520 },
-      data: { ...IMPORT_DEFAULTS, name: 'target (full spectrum)', fileName: 'he2021-target.csv', text: he2021TargetCsv(false), names: 'target, weight', color: '#222222' },
-    },
-    {
-      id: 'tRes',
-      type: 'import',
-      position: { x: 500, y: -180 },
-      data: { ...IMPORT_DEFAULTS, name: 'target (resonances)', fileName: 'he2021-resonances.csv', text: he2021TargetCsv(true), names: 'target, weight', color: '#e15759' },
-    },
+    { id: 'target', type: 'target', position: { x: 500, y: -1150 }, data: he2021Target('target', '#e15759') },
     { id: 'stack', type: 'combine', position: { x: 0, y: 200 }, data: { name: 'Tamm emitter', count: layers.length } },
     { id: 'wl', type: 'param', position: { x: 0, y: 700 }, data: param('lambda', 'range', 4237, 2850, 6670, 2) },
     { id: 'th', type: 'param', position: { x: 0, y: 900 }, data: param('theta', 'constant', 0, 0, 80, 1) },
     { id: 'tmm', type: 'compute', position: { x: 500, y: 200 }, data: { ...compute('Tamm emitter'), polarization: 's' } },
     { id: 'mAll', type: 'match', position: { x: 980, y: -380 }, data: { ...MATCH_DEFAULTS, name: 'full spectrum', field: 'R', metric: 'msemax', lambdaMax: 0.01 } },
-    { id: 'mRes', type: 'match', position: { x: 980, y: 120 }, data: { ...MATCH_DEFAULTS, name: 'resonances', field: 'R', metric: 'msemax', lambdaMax: 0.01 } },
+    { id: 'mRes', type: 'match', position: { x: 980, y: 120 }, data: { ...MATCH_DEFAULTS, name: 'resonances', field: 'R', metric: 'msemax', lambdaMax: 0.01, only: { op: 'lt', level: 0.95 } } },
     {
       id: 'opt',
       type: 'optimizer',
@@ -1411,9 +1428,9 @@ export const heTammExample = (): Project => {
     edge('wl', 'tmm', 'lambda'),
     edge('th', 'tmm', 'theta'),
     edge('tmm', 'mAll', 'in'),
-    edge('tAll', 'mAll', 'target'),
+    edge('target', 'mAll', 'target'),
     edge('tmm', 'mRes', 'in'),
-    edge('tRes', 'mRes', 'target'),
+    edge('target', 'mRes', 'target'),
     edge('mAll', 'opt', 'obj'),
     edge('mRes', 'opt', 'obj'),
     edge('opt', 'plot', 'in'),
@@ -1421,7 +1438,7 @@ export const heTammExample = (): Project => {
   ];
   layers.forEach((name, i) => {
     nodes.push({ id: `l${i + 1}`, type: 'layer', position: { x: -380, y: -420 + i * 150 }, data: { label: name, thickness: 450, layers2D: 1 } });
-    nodes.push({ id: `v${i + 1}`, type: 'variable', position: { x: -1100, y: 440 + i * 170 }, data: { name: `d${i + 1} ${name}`, value: 450, min: HE2021.thickness[0], max: HE2021.thickness[1], integer: false } });
+    nodes.push({ id: `v${i + 1}`, type: 'variable', position: { x: -1100, y: 460 + i * 230 }, data: { name: `d${i + 1} ${name}`, value: 450, min: HE2021.thickness[0], max: HE2021.thickness[1], integer: false } });
     edges.push(edge(matOf(name), `l${i + 1}`, 'mat'), edge(`v${i + 1}`, `l${i + 1}`, 'd'), edge(`l${i + 1}`, 'stack', `item-${i}`));
   });
   return project(nodes, edges, [
@@ -2055,34 +2072,110 @@ export const cotsExample = (): Project => {
 };
 
 // The groups of the Examples menu, in order.
+// Rough gold SPR after T. Treebupachatsakul et al., Sensors 21, 6164 (2021): glass (n = 1.52) / 50 nm Au (0.18344 + 3.4332i)
+// / water (1.33) at 633 nm, TM; the Au / water interface rough (RMS 3 nm, cl 20 nm, 10 slices), 3 realizations (seeds)
+// averaged. Compute TMM takes an effective medium of each slice (Bruggeman), Compute RCWA the pixels. The article: a 1 µm
+// cell, 151 orders, 100 realizations; here a 500 nm cell (500 points) and N = 50 (converged to ~0.01 in R) so that Run
+// takes about a minute.
+const TREEBU = 'T. Treebupachatsakul et al., Sensors 21, 6164 (2021)';
+export const roughSprExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -660, y: -300 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Rough gold SPR',
+          text: 'After Treebupachatsakul et al. (2021): the Au / water interface of a 50 nm gold film is rough (Roughness node: RMS 3 nm, correlation length 20 nm, 500 nm cell). The seed sweep gives 3 realizations; Extract data averages them (mean ± std). Compute TMM uses an effective medium per slice (only the height distribution counts), Compute RCWA the rough profile itself (press Run, about a minute). View Grating shows the pixels of the rough zone. The two models differ: a 1D profile is not a 3D Bruggeman mixture.',
+          width: 380,
+          height: 270,
+        },
+      },
+      material('glass', 'user-glass152', -300, -40),
+      { id: 'aum', type: 'material', position: { x: -660, y: 200 }, data: { ...materialData('user-au-treebu'), color: '#d4af37' } },
+      material('water', 'user-n133', -300, 460),
+      { id: 'au', type: 'layer', position: { x: -300, y: 200 }, data: { label: 'Au film', thickness: 50, layers2D: 1 } },
+      { id: 'seeds', type: 'sweep', position: { x: -300, y: 640 }, data: { name: 'seed', kind: 'number', mode: 'list', min: 1, max: 3, step: 1, list: '1, 2, 3' } },
+      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', size: 3, cl: 20, cell: 500, px: 500 } },
+      { id: 'stack', type: 'combine', position: { x: 420, y: 120 }, data: { name: 'Rough Kretschmann', count: 1 } },
+      { id: 'flat', type: 'combine', position: { x: 60, y: -260 }, data: { name: 'Flat film', count: 1 } },
+      { id: 'tmmF', type: 'compute', position: { x: 780, y: -420 }, data: compute('Flat film (reference)') },
+      { id: 'wl', type: 'param', position: { x: 420, y: -160 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'th', type: 'param', position: { x: 420, y: 420 }, data: param('theta', 'range', 70, 60, 80, 0.05) },
+      { id: 'thR', type: 'param', position: { x: 420, y: 600 }, data: param('theta', 'range', 70, 70, 76, 0.5) },
+      { id: 'tmm', type: 'compute', position: { x: 780, y: -40 }, data: compute('TMM, effective medium') },
+      { id: 'rc', type: 'rcwa', position: { x: 780, y: 360 }, data: { ...RCWA_DEFAULTS, name: 'RCWA, rough profile', orders: 50, show: 0 } },
+      { id: 'mT', type: 'extract', position: { x: 1160, y: -40 }, data: { name: 'TMM, mean of 3 seeds', fields: ['R'], fixed: {}, mean: ['sweep:seeds'] } },
+      { id: 'mR', type: 'extract', position: { x: 1160, y: 360 }, data: { name: 'RCWA, mean of 3 seeds', fields: ['R'], fixed: {}, mean: ['sweep:seeds'] } },
+      { id: 'cmp', type: 'compare', position: { x: 1520, y: 120 }, data: COMPARE_DEFAULTS },
+      { id: 'draw', type: 'draw', position: { x: 60, y: 760 }, data: { ...DRAW_DEFAULTS, light: 'left' } },
+      { id: 'dg', type: 'drawgrating', position: { x: 780, y: 760 }, data: { ...DRAWGRATING_DEFAULTS, periods: 1 } },
+    ],
+    [
+      edge('aum', 'au', 'mat'),
+      edge('au', 'rough', 'in'),
+      edge('seeds', 'rough', 'seed'),
+      edge('glass', 'stack', 'incident'),
+      edge('rough', 'stack', 'item-0'),
+      edge('water', 'stack', 'exit'),
+      edge('glass', 'flat', 'incident'),
+      edge('au', 'flat', 'item-0'),
+      edge('water', 'flat', 'exit'),
+      edge('flat', 'tmmF', 'stack'),
+      edge('wl', 'tmmF', 'lambda'),
+      edge('th', 'tmmF', 'theta'),
+      edge('tmmF', 'cmp', 'in'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('th', 'tmm', 'theta'),
+      edge('stack', 'rc', 'stack'),
+      edge('wl', 'rc', 'lambda'),
+      edge('thR', 'rc', 'theta'),
+      edge('tmm', 'mT', 'in'),
+      edge('rc', 'mR', 'in'),
+      edge('mT', 'cmp', 'in'),
+      edge('mR', 'cmp', 'in'),
+      edge('stack', 'draw', 'in'),
+      edge('stack', 'dg', 'in'),
+    ],
+    [
+      { id: 'user-glass152', name: 'glass (n = 1.52)', color: '#dfe7ee', model: { type: 'constant', n: 1.52, k: 0 }, source: 'assumed (glass substrate)' },
+      { id: 'user-au-treebu', name: 'Au (0.18344 + 3.4332i)', color: '#d4af37', model: { type: 'constant', n: 0.18344, k: 3.4332 }, source: `${TREEBU}, gold at 633 nm` },
+      { id: 'user-n133', name: 'water (n = 1.33)', color: '#6fb3e0', model: { type: 'constant', n: 1.33, k: 0 }, source: `${TREEBU}, sensing medium` },
+    ],
+  );
+
 export const EXAMPLE_GROUPS = ['Surface plasmons (SPR)', 'Gratings (RCWA)', 'Microcavities, Tamm states and strong coupling', 'Thin-film filters and coatings', 'Anisotropic media, liquid crystals and BICs', 'Absorbers, emitters and metrology'] as const;
-export type ExampleEntry = { group: (typeof EXAMPLE_GROUPS)[number]; name: string; make: () => Project };
+export type ExampleEntry = { group: (typeof EXAMPLE_GROUPS)[number]; name: string; make: () => Project; desc: string };
 // (the first one opens at the first start)
 export const EXAMPLES: ExampleEntry[] = [
-  { group: EXAMPLE_GROUPS[0], name: 'SPR (Kretschmann)', make: sprExample },
-  { group: EXAMPLE_GROUPS[0], name: 'SPR sensor design (custom objective)', make: sprDesignExample },
-  { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample },
-  { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample },
-  { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling (RCWA)', make: gratingSprExample },
-  { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling under conical incidence (azimuth φ, RCWA)', make: conicalSprExample },
-  { group: EXAMPLE_GROUPS[1], name: 'Guided-mode resonance filter (RCWA, optimization)', make: gmrExample },
-  { group: EXAMPLE_GROUPS[2], name: 'DBR microcavity', make: dbrExample },
-  { group: EXAMPLE_GROUPS[2], name: 'Strong coupling (polaritons)', make: strongCouplingExample },
-  { group: EXAMPLE_GROUPS[2], name: 'Strong coupling vs angle (polariton dispersion)', make: strongCouplingAngleExample },
-  { group: EXAMPLE_GROUPS[2], name: 'Tamm plasmon induced reflection (Lu et al. 2019, benchmark)', make: tammExample },
-  { group: EXAMPLE_GROUPS[2], name: 'Rabi-like splitting, Tamm plasmon + cavity (Jena et al., benchmark)', make: rabiJenaExample },
-  { group: EXAMPLE_GROUPS[2], name: 'Inverse design of a Tamm emitter by gradient descent (He et al. 2021, benchmark)', make: heTammExample },
-  { group: EXAMPLE_GROUPS[3], name: 'Thin-film filter design (long-pass edge)', make: filterExample },
-  { group: EXAMPLE_GROUPS[3], name: 'Tolerance analysis (Monte Carlo) of an AR coating', make: toleranceExample },
-  { group: EXAMPLE_GROUPS[3], name: 'Narrow notch filter, ≤ 10 nm at 532 nm (filter design benchmark)', make: notchExample },
-  { group: EXAMPLE_GROUPS[3], name: 'Narrow band-pass filter, three cavities (filter design benchmark)', make: bandpassExample },
-  { group: EXAMPLE_GROUPS[3], name: 'AR coating on both faces, four materials (filter design benchmark)', make: arBothSidesExample },
-  { group: EXAMPLE_GROUPS[3], name: 'Castle filter: the contour of Peleș as T(λ) (in the spirit of OIC 2025)', make: pelesExample },
-  { group: EXAMPLE_GROUPS[4], name: 'Liquid-crystal microcavity tuned by the director tilt (Berreman 4×4)', make: lcCavityExample },
-  { group: EXAMPLE_GROUPS[4], name: 'Bound state in the continuum, anisotropic defect in a photonic crystal (Pankin et al. 2022, Berreman 4×4)', make: anisoBicExample },
-  { group: EXAMPLE_GROUPS[4], name: 'BICs in an asymmetric photonic crystal + anisotropic layer (Liu et al. 2023, Berreman 4×4)', make: liuBicExample },
-  { group: EXAMPLE_GROUPS[4], name: 'Chiral optical Tamm states and a quasi-BIC: cholesteric + anisotropic mirrors, circular light (Pyatnov et al. 2018, Timofeev et al. 2017)', make: cotsExample },
-  { group: EXAMPLE_GROUPS[5], name: 'Dual-band absorber (optimization)', make: absorberExample },
-  { group: EXAMPLE_GROUPS[5], name: 'Thin-film metrology (fit to a measurement)', make: metrologyExample },
-  { group: EXAMPLE_GROUPS[5], name: 'Narrowband thermal emitter by simulated annealing (Pan et al. 2024, benchmark)', make: thermalEmitterSaExample },
+  { group: EXAMPLE_GROUPS[0], name: 'SPR (Kretschmann)', make: sprExample, desc: 'Surface plasmon resonance of a silver film on a prism: the reflectance dip vs angle and its analysis.' },
+  { group: EXAMPLE_GROUPS[0], name: 'SPR sensor design (custom objective)', make: sprDesignExample, desc: 'Thicknesses of an SPR sensor optimized for a custom objective (sensitivity and dip quality).' },
+  { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },
+  { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling (RCWA)', make: gratingSprExample, desc: 'Plasmons excited by a metal grating (RCWA): diffraction efficiencies and the field map.' },
+  { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling under conical incidence (azimuth φ, RCWA)', make: conicalSprExample, desc: 'The same grating lit out of its plane (azimuth φ): conical RCWA, TE / TM parts.' },
+  { group: EXAMPLE_GROUPS[1], name: 'Guided-mode resonance filter (RCWA, optimization)', make: gmrExample, desc: 'A guided-mode resonance filter optimized with RCWA.' },
+  { group: EXAMPLE_GROUPS[2], name: 'DBR microcavity', make: dbrExample, desc: 'Bragg mirrors around a cavity: the stop band and the cavity mode at two angles.' },
+  { group: EXAMPLE_GROUPS[2], name: 'Strong coupling (polaritons)', make: strongCouplingExample, desc: 'An excitonic layer in a microcavity: the polariton anticrossing vs the cavity thickness and its fit.' },
+  { group: EXAMPLE_GROUPS[2], name: 'Strong coupling vs angle (polariton dispersion)', make: strongCouplingAngleExample, desc: 'The same cavity tuned by the angle: branches found in zones that follow θ, fitted with n_eff and Ω.' },
+  { group: EXAMPLE_GROUPS[2], name: 'Tamm plasmon induced reflection (Lu et al. 2019, benchmark)', make: tammExample, desc: 'Tamm-plasmon induced reflection, reproduced after Lu et al. 2019.' },
+  { group: EXAMPLE_GROUPS[2], name: 'Rabi-like splitting, Tamm plasmon + cavity (Jena et al., benchmark)', make: rabiJenaExample, desc: 'Rabi-like splitting of a Tamm plasmon coupled to a cavity mode, after Jena et al.' },
+  { group: EXAMPLE_GROUPS[2], name: 'Inverse design of a Tamm emitter by gradient descent (He et al. 2021, benchmark)', make: heTammExample, desc: 'Gradient-descent (Adam) inverse design of a Tamm emitter with a doped CdO layer, after He et al. 2021.' },
+  { group: EXAMPLE_GROUPS[3], name: 'Thin-film filter design (long-pass edge)', make: filterExample, desc: 'A long-pass edge filter designed with the Filter designer.' },
+  { group: EXAMPLE_GROUPS[3], name: 'Tolerance analysis (Monte Carlo) of an AR coating', make: toleranceExample, desc: 'Monte Carlo analysis of an anti-reflection coating: yield and the most critical layers.' },
+  { group: EXAMPLE_GROUPS[3], name: 'Narrow notch filter, ≤ 10 nm at 532 nm (filter design benchmark)', make: notchExample, desc: 'A ≤ 10 nm notch filter at 532 nm from a formula start and deep search.' },
+  { group: EXAMPLE_GROUPS[3], name: 'Narrow band-pass filter, three cavities (filter design benchmark)', make: bandpassExample, desc: 'A narrow three-cavity band-pass filter designed from its specification.' },
+  { group: EXAMPLE_GROUPS[3], name: 'AR coating on both faces, four materials (filter design benchmark)', make: arBothSidesExample, desc: 'Anti-reflection on both faces of a plate with four coating materials.' },
+  { group: EXAMPLE_GROUPS[3], name: 'Castle filter: the contour of Peleș as T(λ) (in the spirit of OIC 2025)', make: pelesExample, desc: 'A transmission spectrum shaped like the contour of Peleș castle, in the spirit of the OIC 2025 contest.' },
+  { group: EXAMPLE_GROUPS[4], name: 'Liquid-crystal microcavity tuned by the director tilt (Berreman 4×4)', make: lcCavityExample, desc: 'A liquid-crystal layer in a microcavity: the modes move with the director tilt (Berreman 4×4).' },
+  { group: EXAMPLE_GROUPS[4], name: 'Bound state in the continuum, anisotropic defect in a photonic crystal (Pankin et al. 2022, Berreman 4×4)', make: anisoBicExample, desc: 'A bound state in the continuum on an anisotropic defect in a photonic crystal, after Pankin et al. 2022.' },
+  { group: EXAMPLE_GROUPS[4], name: 'BICs in an asymmetric photonic crystal + anisotropic layer (Liu et al. 2023, Berreman 4×4)', make: liuBicExample, desc: 'Symmetry-protected and Friedrich–Wintgen BICs of a photonic crystal with an anisotropic layer, after Liu et al. 2023.' },
+  { group: EXAMPLE_GROUPS[4], name: 'Chiral optical Tamm states and a quasi-BIC: cholesteric + anisotropic mirrors, circular light (Pyatnov et al. 2018, Timofeev et al. 2017)', make: cotsExample, desc: 'Chiral optical Tamm states of a cholesteric with circularly polarized light, after Pyatnov et al. 2018.' },
+  { group: EXAMPLE_GROUPS[5], name: 'Dual-band absorber (optimization)', make: absorberExample, desc: 'A dual-band absorber whose layers are optimized for two absorption peaks.' },
+  { group: EXAMPLE_GROUPS[5], name: 'Thin-film metrology (fit to a measurement)', make: metrologyExample, desc: 'Film thicknesses and indices recovered by fitting a measured spectrum.' },
+  { group: EXAMPLE_GROUPS[5], name: 'Narrowband thermal emitter by simulated annealing (Pan et al. 2024, benchmark)', make: thermalEmitterSaExample, desc: 'A narrowband thermal emitter optimized by simulated annealing, after Pan et al. 2024.' },
 ];

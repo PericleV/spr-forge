@@ -32,27 +32,31 @@ import type {
   DrawGratingNode,
   RcwaFieldNode,
   ReverseNode,
+  RoughNode,
   FilterNode,
   ToleranceNode,
   SensitivityNode,
   SweepNode,
   TargetNode,
   VariableNode,
-  ZonesNode, AnisoNode, NotesNode } from '../types.ts';
+  ZonesNode, AnisoNode, NotesNode, Interval, ExtractNode, MergeNode, CustomNode } from '../types.ts';
 import { axisValueText, forEachLine, hash, line, metaOf, otherIndex, strides, TMM_META } from './dataset.ts';
 import { branches, COMPONENTS, coupledRates, crossingOf, dispersionParams, energyWidth, HBAR_EVS, mode2At, modelAt, paramUnit, values as fitValues, type ParamKind } from './fitmodels.ts';
 import { paramId } from './fitrun.ts';
-import { layersAt, phiAt, polAt } from './run.ts';
+import { layersOwned, phiAt, polAt } from './run.ts';
 import { berremanProfile } from '../physics/berremanField.ts';
 import type { NoteDoc } from '../notes/markup.ts';
 import { fieldProfile, layerOfZ, profileGrid, type Complexes, type Profile } from '../physics/field.ts';
-import { extremum, halfWidth, inWindow, windowOf } from './metrics.ts';
+import { penetrationDepth, type DepthResult } from './depth.ts';
+import { customData, extract, merge, type CustomVar } from './dataOps.ts';
+import { extremum, halfWidth, inWindow, windowOf, zoneAt } from './metrics.ts';
 import { formulaStat, metricCost, statOf, zonesCost, type Outside, type Zone, type ZoneGoal } from './objectives.ts';
 import { bandTerms, effectiveSlice, odOf, pMerit, sliceCurves, sliceInfo, sliceLines, sliceValues, termText, type MeritPoint, type Slice, type SliceInfo, type SpecTerm, type TargetSpec } from './spec.ts';
 import { interp, parseSpectrum } from './match.ts';
 import { gratingSlices, smallestFeature, type GratingParams } from './grating.ts';
+import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type PlanItem } from './rough.ts';
 import { fieldResults, type FieldJob } from './rcwaFieldRun.ts';
-import { MAX_ORDERS, rcwaLayersAt, rcwaRegionsAt } from './runRcwa.ts';
+import { MAX_ORDERS, rcwaLayerList, rcwaLayersAt, rcwaRegionsAt } from './runRcwa.ts';
 import type { FieldMap, FieldQuantity } from '../physics/rcwaField.ts';
 import { rng } from './optimize.ts';
 import { compile } from './expr.ts';
@@ -238,6 +242,15 @@ function evalNode(ctx: Ctx, id: string): NodeResult {
       case 'formula':
         r = evalFormula(ctx, node);
         break;
+      case 'extract':
+        r = evalExtract(ctx, node);
+        break;
+      case 'merge':
+        r = evalMerge(ctx, node);
+        break;
+      case 'custom':
+        r = evalCustom(ctx, node);
+        break;
       case 'info':
         r = ok({ type: 'note', doc: { title: node.data.title, body: node.data.text, children: [] } });
         break;
@@ -246,6 +259,9 @@ function evalNode(ctx: Ctx, id: string): NodeResult {
         break;
       case 'reverse':
         r = evalReverse(ctx, node);
+        break;
+      case 'rough':
+        r = evalRough(ctx, node);
         break;
       case 'filter':
         r = evalFilter(ctx, node);
@@ -544,7 +560,7 @@ export function describeStack(s: StackValue): StackInfo {
   const text = (L: StackLayer) =>
     L.grating
       ? `${L.label || 'grating'} ${L.grating.mats.map((m) => m.name).join('/')} Λ ${+L.grating.period.toFixed(1)} nm, ${L.grating.profile}, ${+L.d.toFixed(2)} nm${L.vary ? ' (swept)' : ''}`
-      : `${L.label || L.mat.name} ${L.layers2D ? `${L.layers2D} ML` : `${+L.d.toFixed(2)} nm`}${L.vary ? ' (swept)' : ''}`;
+      : `${L.label || L.mat.name} ${L.layers2D ? `${L.layers2D} ML` : `${+L.d.toFixed(2)} nm`}${L.vary ? ' (swept)' : ''}${(L.rough ?? []).map((r) => `, rough ${r.side} (${r.kind === 'rms' ? 'RMS' : 'pp'} ${r.sweeps.size ? 'swept' : `${r.size} nm`}, cl ${r.sweeps.cl ? 'swept' : `${r.cl} nm`})`).join('')}`;
   if (s.incident) rows.push(`in: ${matName(s.incident)}`);
   for (let i = 0; i < layers.length; ) {
     const g = layers[i].group;
@@ -831,6 +847,7 @@ export type ComputeInfo = {
   asrMinN?: number; // Compute RCWA with ASR: orders needed to resolve the mapping
   gratings?: number; // Compute RCWA: grating layers in the stack
   berreman?: boolean; // Compute TMM through the Berreman 4×4 method (anisotropic layers or a Jones state)
+  gdNote?: string; // the phase is undersampled somewhere: the GD / GDD there are not converged (a note, not a warning)
 };
 
 const rangeText = (v: number[], unit: string) =>
@@ -876,7 +893,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       // (swept periods are checked point by point when computing)
       if (new Set(gratings.map((L) => L.grating!.period)).size > 1)
         errors.push('All grating layers of the stack must have the same period (connect the same Design variable or Sweep to their period ports).');
-      if (!gratings.length) warnings.add('No grating layer: the result equals Compute TMM (zeroth order only).');
+      if (!gratings.length && ![...stack.layers, ...(stack.substrate?.back ?? [])].some((L) => L.rough?.length)) warnings.add('No grating layer: the result equals Compute TMM (zeroth order only).');
       const rd = d as RcwaNode['data'];
       if (!(Number.isInteger(rd.orders) && rd.orders >= 0 && rd.orders <= MAX_ORDERS)) errors.push(`Orders N: an integer 0 – ${MAX_ORDERS}.`);
       if (!(Number.isInteger(rd.show) && rd.show >= 0 && rd.show <= 10)) errors.push('Orders shown: 0 – 10.');
@@ -966,6 +983,12 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     if (SL.grating) L.grating = { ...SL.grating, mats: SL.grating.mats.map(instance) };
     if (SL.lc) L.lc = SL.lc;
     if (SL.flipZ) L.flipZ = true;
+    if (SL.rough)
+      L.rough = SL.rough.map((r) => {
+        const b = (ax?: VaryAxis) => (ax ? { s: [sweepIndex(ax)], v: ax.sweep.values } : undefined);
+        const { node: _n, sweeps: sw, ...p } = r;
+        return { ...p, bind: { size: b(sw.size), cl: b(sw.cl), seed: b(sw.seed) } };
+      });
     if (SL.vary) {
       const s = SL.vary.axes.map(sweepIndex);
       if (SL.vary.d) L.bind.d = { s, v: SL.vary.d };
@@ -1066,6 +1089,48 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   if (size > MAX_POINTS)
     errors.push(`Too many points (${size.toLocaleString('en')} > ${MAX_POINTS.toLocaleString('en')}). Reduce ranges or sweeps.`);
   else if (size > LARGE_JOB) warnings.add(`Large job: ${size.toLocaleString('en')} points.`);
+  // rough interfaces: between plain isotropic layers; the layering at the first sweep step (conformal / pinched films)
+  const roughLists = [layers, ...(back ? [back.layers] : [])];
+  const roughAll = roughLists.flatMap((list) => list.flatMap((L) => L.rough ?? []));
+  if (roughAll.length) {
+    const special = (L: LayerSpec) => !!L.grating || keysOf(L).some(isAniso);
+    const nameOf = (list: LayerSpec[], i: number) => {
+      const SL = list === layers ? stack.layers[i - 1] : stack.substrate?.back[i - 1];
+      return SL ? SL.label || SL.mat.name : `layer ${i}`;
+    };
+    for (const list of roughLists)
+      list.forEach((L, i) => {
+        for (const r of L.rough ?? []) {
+          const j = r.side === 'top' ? i - 1 : i + 1;
+          if (special(L) || (j >= 0 && j < list.length && special(list[j])))
+            errors.push(`${nameOf(list, i)}: a rough interface needs isotropic, non-grating materials on both sides.`);
+          if (r.side === 'bottom' && list[i + 1]?.rough?.some((q) => q.side === 'top'))
+            warnings.add(`${nameOf(list, i)} (bottom) and ${nameOf(list, i + 1)} (top): two Roughness nodes on the same interface; the first one is used.`);
+        }
+      });
+    if (new Set(roughAll.map((r) => r.cell)).size > 1) warnings.add(`Roughness: the cells differ; the first one (${roughAll[0].cell} nm) is used.`);
+    const gp = [...stack.layers, ...(stack.substrate?.back ?? [])].find((L) => L.grating)?.grating?.period;
+    if (method === 'rcwa' && gp !== undefined && roughAll.some((r) => r.cell !== gp)) warnings.add(`Roughness: with a grating in the stack the cell of the rough profiles is its period (${gp} nm).`);
+    if (method === 'rcwa') {
+      const rd = d as RcwaNode['data'];
+      const cell = gp ?? roughAll[0].cell;
+      const clMin = Math.min(...roughAll.flatMap((r) => (r.bind.cl ? r.bind.cl.v : [r.cl])));
+      // the staircase of a metal profile converges slowly: about 2 orders per correlation length of the cell (measured:
+      // gold, RMS 3 nm, cl 20 nm, 500 nm cell: |ΔR| ≈ 0.01 between N = 50 and 70, 0.1 at N = 30)
+      const need = Math.ceil((2 * cell) / clMin);
+      if (rd.orders < need) warnings.add(`Roughness: N ≥ ${need} orders are advised for cl = ${clMin} nm over the ${cell} nm cell (2 per cl; check the convergence).`);
+      if (rd.asr) warnings.add('ASR is not used with rough interfaces (plain RCWA).');
+    }
+    if (!errors.length)
+      try {
+        const idx0 = sweeps.map(() => 0);
+        for (const list of roughLists)
+          for (const n of roughPlan(list, sweeps.map((s) => s.values.length), idx0, method === 'rcwa' ? gp : undefined)?.notes ?? [])
+            warnings.add(`Roughness${n.layer !== undefined ? ` (${nameOf(list, n.layer)})` : ''}: ${n.text}.`);
+      } catch (e) {
+        errors.push(`Roughness: ${e instanceof Error ? e.message : String(e)}.`);
+      }
+  }
   if (errors.length) return fail(errors, [...warnings], info);
 
   const models: Models = {};
@@ -1088,7 +1153,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
             rcwa: {
               orders: rd.orders,
               show: rd.show,
-              ...(rd.asr && !conical ? { asr: rd.eta ?? ASR_ETA } : {}),
+              ...(rd.asr && !conical && !roughAll.length ? { asr: rd.eta ?? ASR_ETA } : {}),
               ...(conical ? { conical: true, phi: phi0 } : {}),
               ...(rd.polMix && !polSweep ? { jones: { psi: rd.polMix.psi, delta: rd.polMix.delta } } : {}),
             },
@@ -1102,6 +1167,13 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   const manual = method === 'rcwa' && !ctx.tag && ctx.armed ? ctx.armed : undefined;
   const out = requestDataset(ctx, `${ctx.tag ?? ''}${node.id}`, spec, axes, manual);
   if (out.error) errors.push(out.error);
+  // (measured: a DBR cavity mode sampled every 0.5 nm, the phase turning by ≲ 100° per step, gives GD −303 fs for the
+  // converged −1196 fs; 45° per step keeps the three-point derivatives to a few %)
+  if (out.dataset && out.dataset.fields.GDR) {
+    const jump = phaseJump(out.dataset, spec);
+    if (jump.deg > 45)
+      info.gdNote = `GD / GDD: the phase of ${jump.q} turns by up to ${jump.deg.toFixed(0)}° between neighbouring wavelengths (near λ = ${+jump.lam.toFixed(2)} nm), too coarse for its derivatives there — a finer λ step (≲ 45° per step) around it.`;
+  }
   if (manual) {
     info.job = { requester: node.id, key: out.key, state: out.idle ? (out.dataset ? 'stale' : 'idle') : out.pending ? 'running' : 'done' };
     if (out.idle && out.dataset) warnings.add('The inputs changed: the output is the previous result — press Run to recompute.');
@@ -1115,6 +1187,28 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     pending: out.pending,
     info,
   };
+}
+
+// The largest turn of the phase of r or t between neighbouring wavelengths (wrapped to ±180°): near 180° the phase is
+// undersampled and its derivatives (GD, GDD) cannot be trusted. Kept per dataset.
+const jumps = new WeakMap<Dataset, { deg: number; q: string; lam: number }>();
+function phaseJump(ds: Dataset, spec: TmmSpec) {
+  const hit = jumps.get(ds);
+  if (hit) return hit;
+  const nL = spec.lambda.length;
+  const nT = spec.theta.length;
+  let best = { deg: 0, q: 'r', lam: NaN };
+  for (const [key, q] of [['phiR', 'r'], ['phiT', 't']] as const) {
+    const f = ds.fields[key];
+    if (!f) continue;
+    for (let k = 0; k + nT < f.length; k++) {
+      if (Math.floor(k / nT) % nL === nL - 1) continue; // the last wavelength of a curve
+      const d = Math.abs(((((f[k + nT] - f[k] + 180) % 360) + 360) % 360) - 180);
+      if (d > best.deg) best = { deg: d, q, lam: spec.lambda[Math.floor(k / nT) % nL] };
+    }
+  }
+  jumps.set(ds, best);
+  return best;
 }
 
 // Cached dataset for the spec, or a job for the worker (keeping the previous result visible meanwhile).
@@ -1183,9 +1277,79 @@ function evalReverse(ctx: Ctx, node: ReverseNode): NodeResult {
     exit: node.data.swapMedia ? s.incident : s.exit,
     // light from the other side = the sample turned by π about y: a grating's profile flips in x, an anisotropic layer's
     // tensor and director profile turn (flipZ)
-    layers: [...s.layers].reverse().map((L) => ({ ...(L.grating ? { ...L, grating: { ...L.grating, flip: !L.grating.flip } } : L), flipZ: !L.flipZ })),
+    // (a rough top interface becomes the bottom one)
+    layers: [...s.layers].reverse().map((L) => ({
+      ...(L.grating ? { ...L, grating: { ...L.grating, flip: !L.grating.flip } } : L),
+      flipZ: !L.flipZ,
+      ...(L.rough ? { rough: L.rough.map((r) => ({ ...r, side: r.side === 'top' ? ('bottom' as const) : ('top' as const) })) } : {}),
+    })),
   };
   return ok({ type: 'stack', stack }, describeStack(stack));
+}
+
+export type RoughInfo = { profile: number[]; cell: number; rms: number; pp: number; clFit: number; size: number; swept: string[]; target: string; color: string };
+
+// Roughness: the connected layer with its top or bottom interface rough (the profile at the nominal values drawn).
+function evalRough(ctx: Ctx, node: RoughNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const s = stackInput(ctx, node.id, 'in', 'Input', errors);
+  const sweeps = {
+    size: numberSweep(ctx, node.id, 'size', d.kind === 'rms' ? 'RMS' : 'peak-to-peak', errors),
+    cl: numberSweep(ctx, node.id, 'cl', 'correlation length', errors),
+    seed: numberSweep(ctx, node.id, 'seed', 'seed', errors),
+  };
+  if (errors.length) return fail(errors);
+  if (!s) return fail(['Connect a Layer (or another Roughness node).']);
+  if (s.layers.length !== 1) return fail(['Connect a single layer (a Layer node, or a Roughness node after one).']);
+  const L0 = s.layers[0];
+  if (L0.grating) return fail(['A grating layer cannot be rough (use a Pixel map profile for that).']);
+  if (L0.rough?.some((r) => r.side === d.side)) return fail([`The ${d.side} interface of this layer is already rough (another Roughness node).`]);
+  const size = sweeps.size ? sweeps.size.values[0] : d.size;
+  const cl = sweeps.cl ? sweeps.cl.values[0] : d.cl;
+  const seed = sweeps.seed ? sweeps.seed.values[0] : d.seed;
+  if (!(d.size >= 0) || sweeps.size?.values.some((v) => !(v >= 0))) errors.push('The height must be ≥ 0.');
+  if (!(d.cl > 0) || sweeps.cl?.values.some((v) => !(v > 0))) errors.push('The correlation length must be > 0.');
+  if (!(d.cell > 0)) errors.push('The cell must be > 0.');
+  if (!(Number.isInteger(d.px) && d.px >= 16 && d.px <= 4000)) errors.push('Points: an integer 16 – 4000.');
+  if (!(Number.isInteger(d.slices) && d.slices >= 1 && d.slices <= 200)) errors.push('Slices: an integer 1 – 200.');
+  if (!Number.isInteger(d.seed) || sweeps.seed?.values.some((v) => !Number.isInteger(v))) errors.push('The seed must be an integer.');
+  if (errors.length) return fail(errors);
+  const cellPx = d.cell / d.px;
+  if (Math.min(d.cl, ...(sweeps.cl?.values ?? [])) < 2 * cellPx) warnings.push(`The correlation length is below 2 points of the profile (${cellPx.toFixed(2)} nm each): more points or a smaller cell.`);
+  if (Math.max(d.cl, ...(sweeps.cl?.values ?? [])) > d.cell / 10) warnings.push('The correlation length is above a tenth of the cell: few features per cell, the statistics of one seed vary much (a longer cell or several seeds).');
+  const name = L0.label || L0.mat.name;
+  const params = { kind: d.kind, size: d.size, cl: d.cl, cell: d.cell, px: d.px, seed: d.seed, slices: d.slices, ema: d.ema };
+  const vary = (sw: SweepValue | undefined, label: string, unit: string): VaryAxis | undefined => sw && { sweep: sw, label: `${label}[${name}]`, unit };
+  const layer: StackLayer = {
+    ...L0,
+    rough: [
+      ...(L0.rough ?? []),
+      {
+        ...params,
+        side: d.side,
+        node: node.id,
+        sweeps: { size: vary(sweeps.size, d.kind === 'rms' ? 'RMS' : 'pp', 'nm'), cl: vary(sweeps.cl, 'cl', 'nm'), seed: vary(sweeps.seed, 'seed', '') },
+      },
+    ],
+  };
+  // the profile at the nominal values (first sweep steps), at most 500 points drawn
+  const h = scaledProfile(roughShape(d.px, cl / d.cell, seed), d.kind, size);
+  const st = statsOf(h);
+  const step = Math.max(1, Math.ceil(h.length / 500));
+  const info: RoughInfo = {
+    profile: Array.from(h).filter((_, i) => i % step === 0),
+    cell: d.cell,
+    rms: st.rms,
+    pp: st.pp,
+    clFit: corrLength(h) * cellPx,
+    size,
+    swept: [sweeps.size && (d.kind === 'rms' ? 'RMS' : 'peak-to-peak'), sweeps.cl && 'cl', sweeps.seed && 'seed'].filter((x): x is string => !!x),
+    target: name,
+    color: L0.mat.color,
+  };
+  return ok({ type: 'stack', stack: { layers: [layer] } }, info, warnings);
 }
 
 function evalDraw(ctx: Ctx, node: DrawNode): NodeResult {
@@ -1216,12 +1380,18 @@ function resolveAlong(ds: Dataset, along: string): number {
 }
 
 export type AnalysisInfo = {
-  axes: { id: string; label: string }[]; // axes the analysis can run along
+  axes: { id: string; label: string; unit: string; min: number; max: number }[]; // axes the analysis can run along (or a zone follow)
   fields: FieldMeta[];
   along?: string;
   unit?: string;
   rows: string[]; // result summary
 };
+
+// The swept axes of a dataset, with their ranges.
+const axesInfo = (ds: Dataset) =>
+  ds.axes
+    .filter((a) => a.values.length > 1)
+    .map((a) => ({ id: a.id, label: a.label, unit: a.unit, min: Math.min(...a.values), max: Math.max(...a.values) }));
 
 // Checks shared by the analysis nodes; returns the dataset, axis and field to work on.
 function analysisSetup(ctx: Ctx, id: string, fieldKey: string, alongId: string, errors: string[]) {
@@ -1229,7 +1399,7 @@ function analysisSetup(ctx: Ctx, id: string, fieldKey: string, alongId: string, 
   const ds = value?.dataset;
   const info: AnalysisInfo = { axes: [], fields: [], rows: [] };
   if (!value || !ds) return { value, info };
-  info.axes = ds.axes.filter((a) => a.values.length > 1).map((a) => ({ id: a.id, label: a.label }));
+  info.axes = axesInfo(ds);
   info.fields = ds.meta;
   const along = resolveAlong(ds, alongId);
   if (along < 0) {
@@ -1267,6 +1437,49 @@ function metricsData(
   };
 }
 
+// Index windows [i0, i1] of every curve along `along` (curves in forEachLine order): the fixed interval, or a zone that
+// follows another axis of the data. A window with fewer than 3 points gives NaN for that curve; an error only when all do.
+function curveWindows(ds: Dataset, along: number, iv: Interval, errors: string[], label: string): [number, number][] {
+  const xs = ds.axes[along].values;
+  const n = curvesOf(ds, along);
+  const p = iv.path;
+  if (!p?.pts.length) {
+    const w = windowOf(xs, iv.lo, iv.hi);
+    if (w[1] - w[0] < 2) errors.push(`${label} contains fewer than 3 points.`);
+    return Array.from({ length: n }, () => w);
+  }
+  const at = ds.axes.findIndex((a) => a.id === p.at);
+  if (at < 0 || at === along || ds.axes[at].values.length < 2) {
+    errors.push(`${label} follows an axis (${p.at}) the data does not sweep, or the one analysed along: choose another in the node.`);
+    return [];
+  }
+  if (p.pts.some((q) => !(q.lo < q.hi) || !Number.isFinite(q.y))) {
+    errors.push(`${label}: every point of the zone needs a value of ${ds.axes[at].label} and a start below its end.`);
+    return [];
+  }
+  const sizes = ds.axes.map((a, i) => (i === along ? 1 : a.values.length));
+  const out: [number, number][] = [];
+  for (let k = 0; k < n; k++) {
+    let rem = k;
+    let y = NaN;
+    for (let i = sizes.length - 1; i >= 0; i--) {
+      if (i === at) y = ds.axes[at].values[rem % sizes[i]];
+      rem = Math.floor(rem / sizes[i]);
+    }
+    const [lo, hi] = zoneAt(p.pts, y);
+    out.push(windowOf(xs, lo, hi));
+  }
+  if (!out.some(([i0, i1]) => i1 - i0 >= 2)) errors.push(`${label}: the zone contains fewer than 3 points on every curve.`);
+  return out;
+}
+const okWindow = ([i0, i1]: [number, number]) => i1 - i0 >= 2;
+
+// The mark of an interval: a span (fixed), or the zone (drawn and edited on 2D maps).
+function intervalMark(iv: Interval, id: string, owner: string, index: number, base: { color: string; datasetKey: string; along: string }): Annotation[] {
+  if (iv.path?.pts.length) return [{ ...base, id, kind: 'zone', label: '', at: iv.path.at, pts: iv.path.pts, edit: { node: owner, index } }];
+  return hasSpan(iv.lo, iv.hi) ? [{ ...base, id, kind: 'span', label: '', lo: iv.lo, hi: iv.hi }] : [];
+}
+
 // Summary rows: the values of a single curve, or their range over all curves.
 function summary(rows: [string, Float64Array, string][], count: number): string[] {
   return rows.map(([label, v, unit]) => {
@@ -1292,26 +1505,27 @@ function evalExtremum(ctx: Ctx, node: ExtremumNode): NodeResult {
   if (!ds || !axis || !meta || along === undefined || errors.length) return passThrough(value, errors, info);
 
   const xs = axis.values;
-  const [i0, i1] = windowOf(xs, d.lo, d.hi);
-  if (i1 - i0 < 2) return passThrough(value, ['The interval contains fewer than 3 points.'], info);
+  const win = curveWindows(ds, along, d, errors, 'The interval');
+  if (errors.length) return passThrough(value, errors, info);
   const n = curvesOf(ds, along);
-  const X = new Float64Array(n);
-  const Y = new Float64Array(n);
+  const X = new Float64Array(n).fill(NaN);
+  const Y = new Float64Array(n).fill(NaN);
   forEachLine(ds, meta.key, along, (k, ys) => {
-    const e = extremum(xs, ys, i0, i1, d.mode);
+    if (!okWindow(win[k])) return;
+    const e = extremum(xs, ys, win[k][0], win[k][1], d.mode);
     X[k] = e.x;
     Y[k] = e.y;
   });
   const label = `${d.mode} ${meta.short}`;
   const base = { id: node.id, color: d.color, datasetKey: ds.key, along: axis.id };
   const annotations: Annotation[] = [{ ...base, kind: 'points', label, field: meta.key, x: X, y: Y }];
-  if (hasSpan(d.lo, d.hi)) annotations.push({ ...base, id: `${node.id}:span`, kind: 'span', label: '', lo: d.lo, hi: d.hi });
+  annotations.push(...intervalMark(d, `${node.id}:span`, node.id, 0, base));
   info.rows = summary([[`${axis.label} at ${label}`, X, axis.unit], [label, Y, meta.unit]], n);
   const metrics = metricsData(
     value,
     ds,
     along,
-    `ext:${node.id}:${d.mode}:${meta.key}:${d.lo}:${d.hi}`,
+    `ext:${node.id}:${d.mode}:${meta.key}:${d.lo}:${d.hi}:${JSON.stringify(d.path ?? null)}`,
     `${value.name} · ${label}`,
     [
       { key: 'x', label: `${axis.label} at ${label}`, short: `${axis.label}(${label})`, unit: axis.unit, of: axis.id },
@@ -1336,10 +1550,8 @@ function evalFwhm(ctx: Ctx, node: FwhmNode): NodeResult {
   if (!ds || !axis || !meta || along === undefined || errors.length) return passThrough(value, errors, info);
   if (d.method === 'absolute' && !Number.isFinite(d.level)) errors.push('Enter the absolute level.');
   const xs = axis.values;
-  const windows = (d.intervals.length ? d.intervals : [{ lo: NaN, hi: NaN }]).map((iv) => windowOf(xs, iv.lo, iv.hi));
-  windows.forEach(([i0, i1], j) => {
-    if (i1 - i0 < 2) errors.push(`Interval ${j + 1} contains fewer than 3 points.`);
-  });
+  const ivs: Interval[] = d.intervals.length ? d.intervals : [{ lo: NaN, hi: NaN }];
+  const windows = ivs.map((iv, j) => curveWindows(ds, along, iv, errors, `Interval ${j + 1}`));
   if (errors.length) return passThrough(value, errors, info);
 
   const n = curvesOf(ds, along);
@@ -1349,11 +1561,12 @@ function evalFwhm(ctx: Ctx, node: FwhmNode): NodeResult {
   const annotations: Annotation[] = [];
   const rows: [string, Float64Array, string][] = [];
   const base = { color: d.color, datasetKey: ds.key, along: axis.id };
-  windows.forEach(([i0, i1], j) => {
+  windows.forEach((win, j) => {
     const tag = windows.length > 1 ? `${j + 1}` : '';
-    const [C, W, X1, X2, L, E] = Array.from({ length: 6 }, () => new Float64Array(n));
+    const [C, W, X1, X2, L, E] = Array.from({ length: 6 }, () => new Float64Array(n).fill(NaN));
     forEachLine(ds, meta.key, along, (k, ys) => {
-      const w = halfWidth(xs, ys, i0, i1, d.kind, d.method, d.level);
+      if (!okWindow(win[k])) return;
+      const w = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, d.method, d.level);
       C[k] = w.center;
       W[k] = w.width;
       X1[k] = w.x1;
@@ -1380,8 +1593,7 @@ function evalFwhm(ctx: Ctx, node: FwhmNode): NodeResult {
       { ...base, id: `${node.id}:w${j}`, kind: 'width', label: `FWHM${tag}`, field: meta.key, x1: X1, x2: X2, level: L },
       { ...base, id: `${node.id}:c${j}`, kind: 'points', label: `${d.kind}${tag} (FWHM)`, field: meta.key, x: C, y: E },
     );
-    const iv = d.intervals[j];
-    if (iv && hasSpan(iv.lo, iv.hi)) annotations.push({ ...base, id: `${node.id}:s${j}`, kind: 'span', label: '', lo: iv.lo, hi: iv.hi });
+    annotations.push(...intervalMark(ivs[j], `${node.id}:s${j}`, node.id, j, base));
   });
   info.rows = summary(rows, n);
   const metrics = metricsData(value, ds, along, `fwhm:${node.id}:${JSON.stringify(d)}`, `${value.name} · FWHM`, fmeta, fields);
@@ -1429,8 +1641,7 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
   info.target = target;
   if (!(Number.isFinite(d.dn) && d.dn !== 0)) errors.push('Δn must be a non-zero number.');
   const xs = axis.values;
-  const [i0, i1] = windowOf(xs, d.lo, d.hi);
-  if (i1 - i0 < 2) errors.push('The interval contains fewer than 3 points.');
+  const win = curveWindows(ds, along, d, errors, 'The interval');
   if (errors.length) return passThrough(value, errors, info);
 
   // The same computation with Re(ñ) + Δn on the chosen material or layer.
@@ -1446,16 +1657,18 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
   if (!pds) return { errors: [], warnings: [], outs: { out: value }, pending: true, info };
 
   const n = curvesOf(ds, along);
-  const [X0, X1, Y0, Y1, S, W, F] = Array.from({ length: 7 }, () => new Float64Array(n));
+  const [X0, X1, Y0, Y1, S, W, F] = Array.from({ length: 7 }, () => new Float64Array(n).fill(NaN));
   const mode = d.kind === 'dip' ? 'min' : 'max';
   forEachLine(ds, meta.key, along, (k, ys) => {
-    const e = extremum(xs, ys, i0, i1, mode);
+    if (!okWindow(win[k])) return;
+    const e = extremum(xs, ys, win[k][0], win[k][1], mode);
     X0[k] = e.x;
     Y0[k] = e.y;
-    W[k] = halfWidth(xs, ys, i0, i1, d.kind, 'local').width;
+    W[k] = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, 'local').width;
   });
   forEachLine(pds, meta.key, along, (k, ys) => {
-    const e = extremum(xs, ys, i0, i1, mode);
+    if (!okWindow(win[k])) return;
+    const e = extremum(xs, ys, win[k][0], win[k][1], mode);
     X1[k] = e.x;
     Y1[k] = e.y;
   });
@@ -1479,7 +1692,7 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
     },
     { ...base, id: `${node.id}:x1`, kind: 'points', label: `${d.kind} (n + Δn)`, field: meta.key, x: X1, y: Y1 },
   ];
-  if (hasSpan(d.lo, d.hi)) annotations.push({ ...base, id: `${node.id}:span`, kind: 'span', label: '', lo: d.lo, hi: d.hi });
+  annotations.push(...intervalMark(d, `${node.id}:span`, node.id, 0, base));
   info.rows = summary(
     [
       ['S', S, sUnit],
@@ -1778,7 +1991,12 @@ export type FieldInfo = {
   T: number;
   decay: number;
   point: string;
-  rcwa?: { xs: number[]; index: number; x: number; period: number }; // profile cut from an RCWA field map at x
+  // a cut of an RCWA field map: along z at x = xs[index] (the default) or along x at z = zs[zIndex]; `where` names the
+  // region of that depth
+  rcwa?: { xs: number[]; index: number; x: number; period: number; along: 'z' | 'x'; zs: number[]; zIndex: number; zAt: number; where: string };
+  depthRegions: { id: string; label: string }[]; // where a penetration depth can be measured
+  depth?: DepthResult & { region: string; label: string; analytic?: number }; // at the point (profile view)
+  depthMap?: { ys: number[]; delta: Float64Array; at: Float64Array }; // map view: δ and the z it reaches, per column
 };
 
 const QUANTITY: Record<FieldNode['data']['quantity'], { label: string; unit: string }> = {
@@ -1802,6 +2020,7 @@ function pickQuantity(p: Profile, d: FieldNode['data']): Float64Array {
 
 // Small cache: maps and profiles are recomputed only when their inputs change.
 const fieldCache = new Map<string, { info: Partial<FieldInfo>; out: Dataset; metrics: Dataset }>();
+const depthCache = new Map<string, { info: Partial<FieldInfo>; out: Dataset }>();
 
 function evalField(ctx: Ctx, node: FieldNode): NodeResult {
   const d = node.data;
@@ -1867,6 +2086,7 @@ function evalField(ctx: Ctx, node: FieldNode): NodeResult {
     R: NaN,
     T: NaN,
     decay: NaN,
+    depthRegions: [],
     point: `λ = ${+lam.value.toFixed(3)} nm, θ = ${+th.value.toFixed(3)}°, ${spec.b4 ? `φ = ${+phiAt(spec, sweepIdx).toFixed(3)}°, ${spec.b4.jones ? polText(spec.b4.jones) : pol}` : pol}${sweepIdx.length ? ` · ${sweepText(ds.axes, idx, nS)}` : ''}`,
   };
   if (!(d.zIn >= 0) || !(d.zOut >= 0)) return fail(['Offsets must be ≥ 0.'], warnings, info);
@@ -1876,8 +2096,8 @@ function evalField(ctx: Ctx, node: FieldNode): NodeResult {
   const b4 = spec.b4;
   const solverAt = (lamV: number) => {
     if (!b4) {
-      const L = layersAt(spec, sweepIdx, lamV);
-      return { d: L.map((q) => q.d), owner: L.map((_, j) => j), prof: (lx: number, tx: number, zs: ArrayLike<number>, lay: ArrayLike<number>) => fieldProfile(L, lx, tx, pol, zs, lay) };
+      const { layers: L, owner } = layersOwned(spec, sweepIdx, lamV);
+      return { d: L.map((q) => q.d), owner, prof: (lx: number, tx: number, zs: ArrayLike<number>, lay: ArrayLike<number>) => fieldProfile(L, lx, tx, pol, zs, lay) };
     }
     const st = rcwaLayersAt(spec, sweepIdx, lamV);
     const [phi, inc] = [phiAt(spec, sweepIdx), b4.jones ?? pol];
@@ -1974,10 +2194,74 @@ function evalField(ctx: Ctx, node: FieldNode): NodeResult {
   }
   Object.assign(info, cached.info);
   const data = (dataset: Dataset, name: string): DataValue => ({ type: 'data', dataset, pending: value.pending, name, annotations: [] });
+
+  // ---- penetration depth (|E| falls to 1/e of its value at the edge of the chosen region) ----
+  // the regions: the incident medium, every layer of the stack (its sublayers merged), the exit medium
+  const starts: number[] = [];
+  let zAcc = 0;
+  const span = new Map<number, [number, number]>();
+  for (let j = 1; j < ds_.length - 1; j++) {
+    starts[j] = zAcc;
+    const o = sv.owner[j];
+    if (ds_[j] > 0) {
+      const s = span.get(o);
+      span.set(o, s ? [Math.min(s[0], zAcc), Math.max(s[1], zAcc + ds_[j])] : [zAcc, zAcc + ds_[j]]);
+    }
+    zAcc += ds_[j];
+  }
+  const totalZ = zAcc;
+  info.depthRegions = [
+    { id: 'incident', label: names[0].name },
+    ...[...span.keys()].sort((a, b) => a - b).map((o) => ({ id: `layer:${o}`, label: `${o}: ${names[o].name}` })),
+    { id: 'exit', label: names.at(-1)!.name },
+  ];
+  let depthOut: DataValue | undefined;
+  const dp = d.depth;
+  const depthKey = `${cacheKey}|${JSON.stringify(dp)}`;
+  const dc = depthCache.get(depthKey);
+  if (dp?.on && dc) {
+    Object.assign(info, dc.info);
+    depthOut = data(dc.out, `${value.name} · penetration depth`);
+  } else if (dp?.on) {
+    const region = info.depthRegions.some((r) => r.id === dp.region) ? dp.region : 'exit';
+    const [lo, hi] = region === 'incident' ? [-Infinity, 0] : region === 'exit' ? [totalZ, Infinity] : (span.get(Number(region.slice(6))) ?? [NaN, NaN]);
+    const label = info.depthRegions.find((r) => r.id === region)!.label;
+    const absE = (s: ReturnType<typeof solverAt>, lx: number, tx: number) => (zs: number[]) => {
+      const p = s.prof(lx, tx, zs, layerOfZ(s.d, zs));
+      return p.E2.map(Math.sqrt);
+    };
+    if (d.view === 'map') {
+      const ys = (info.mapY?.values ?? []) as number[];
+      const delta = new Float64Array(ys.length);
+      const at = new Float64Array(ys.length);
+      ys.forEach((v, j) => {
+        const s = d.mapAxis === 'lambda' ? solverAt(v) : sv;
+        const r = penetrationDepth(absE(s, d.mapAxis === 'lambda' ? v : lam.value, d.mapAxis === 'theta' ? v : th.value), lo, hi, dp.edge);
+        delta[j] = r.delta;
+        at[j] = r.edge + r.dir * r.delta;
+      });
+      info.depthMap = { ys, delta, at };
+      const ax = d.mapAxis === 'theta' ? ta : la;
+      depthOut = data(
+        { key: `depth:${cacheKey}:${JSON.stringify(dp)}`, axes: [{ ...ax, values: ys, labels: undefined }], fields: { delta }, meta: [{ key: 'delta', label: `penetration depth, ${label}`, short: 'δ', unit: 'nm' }], size: ys.length },
+        `${value.name} · penetration depth`,
+      );
+    } else {
+      const r = penetrationDepth(absE(sv, lam.value, th.value), lo, hi, dp.edge);
+      // exit medium: also 1/Im k_z of the transmitted wave (twice the 1/e depth of |E|²)
+      info.depth = { ...r, region, label, analytic: region === 'exit' && Number.isFinite(info.decay) ? 2 * info.decay : undefined };
+      depthOut = data(
+        { key: `depth:${cacheKey}:${JSON.stringify(dp)}`, axes: [], fields: { delta: Float64Array.of(r.delta) }, meta: [{ key: 'delta', label: `penetration depth, ${label}`, short: 'δ', unit: 'nm' }], size: 1 },
+        `${value.name} · penetration depth`,
+      );
+    }
+    depthCache.set(depthKey, { info: { depth: info.depth, depthMap: info.depthMap }, out: depthOut!.dataset! });
+    if (depthCache.size > 6) depthCache.delete(depthCache.keys().next().value!);
+  }
   return {
     errors: [],
     warnings,
-    outs: { out: data(cached.out, `${value.name} · field`), metrics: data(cached.metrics, `${value.name} · absorption per layer`) },
+    outs: { out: data(cached.out, `${value.name} · field`), metrics: data(cached.metrics, `${value.name} · absorption per layer`), ...(depthOut ? { depth: depthOut } : {}) },
     pending: value.pending,
     info,
   };
@@ -2110,7 +2394,7 @@ function evalZones(ctx: Ctx, node: ZonesNode): NodeResult {
   if (!ds) return { ...fail([], [], info), pending: value.pending };
   info.fields = fieldsWithOD(ds);
   info.slice = sliceInfo(ds);
-  info.axes = ds.axes.filter((a) => a.values.length > 1).map((a) => ({ id: a.id, label: a.label }));
+  info.axes = axesInfo(ds);
   const along = resolveAlong(ds, d.along);
   if (along < 0) return fail(['The data has no range (λ, θ or a sweep) for zones.'], [], info);
   const axis = ds.axes[along];
@@ -2357,15 +2641,19 @@ function evalTarget(ctx: Ctx, node: TargetNode): NodeResult {
   let ws: number[] = [];
   let yMeta: FieldMeta = { key: 'target', label: 'target', short: 'target', unit: '' };
   let pending = false;
+  const perCm = d.axis === 'lambda' && d.gridUnit === 'cm-1';
   const grid = () => {
+    if (perCm && !(d.min > 0)) errors.push('The wavenumbers must be > 0.');
     const g = rangeValues(d.min, d.max, d.step);
     if (typeof g === 'string') errors.push(g);
-    return typeof g === 'string' ? [] : g;
+    // wavenumbers (cm⁻¹) → λ (nm), ascending
+    return typeof g === 'string' || errors.length ? [] : perCm ? g.map((v) => 1e7 / v).reverse() : g;
   };
   if (d.mode === 'components') {
     xs = grid();
     if (!d.components.length) errors.push('Add at least one component.');
-    const mctx = { energy: d.axis === 'lambda', xref: (d.min + d.max) / 2 };
+    const [lo, hi] = perCm ? [1e7 / d.max, 1e7 / d.min] : [d.min, d.max];
+    const mctx = { energy: d.axis === 'lambda', xref: (lo + hi) / 2 };
     ys = xs.map((x) => modelAt(d.components, x, mctx));
     ws = xs.map(() => 1);
   } else if (d.mode === 'bands') {
@@ -2520,7 +2808,10 @@ function evalMatch(ctx: Ctx, node: MatchNode): NodeResult {
     const cv = sliceCurves(ds, q, along, effectiveSlice(t, def));
     if (typeof cv === 'string') return void errors.push(`${t.label}: ${cv}`);
     count = Math.max(count, cv.lines.length);
-    const keep = t.x.map((x, i) => inWindow(x, d.lo, d.hi) && Number.isFinite(t.v[i]) && t.w[i] > 0);
+    const only = d.only && Number.isFinite(d.only.level) ? d.only : null;
+    const keep = t.x.map(
+      (x, i) => inWindow(x, d.lo, d.hi) && Number.isFinite(t.v[i]) && t.w[i] > 0 && (!only || (only.op === 'lt' ? t.v[i] < only.level : t.v[i] > only.level)),
+    );
     cv.lines.forEach((ys, k) => {
       const at = t.x.map((x, i) => (keep[i] ? interp(xs, ys, x) : NaN));
       t.x.forEach((_, i) => keep[i] && points.push({ value: at[i], v: t.v[i], tol: t.tol[i], w: t.w[i], kind: t.kind }));
@@ -2561,6 +2852,103 @@ function evalMatch(ctx: Ctx, node: MatchNode): NodeResult {
     outs: { out: { type: 'objective', objective }, marked: { ...sim, dataset: ds, annotations: [...sim.annotations, ...marks] }, target: tv },
     pending,
   };
+}
+
+// ---- Data nodes: Extract data, Merge data, Custom data ----
+
+export type ExtractInfo = { axes: { id: string; label: string; unit: string; labels: string[] }[]; fields: FieldMeta[]; points: number; curves: number };
+
+function evalExtract(ctx: Ctx, node: ExtractNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const info: ExtractInfo = { axes: [], fields: [], points: 0, curves: 0 };
+  const value = dataInput(ctx, node.id, errors);
+  if (!value) return fail(errors, [], info);
+  const ds = value.dataset;
+  if (!ds) return { ...fail([], [], info), pending: value.pending };
+  info.axes = ds.axes.map((a) => ({ id: a.id, label: a.label, unit: a.unit, labels: a.values.map((_, i) => axisValueText(a, i)) }));
+  info.fields = ds.meta.filter((m) => ds.fields[m.key]);
+  const fixed = Object.fromEntries(Object.entries(d.fixed).filter(([k]) => ds.axes.some((a) => a.id === k)));
+  const fields = d.fields.filter((k) => ds.fields[k]);
+  if (d.fields.length && !fields.length) return fail(['None of the chosen quantities is in the input: choose them again.'], [], info);
+  const mean = (d.mean ?? []).filter((k) => ds.axes.some((a) => a.id === k) && !(k in fixed));
+  const out = extract(ds, fields, fixed, mean);
+  info.points = out.size;
+  const free = out.axes.filter((a) => a.values.length > 1);
+  info.curves = free.length > 1 ? out.size / free[0].values.length : 1;
+  return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: d.name || `${value.name} · extract`, annotations: [] }, info), pending: value.pending };
+}
+
+export type MergeInfo = { sources: { id: string; label: string; points: number; fields: string[] }[] };
+
+function evalMerge(ctx: Ctx, node: MergeNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const info: MergeInfo = { sources: [] };
+  const ins = inputs(ctx, node.id, 'in');
+  if (!ins.length) return fail(['Connect data outputs (Extract data, analyses, Compute…): each keeps its own points.'], [], info);
+  let pending = false;
+  const sources: { label: string; ds: Dataset }[] = [];
+  for (const inp of ins) {
+    if (!inp.connected) continue;
+    const v = inp.value;
+    if (v?.type !== 'data') {
+      errors.push(`An input (${inp.source}) has errors.`);
+      continue;
+    }
+    pending ||= v.pending;
+    if (!v.dataset) continue;
+    const label = d.labels[inp.source] || v.name;
+    sources.push({ label, ds: v.dataset });
+    info.sources.push({ id: inp.source, label, points: v.dataset.size, fields: v.dataset.meta.map((m) => m.short) });
+  }
+  if (errors.length) return { ...fail(errors, [], info), pending };
+  if (!sources.length) return { ...fail([], [], info), pending };
+  return { ...ok({ type: 'data', dataset: merge(sources), pending, name: d.name || 'merged data', annotations: [] }, info), pending };
+}
+
+export type CustomInfo = { vars: CustomVar[]; inputs: { key: string; alias: string; name: string }[] };
+
+// Short name of each input: the one kept in the node, else the first free letter (in the order of the connections).
+export function customAliases(keys: string[], kept: Record<string, string> = {}): string[] {
+  const used = new Set(keys.map((k) => kept[k]).filter(Boolean));
+  let next = 0;
+  const letter = () => {
+    for (;;) {
+      const L = next < 26 ? String.fromCharCode(97 + next) : `in${next + 1}`;
+      next++;
+      if (!used.has(L)) return L;
+    }
+  };
+  return keys.map((k) => kept[k] || letter());
+}
+
+function evalCustom(ctx: Ctx, node: CustomNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const info: CustomInfo = { vars: [], inputs: [] };
+  let pending = false;
+  const got: [string, Dataset][] = [];
+  const ins = inputs(ctx, node.id, 'in').filter((x) => x.connected);
+  const keys = ins.map((x) => (x.connected ? `${x.source}:${x.handle}` : ''));
+  const names = customAliases(keys, d.aliases);
+  ins.forEach((inp, i) => {
+    if (!inp.connected) return;
+    const v = inp.value;
+    if (v?.type !== 'data') return void errors.push(`Input ${names[i]} (${inp.source}) has errors.`);
+    pending ||= v.pending;
+    info.inputs.push({ key: keys[i], alias: names[i], name: v.name });
+    if (v.dataset) got.push([names[i], v.dataset]);
+  });
+  const bad = names.filter((n) => !/^[A-Za-z_]\w*$/.test(n));
+  if (bad.length) errors.push(`Input names must be letters, digits or _: ${bad.join(', ')}.`);
+  if (new Set(names).size < names.length) errors.push('Two inputs have the same name.');
+  if (errors.length) return { ...fail(errors, [], info), pending };
+  if (!got.length) return { ...fail(pending ? [] : ['Connect data (several connections allowed): Extract data, analyses, Compute…'], [], info), pending };
+  const r = customData(got, d.rows, node.id);
+  info.vars = r.vars;
+  if (!r.dataset) return { ...fail(r.errors, [], info), pending };
+  return { ...ok({ type: 'data', dataset: r.dataset, pending, name: d.name || 'custom data', annotations: [] }, info), pending };
 }
 
 // ---- Custom objective: an expression of analysis results ----
@@ -3210,19 +3598,36 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
 
   // ---- deviation, specification, ranking (on the chosen field) ----
   const F = d.field;
-  const along = resolveAlong(ds, '');
+  // the axis of the limits and of the chart: the chosen one, else the target curve's, else λ (spectral bands), else θ
+  // (before: θ whenever it was a range — λ bands were then compared with angles, and every sample passed)
+  const tin = input(ctx, node.id, 'target');
+  const freeAx = (id?: string) => (id ? ds.axes.findIndex((a) => a.id === id && a.values.length > 1) : -1);
+  const tAxisId = tin.connected && tin.value?.type === 'data' ? tin.value.dataset?.axes.find((a) => a.values.length > 1 && freeAx(a.id) >= 0)?.id : undefined;
+  let along = freeAx(d.along);
+  if (along < 0) along = freeAx(tAxisId);
+  if (along < 0) along = freeAx('lambda');
+  if (along < 0) along = freeAx('theta');
+  if (along < 0) along = ds.axes.findIndex((a) => a.values.length > 1);
   const axis = along >= 0 ? ds.axes[along] : null;
+  info.axes = ds.axes.filter((a) => a.values.length > 1).map((a) => ({ id: a.id, label: a.label, unit: a.unit, min: Math.min(...a.values), max: Math.max(...a.values) }));
   const dev = E.map((_, s) => {
     let ss = 0;
     for (let sp = 0; sp < outer; sp++) for (let r = 0; r < inner; r++) ss += (val(F, sp, s, r) - ds.fields[F][sp * inner + r]) ** 2;
     return Math.sqrt(ss / (outer * inner));
   });
   // pass / fail: every curve of the sample within the limits (bands along the analysed axis, or ± around a target)
-  const tin = input(ctx, node.id, 'target');
   let pass: number[] = [];
   const specWarn: string[] = [];
   if (d.spec && axis) {
     const xs = axis.values;
+    // a band outside the analysed axis tests nothing: say so
+    if (!tin.connected) {
+      const [xa, xb] = [Math.min(...xs), Math.max(...xs)];
+      const u = axis.unit === '°' ? '°' : axis.unit ? ` ${axis.unit}` : '';
+      for (const b of d.specBands)
+        if (b.q === F && !xs.some((x) => x >= b.lo && x <= b.hi))
+          specWarn.push(`The limit ${b.lo}–${b.hi} lies outside the analysed axis ${axis.label} (${+xa.toPrecision(6)}–${+xb.toPrecision(6)}${u}): it tests nothing${info.axes.length > 1 ? ' — choose the axis of the limits' : ''}.`);
+    }
     const tds = tin.connected && tin.value?.type === 'data' ? tin.value.dataset : null;
     const tAx = tds ? tds.axes.findIndex((a) => a.id === axis.id && a.values.length > 1) : -1;
     if (tin.connected && tAx < 0) specWarn.push(`The target must be a curve vs ${axis.label}.`);
@@ -3542,17 +3947,75 @@ function evalGrating(ctx: Ctx, node: GratingNode): NodeResult {
 
 // View Grating: the grating layers of the input (geometry as computed), the node that defines the first one, and the
 // whole input structure (its layer list).
-export type DrawGratingInfo = { layers: { label: string; d: number; grating: GratingParams<MaterialValue> }[]; source?: string; stack?: StackValue };
+export type DrawGratingInfo = { layers: { label: string; d: number; grating: GratingParams<MaterialValue>; rough?: boolean }[]; source?: string; stack?: StackValue };
 
 function evalDrawGrating(ctx: Ctx, node: DrawGratingNode): NodeResult {
   const errors: string[] = [];
   const s = stackInput(ctx, node.id, 'in', 'Input', errors);
   if (errors.length) return fail(errors);
-  const layers = [...(s?.layers ?? []), ...(s?.substrate?.back ?? [])].flatMap((L) => (L.grating ? [{ label: L.label, d: L.d, grating: L.grating }] : []));
+  const layers: DrawGratingInfo['layers'] = [...(s?.layers ?? []), ...(s?.substrate?.back ?? [])].flatMap((L) => (L.grating ? [{ label: L.label, d: L.d, grating: L.grating }] : []));
+  const warnings: string[] = [];
+  if (s)
+    try {
+      layers.push(...roughZones(s));
+    } catch (e) {
+      warnings.push(`Roughness: ${e instanceof Error ? e.message : String(e)}.`);
+    }
   const src = input(ctx, node.id, 'in');
   const info: DrawGratingInfo = { layers, source: src.connected && ctx.nodes.get(src.source)?.type === 'grating' ? src.source : undefined, stack: s };
-  if (s && !layers.length) return fail([], ['The input has no grating layer.'], info);
-  return ok(undefined, info);
+  if (s && !layers.length) return fail([], [...warnings, 'The input has no grating layer or rough interface.'], info);
+  return ok(undefined, info, warnings);
+}
+
+// The rough zones of a stack at its nominal values, each as the pixel map the RCWA computes: Nx = the points of the
+// profile, one row per slice; the neighbours of a lone layer (no media) drawn as a grey "medium".
+function roughZones(s: StackValue): DrawGratingInfo['layers'] {
+  if (![...s.layers, ...(s.substrate?.back ?? [])].some((L) => L.rough?.length)) return [];
+  const medium: MaterialValue = { key: '(medium)', id: '', name: 'medium', color: '#d0d4dc' };
+  const out: DrawGratingInfo['layers'] = [];
+  const zonesOf = (inc: MaterialValue, films: StackLayer[], exit: MaterialValue) => {
+    const mats = [inc, ...films.map((L) => L.mat), exit];
+    const list: LayerSpec[] = mats.map((_, i) => {
+      const L = films[i - 1];
+      return {
+        mat: String(i),
+        d: L && i < mats.length - 1 ? L.d : 0,
+        dn: 0,
+        bind: {},
+        ...(L?.rough ? { rough: L.rough.map(({ node: _n, sweeps: _s, ...p }) => ({ ...p, bind: {} })) } : {}),
+      };
+    });
+    const gp = films.find((L) => L.grating)?.grating?.period;
+    const plan = roughPlan(list, [], [], gp);
+    if (!plan) return;
+    let zone: Extract<PlanItem, { kind: 'slice' }>[] = [];
+    const flush = () => {
+      if (!zone.length) return;
+      const used = [...new Set(zone.flatMap((it) => it.mats))].sort((a, b) => a - b);
+      const px = Math.max(1, ...films.flatMap((L) => (L.rough ?? []).map((r) => Math.round(r.px))));
+      const pixels = zone.flatMap((it) => {
+        const row = new Array<number>(px).fill(0);
+        for (const q of it.segs) for (let x = Math.round(q.from * px); x < Math.round(q.to * px); x++) row[x] = used.indexOf(q.m);
+        return row;
+      });
+      const d = zone.reduce((a, it) => a + it.d, 0);
+      out.push({
+        label: `rough: ${used.map((m) => mats[m].name).join(' | ')}`,
+        d,
+        rough: true,
+        grating: { profile: 'pixel', period: plan.cell, fill: 0.5, fillTop: 0.5, shift: 0, slices: zone.length, nx: px, pixels, mats: used.map((m) => mats[m]) },
+      });
+      zone = [];
+    };
+    for (const it of plan.items) {
+      if (it.kind === 'slice') zone.push(it);
+      else flush();
+    }
+    flush();
+  };
+  zonesOf(s.incident ? nominalMat(s.incident) : medium, s.layers, s.exit ? nominalMat(s.exit) : medium);
+  if (s.substrate && s.exit) zonesOf(nominalMat(s.exit), s.substrate.back, nominalMat(s.substrate.out ?? s.incident ?? s.exit));
+  return out;
 }
 
 // ---- RCWA field map: computed on demand (Run) in a worker; the result is kept outside the graph ----
@@ -3617,6 +4080,8 @@ export type RcwaFieldInfo = {
   quantity: { label: string; unit: string };
   point: string;
   conical?: boolean; // φ ≠ 0 at the chosen point: all six components
+  layers: { label: string; z0: number; z1: number }[]; // the finite layers (depth, nm), for a window on one of them
+  periodNm?: number; // the grating period at the chosen point
 };
 
 // the components of a planar TE / TM map (the others vanish); conical incidence: all six
@@ -3641,6 +4106,18 @@ function evalRcwaField(ctx: Ctx, node: RcwaFieldNode): NodeResult {
   if (!spec?.rcwa) return fail(['Connect the output of a Compute RCWA node (directly or through Plot / analysis nodes).']);
   if (!(d.periods >= 1 && d.nx >= 8 && d.nz >= 8 && d.zIn >= 0 && d.zOut >= 0)) return fail(['Grid: periods ≥ 1, Nx and Nz ≥ 8, offsets ≥ 0.']);
   if (d.nx * d.nz > 250_000) return fail(['Grid too large (Nx × Nz ≤ 250 000).']);
+  // the window: both ends of an axis, or neither (then the periods / offsets)
+  const win = (a?: number, b?: number, name = '') => {
+    const [fa, fb] = [Number.isFinite(a), Number.isFinite(b)];
+    if (fa !== fb) errors.push(`Window ${name}: give both ends (or leave both empty).`);
+    else if (fa && !(b! > a!)) errors.push(`Window ${name}: the end must be above the start.`);
+    return fa && fb ? { lo: a!, hi: b! } : null;
+  };
+  const wx = win(d.x0, d.x1, 'x');
+  const wz = win(d.z0, d.z1, 'z');
+  const mapN = Number.isFinite(d.orders) ? d.orders! : undefined;
+  if (mapN !== undefined && !(Number.isInteger(mapN) && mapN >= 0 && mapN <= MAX_ORDERS)) errors.push(`Orders N of the map: an integer 0 – ${MAX_ORDERS} (empty: the Compute RCWA's).`);
+  if (errors.length) return fail(errors);
   const pt = pickPoint(ds, spec, d.at, d.res);
   // the azimuth at the chosen sweep steps (conical incidence when ≠ 0)
   let phi = spec.rcwa.phi ?? 0;
@@ -3666,9 +4143,21 @@ function evalRcwaField(ctx: Ctx, node: RcwaFieldNode): NodeResult {
     nz: Math.round(d.nz),
     zIn: d.zIn,
     zOut: d.zOut,
+    ...(wx ? { x0: wx.lo, x1: wx.hi } : {}),
+    ...(wz ? { z0: wz.lo, z1: wz.hi } : {}),
+    ...(mapN !== undefined && mapN !== spec.rcwa.orders ? { orders: mapN } : {}),
+    ...(d.sigma && d.sigma !== 'none' ? { sigma: d.sigma } : {}),
   };
   const key = hash(JSON.stringify(job));
   const stored = fieldResults.get(node.id);
+  // the finite layers at this point (depths), to put a window on one of them
+  const layerRows: RcwaFieldInfo['layers'] = [];
+  let zAt = 0;
+  rcwaLayerList(spec, pt.sweepIdx).forEach((L, i) => {
+    const name = L.key ? (ctx.lib.get(spec.instances[L.key]?.lib)?.name ?? L.key) : 'grating';
+    layerRows.push({ label: `${i + 1}: ${name}, ${+L.d.toFixed(2)} nm`, z0: zAt, z1: zAt + L.d });
+    zAt += L.d;
+  });
   const info: RcwaFieldInfo = {
     sweeps: pt.sweeps,
     lambda: pt.lam,
@@ -3679,7 +4168,9 @@ function evalRcwaField(ctx: Ctx, node: RcwaFieldNode): NodeResult {
     stale: !!stored && stored.key !== key,
     quantity: { label: comp.label, unit: d.part === 'phase' ? '°' : '' },
     conical: phi !== 0 || !!jones,
-    point: `λ = ${+pt.lam.value.toFixed(3)} nm, θ = ${+pt.th.value.toFixed(3)}°${phi !== 0 && !spec.phiBind ? `, φ = ${+phi.toFixed(3)}°` : ''}, ${jones ? polText(jones) : pt.pol === 'p' ? 'TM' : 'TE'}${pt.sweepIdx.length ? ` · ${sweepText(ds.axes, [...pt.sweepIdx, 0, 0], pt.sweepIdx.length)}` : ''}`,
+    layers: layerRows,
+    periodNm: rcwaLayersAt(spec, pt.sweepIdx, pt.lam.value).period,
+    point: `λ =${+pt.lam.value.toFixed(3)} nm, θ = ${+pt.th.value.toFixed(3)}°${phi !== 0 && !spec.phiBind ? `, φ = ${+phi.toFixed(3)}°` : ''}, ${jones ? polText(jones) : pt.pol === 'p' ? 'TM' : 'TE'}${pt.sweepIdx.length ? ` · ${sweepText(ds.axes, [...pt.sweepIdx, 0, 0], pt.sweepIdx.length)}` : ''}`,
   };
   const thick = spec.back ? ['Thick substrate: the map shows the front on a semi-infinite substrate (the plate itself is incoherent).'] : [];
   if (spec.rcwa.asr) thick.push('The field map is computed with the plain RCWA (without ASR), at the same number of orders.');
@@ -3743,6 +4234,13 @@ function fieldFromMap(node: FieldNode, value: DataValue, ds: Dataset, mapInfo: R
   const rows = hAx.values.length;
   // rows are ordered by height h = −z (ascending): the profile along z runs through them backwards
   const z = Float64Array.from({ length: rows }, (_, r) => -hAx.values[rows - 1 - r]);
+  // the cut along x: at the depth zs[zIndex] (default: the middle of the first layer with a profile, else of the map)
+  const midZ = mapInfo.regions.find((g) => g.segs && Number.isFinite(g.z0) && Number.isFinite(g.z1));
+  const zMid = midZ ? (midZ.z0 + midZ.z1) / 2 : (z[0] + z[rows - 1]) / 2;
+  const zIndex = Math.min(rows - 1, Math.max(0, Math.round(d.at.z ?? z.reduce((k, v, i) => (Math.abs(v - zMid) < Math.abs(z[k] - zMid) ? i : k), 0))));
+  const zAt = z[zIndex];
+  const regAt = mapInfo.regions.find((g) => zAt >= g.z0 && zAt < g.z1) ?? mapInfo.regions[mapInfo.regions.length - 1];
+  if (d.cut === 'x') return cutAlongX(value, ds, mapInfo, { xs, index, x, z: Array.from(z), zIndex, zAt, reg: regAt });
   const y = Float64Array.from({ length: rows }, (_, r) => ds.fields.f[(rows - 1 - r) * nx + index]);
   const frac = (((x / mapInfo.period) % 1) + 1) % 1;
   const z0 = z[0];
@@ -3767,8 +4265,9 @@ function fieldFromMap(node: FieldNode, value: DataValue, ds: Dataset, mapInfo: R
     R: NaN,
     T: NaN,
     decay: NaN,
+    depthRegions: [], // (a cut of an RCWA map: no penetration depth)
     point: `${mapInfo.point} · x = ${+x.toFixed(2)} nm (${+(frac).toFixed(3)} Λ)`,
-    rcwa: { xs, index, x, period: mapInfo.period },
+    rcwa: { xs, index, x, period: mapInfo.period, along: 'z', zs: Array.from(z), zIndex, zAt, where: regAt.name },
   };
   const out: Dataset = {
     key: `${ds.key}|cut:${index}`,
@@ -3778,4 +4277,61 @@ function fieldFromMap(node: FieldNode, value: DataValue, ds: Dataset, mapInfo: R
     size: rows,
   };
   return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: `${value.name} · profile at x = ${+x.toFixed(1)} nm`, annotations: [] }, info) };
+}
+
+// A cut of an RCWA field map along x at the depth z = zs[zIndex]: bands = the materials of that slice across the
+// periods shown, lines at their walls.
+function cutAlongX(
+  value: DataValue,
+  ds: Dataset,
+  mapInfo: RcwaMapInfo,
+  at: { xs: number[]; index: number; x: number; z: number[]; zIndex: number; zAt: number; reg: RcwaMapInfo['regions'][number] },
+): NodeResult {
+  const { xs, zIndex, zAt, reg } = at;
+  const nx = xs.length;
+  const rows = at.z.length;
+  // the map rows run by height (−z ascending): depth zs[zIndex] is row rows − 1 − zIndex
+  const row = rows - 1 - zIndex;
+  const y = Float64Array.from({ length: nx }, (_, i) => ds.fields.f[row * nx + i]);
+  const P = mapInfo.period;
+  const [xa, xb] = [xs[0], xs[nx - 1]];
+  const bands: FieldBand[] = [];
+  const boundaries: number[] = [];
+  if (reg.segs) {
+    for (let p = Math.floor(xa / P); p * P < xb; p++)
+      for (const q of reg.segs) {
+        const lo = Math.max(xa, (p + q.from) * P);
+        const hi = Math.min(xb, (p + q.to) * P);
+        if (hi > lo) bands.push({ lo, hi, color: q.color, label: q.name });
+        if ((p + q.from) * P > xa && (p + q.from) * P < xb && q.from > 0) boundaries.push((p + q.from) * P);
+      }
+    for (let p = Math.ceil(xa / P); p * P < xb; p++) if (p * P > xa) boundaries.push(p * P);
+  } else bands.push({ lo: xa, hi: xb, color: reg.color, label: reg.name });
+  const fixed = { value: NaN, min: NaN, max: NaN, free: false, auto: false };
+  const info: FieldInfo = {
+    sweeps: [],
+    lambda: fixed,
+    theta: fixed,
+    pol: 'p',
+    quantity: { label: mapInfo.label, unit: mapInfo.unit },
+    z: Float64Array.from(xs),
+    y,
+    bands,
+    boundaries: [...new Set(boundaries)].sort((a, b) => a - b),
+    rows: [],
+    R: NaN,
+    T: NaN,
+    decay: NaN,
+    depthRegions: [],
+    point: `${mapInfo.point} · z = ${+zAt.toFixed(2)} nm (${reg.name})`,
+    rcwa: { xs, index: at.index, x: at.x, period: P, along: 'x', zs: at.z, zIndex, zAt, where: reg.name },
+  };
+  const out: Dataset = {
+    key: `${ds.key}|cutx:${zIndex}`,
+    axes: [{ id: 'x', label: 'x', unit: 'nm', values: xs }],
+    fields: { f: y },
+    meta: [{ key: 'f', label: mapInfo.label, short: mapInfo.label, unit: mapInfo.unit }],
+    size: nx,
+  };
+  return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: `${value.name} · profile at z = ${+zAt.toFixed(1)} nm`, annotations: [] }, info) };
 }

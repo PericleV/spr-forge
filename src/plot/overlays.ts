@@ -1,5 +1,6 @@
 // Turns analysis annotations into drawable overlays for one plotted curve.
 import { line, metaOf, otherIndex } from '../engine/dataset.ts';
+import { zoneAt } from '../engine/metrics.ts';
 import type { Annotation, Dataset } from '../engine/types.ts';
 
 export type Overlay =
@@ -32,7 +33,13 @@ export function overlaysFor(anns: Annotation[], ds: Dataset, xDim: number, field
     if (a.datasetKey !== ds.key || a.along !== axis.id) continue;
     const key = `${a.id}#${k}`;
     if (a.kind === 'span') out.push({ kind: 'span', key: a.id, lo: a.lo, hi: a.hi, color: a.color });
-    else if (a.kind === 'area') {
+    else if (a.kind === 'zone') {
+      // the zone's interval for this curve (its value on the axis the zone follows)
+      const at = ds.axes.findIndex((x) => x.id === a.at);
+      if (at < 0 || at === xDim) continue;
+      const [lo, hi] = zoneAt(a.pts, ds.axes[at].values[idx[at]]);
+      if (Number.isFinite(lo) && Number.isFinite(hi)) out.push({ kind: 'span', key, lo, hi, color: a.color });
+    } else if (a.kind === 'area') {
       if (a.field === field) out.push({ kind: 'area', key, x: axis.values, lo: line(a.dataset, a.lo, xDim, idx), hi: line(a.dataset, a.hi, xDim, idx), color: a.color });
     }
     else if (a.kind === 'curve') {
@@ -60,6 +67,22 @@ export function overlaysFor(anns: Annotation[], ds: Dataset, xDim: number, field
           text: text ? `${a.label} = ${num(a.x2[k] - a.x1[k], axis.unit)}` : undefined,
         });
     }
+  }
+  return out;
+}
+
+// A zone drawn on a 2D map, in data coordinates of the map: its points as (x, y) pairs for the start and end edges.
+// `swap`: the analysed axis is the map's y (the edges run vertically in data, horizontally on screen).
+export type MapZone = { key: string; color: string; swap: boolean; pts: { y: number; lo: number; hi: number }[]; edit: { node: string; index: number } };
+
+// Zones of the analyses of this dataset that can be drawn (and edited) on a map of axes xDim × yDim.
+export function zonesFor(anns: Annotation[], ds: Dataset, xDim: number, yDim: number): MapZone[] {
+  const out: MapZone[] = [];
+  const [xId, yId] = [ds.axes[xDim].id, ds.axes[yDim].id];
+  for (const a of anns) {
+    if (a.datasetKey !== ds.key || a.kind !== 'zone') continue;
+    if (a.along === xId && a.at === yId) out.push({ key: a.id, color: a.color, swap: false, pts: a.pts, edit: a.edit });
+    else if (a.along === yId && a.at === xId) out.push({ key: a.id, color: a.color, swap: true, pts: a.pts, edit: a.edit });
   }
   return out;
 }

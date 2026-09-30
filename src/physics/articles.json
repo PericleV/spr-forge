@@ -1,0 +1,483 @@
+[
+ {
+  "id": "user-water-1332",
+  "name": "Water (n = 1.332) · Sebek 2023",
+  "color": "#6fb3e0",
+  "model": {
+   "type": "constant",
+   "n": 1.332,
+   "k": 0
+  },
+  "source": "sensing medium of M. Sebek et al. (2023): n_s = 1.332 → 1.337",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-glass152",
+  "name": "glass (n = 1.52)",
+  "color": "#dfe7ee",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0
+  },
+  "source": "assumed (glass substrate)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-au-treebu",
+  "name": "Au (0.18344 + 3.4332i) · Treebupachatsakul 2021",
+  "color": "#d4af37",
+  "model": {
+   "type": "constant",
+   "n": 0.18344,
+   "k": 3.4332
+  },
+  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), gold at 633 nm",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-n133",
+  "name": "water (n = 1.33) · Treebupachatsakul 2021",
+  "color": "#6fb3e0",
+  "model": {
+   "type": "constant",
+   "n": 1.33,
+   "k": 0
+  },
+  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), sensing medium",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-exciton",
+  "name": "Exciton layer (Lorentz)",
+  "color": "#c24fbd",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 2.56,
+   "wp": 0,
+   "gamma": 0,
+   "osc": [
+    {
+     "f": 0.06,
+     "w0": 1.9,
+     "g": 0.05
+    }
+   ]
+  },
+  "source": "Example material: ε∞ = 2.56 with one Lorentz oscillator, E₀ = 1.9 eV (652.5 nm), γ = 50 meV",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ag-lu2019",
+  "name": "Ag (Drude, Lu 2019)",
+  "color": "#b8bcc6",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 3.7,
+   "wp": 9.1,
+   "gamma": 0.018,
+   "osc": []
+  },
+  "source": "Drude fit of Johnson & Christy used by H. Lu et al., Opt. Express 27, 5383 (2019): ε∞ = 3.7, ωp = 9.1 eV, γ = 0.018 eV",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-si3n4-22",
+  "name": "Si₃N₄ (n = 2.2) · Lu 2019",
+  "color": "#8fb3d9",
+  "model": {
+   "type": "constant",
+   "n": 2.2,
+   "k": 0
+  },
+  "source": "H. Lu et al. (2019)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sio2-145",
+  "name": "SiO₂ (n = 1.45) · Lu 2019",
+  "color": "#3a6fb0",
+  "model": {
+   "type": "constant",
+   "n": 1.45,
+   "k": 0
+  },
+  "source": "H. Lu et al. (2019)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-al2o3-176",
+  "name": "Al₂O₃ (n = 1.76) · Lu 2019",
+  "color": "#f2c9a0",
+  "model": {
+   "type": "constant",
+   "n": 1.76,
+   "k": 0
+  },
+  "source": "H. Lu et al. (2019)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ag-jena",
+  "name": "Ag (Drude, Jena 2021)",
+  "color": "#b8bcc6",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 5,
+   "wp": 8.951682613840001,
+   "gamma": 0.0434419891554,
+   "osc": []
+  },
+  "source": "Drude model of S. Jena et al., arXiv:2105.01888: ε∞ = 5, ωp = 1.36·10¹⁶ rad/s, γ = 6.6·10¹³ rad/s",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-n147",
+  "name": "L / spacer / cavity (n = 1.47) · Jena 2021",
+  "color": "#9ec5e8",
+  "model": {
+   "type": "constant",
+   "n": 1.47,
+   "k": 0
+  },
+  "source": "S. Jena et al. (2021)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-n196",
+  "name": "H (n = 1.96) · Jena 2021",
+  "color": "#3f6fb5",
+  "model": {
+   "type": "constant",
+   "n": 1.96,
+   "k": 0
+  },
+  "source": "S. Jena et al. (2021)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ge-4",
+  "name": "Ge (n = 4.0) · He 2021",
+  "color": "#7b7f86",
+  "model": {
+   "type": "constant",
+   "n": 4,
+   "k": 0
+  },
+  "source": "M. He et al. (2021), published code: Ge = 4.0",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sio-225",
+  "name": "SiO (n = 2.25) · He 2021",
+  "color": "#9ec5e8",
+  "model": {
+   "type": "constant",
+   "n": 2.25,
+   "k": 0
+  },
+  "source": "M. He et al. (2021), published code: SiO = 2.25 (layers and substrate)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cdo-nolen",
+  "name": "CdO (doped, Drude) · Nolen 2020",
+  "color": "#c98b3a",
+  "model": {
+   "type": "drude-carrier",
+   "epsInf": 5.1,
+   "N": 2.2,
+   "mStar0": 0.1,
+   "C": 0.6850736599492987,
+   "mobility": 200
+  },
+  "source": "J. R. Nolen et al., Phys. Rev. Mater. 4, 025202 (2020), as in the code of M. He et al. (2021): ε∞ = 5.1, m0* = 0.1, μ = 200 cm²/(V·s), non-parabolicity 1.47 with (3πn)^⅔ (here C = 1.47·(3.14/π²)^⅔ in the (3π²n)^⅔ form)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-mgf2-138",
+  "name": "MgF₂ (n = 1.38)",
+  "color": "#cfe8d8",
+  "model": {
+   "type": "constant",
+   "n": 1.38,
+   "k": 0
+  },
+  "source": "typical thin-film MgF₂ in the visible (constant approximation)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-h-225",
+  "name": "H (n = 2.25) · OIC 2025",
+  "color": "#3f6fb5",
+  "model": {
+   "type": "constant",
+   "n": 2.25,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-m-138",
+  "name": "M (n = 1.38) · OIC 2025",
+  "color": "#cfe8d8",
+  "model": {
+   "type": "constant",
+   "n": 1.38,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sub-152",
+  "name": "substrate (n = 1.52) · OIC 2025",
+  "color": "#dfe7ee",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-lc-no",
+  "name": "Nematic LC, n_o = 1.52",
+  "color": "#d9b3e6",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0
+  },
+  "source": "Example value close to the ordinary index of the nematic mixture E7 in the visible (dispersion neglected)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-lc-ne",
+  "name": "Nematic LC, n_e = 1.74",
+  "color": "#a45cc0",
+  "model": {
+   "type": "constant",
+   "n": 1.74,
+   "k": 0
+  },
+  "source": "Example value close to the extraordinary index of the nematic mixture E7 in the visible (dispersion neglected)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-pankin-1",
+  "name": "Isotropic, n = 1 · Pankin 2022",
+  "color": "#cfe3f2",
+  "model": {
+   "type": "constant",
+   "n": 1,
+   "k": 0
+  },
+  "source": "Model value, P. S. Pankin et al., J. Opt. Soc. Am. B 39, 968 (2022)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-pankin-2",
+  "name": "Anisotropic component, n = 2 · Pankin 2022",
+  "color": "#7d4fb3",
+  "model": {
+   "type": "constant",
+   "n": 2,
+   "k": 0
+  },
+  "source": "Model value, P. S. Pankin et al., J. Opt. Soc. Am. B 39, 968 (2022)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-liu-prism",
+  "name": "Prism, n = 1.52 · Liu 2023",
+  "color": "#b8d4e8",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0
+  },
+  "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-liu-sio2",
+  "name": "SiO₂ (n = 1.47) · Liu 2023",
+  "color": "#3a6fb0",
+  "model": {
+   "type": "constant",
+   "n": 1.47,
+   "k": 0
+  },
+  "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-liu-tio2",
+  "name": "TiO₂ (n = 2.16) · Liu 2023",
+  "color": "#e0e0e0",
+  "model": {
+   "type": "constant",
+   "n": 2.16,
+   "k": 0
+  },
+  "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-liu-no",
+  "name": "ABM n_o = 1.52 + 0.001i · Liu 2023",
+  "color": "#d9b3e6",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0.001
+  },
+  "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-liu-ne",
+  "name": "ABM n_e = 1.72 + 0.001i · Liu 2023",
+  "color": "#a45cc0",
+  "model": {
+   "type": "constant",
+   "n": 1.72,
+   "k": 0.001
+  },
+  "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cots-no",
+  "name": "CLC / PPAM n_o = 1.54 · Pyatnov 2018",
+  "color": "#d9c3e6",
+  "model": {
+   "type": "constant",
+   "n": 1.54,
+   "k": 0
+  },
+  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cots-ne",
+  "name": "CLC / PPAM n_e = 1.71 · Pyatnov 2018",
+  "color": "#8e5bb5",
+  "model": {
+   "type": "constant",
+   "n": 1.71,
+   "k": 0
+  },
+  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cots-nm",
+  "name": "Surrounding medium, n = 1.625",
+  "color": "#cfe3f2",
+  "model": {
+   "type": "constant",
+   "n": 1.625,
+   "k": 0
+  },
+  "source": "the mean CLC index (n_o + n_e)/2, as in Pyatnov et al. 2018",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ge-ir",
+  "name": "Ge (IR, n = 4.0)",
+  "color": "#7b7f86",
+  "model": {
+   "type": "constant",
+   "n": 4,
+   "k": 0
+  },
+  "source": "germanium in the mid-infrared, n ≈ 4.0 (Handbook of Optics); constant approximation",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sio2-ir",
+  "name": "SiO₂ (mid-IR, k = 8.2e-4) · Pan 2024",
+  "color": "#9ec5e8",
+  "model": {
+   "type": "formula",
+   "formula": 1,
+   "coefficients": [
+    0,
+    0.6961663,
+    0.0684043,
+    0.4079426,
+    0.1162414,
+    0.8974794,
+    9.896161
+   ],
+   "k": 0.00082
+  },
+  "source": "n: Malitson (1965) dispersion formula; k = 8.2·10⁻⁴: weak mid-IR absorption chosen so that the published optimum of Pan et al. (2024) gives their peak absorptance (calibration)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-au-drude",
+  "name": "Au (Drude, Ordal 1983)",
+  "color": "#d4af37",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 1,
+   "wp": 9.026,
+   "gamma": 0.02666,
+   "osc": []
+  },
+  "source": "M. A. Ordal et al., Appl. Opt. 22, 1099 (1983): ωp = 7.28·10⁴ cm⁻¹, ωτ = 215 cm⁻¹ (infrared Drude fit)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-si-ir",
+  "name": "Si (IR, n = 3.42)",
+  "color": "#5a6270",
+  "model": {
+   "type": "constant",
+   "n": 3.42,
+   "k": 0
+  },
+  "source": "silicon substrate in the mid-infrared",
+  "builtin": true,
+  "group": "From articles (examples)"
+ }
+]

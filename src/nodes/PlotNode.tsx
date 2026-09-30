@@ -1,18 +1,19 @@
 import { useMemo, useRef } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import { axisTitle, axisValueText, grid, line, metaOf } from '../engine/dataset.ts';
+import { axisTitle, axisValueText, grid, line, metaOf, strides } from '../engine/dataset.ts';
 import type { Annotation, Dataset } from '../engine/types.ts';
 import { seriesColor } from '../plot/colors.ts';
 import { LinePlot, type Series } from '../plot/LinePlot.tsx';
 import { MapPlot } from '../plot/MapPlot.tsx';
-import { markKey, overlaysFor, tracesFor, visibleMarks } from '../plot/overlays.ts';
+import { markKey, overlaysFor, tracesFor, visibleMarks, zonesFor, type MapZone } from '../plot/overlays.ts';
 import { FigureTools } from '../plot/FigureTools.tsx';
 import { exportCsv } from '../plot/export.ts';
 import type { AppNode, PlotData, PlotMode, PlotNode } from '../types.ts';
 import { MapViewControls, NumInput, OutPort, Port } from './ui.tsx';
 import { Histogram } from '../plot/Histogram.tsx';
 import { binsOf } from '../plot/histStats.ts';
+import { gridFromPoints } from '../plot/mapGrid.ts';
 
 const MAX_CURVES = 60;
 const NO_ANNOTATIONS: Annotation[] = [];
@@ -36,11 +37,12 @@ function resolveView(ds: Dataset, d: PlotData): View {
   const fixed = ds.axes.map((a) => Math.min(a.values.length - 1, Math.max(0, d.fixed[a.id] ?? Math.floor((a.values.length - 1) / 2))));
   if (!free.length) return { mode: 'point', x: -1, y: -1, series: -1, fixed, sliders: [], free };
 
-  const x = has(d.x) ? pick(d.x) : has('theta') ? pick('theta') : has('lambda') ? pick('lambda') : has('x') ? pick('x') : free[0];
+  const x = has(d.x) ? pick(d.x) : has('theta') ? pick('theta') : has('lambda') ? pick('lambda') : has('x') ? pick('x') : has('point') ? pick('point') : free[0];
   // values over Monte Carlo samples only: their distribution
   const onlySamples = free.length === 1 && ids[free[0]] === 'sample';
   let mode: View['mode'] = d.mode === 'auto' ? (onlySamples ? 'histogram' : has('theta') && has('lambda') ? 'map' : 'curves') : d.mode;
-  if (mode === 'map' && free.length < 2) mode = 'curves';
+  // a map of three quantities (X and Y quantities) needs no second axis
+  if (mode === 'map' && free.length < 2 && !d.xField && !d.yField) mode = 'curves';
   if (mode === 'histogram') {
     // histogram of the field over the X axis (the other axes held at their sliders)
     return { mode, x, y: -1, series: -1, fixed, sliders: free.filter((i) => i !== x), free };
@@ -49,25 +51,42 @@ function resolveView(ds: Dataset, d: PlotData): View {
   let y = -1;
   let series = -1;
   if (mode === 'map') {
-    y = has(d.y) && pick(d.y) !== x ? pick(d.y) : (free.find((i) => ids[i] === 'lambda' && i !== x) ?? free.find((i) => i !== x)!);
+    // (none when a map of quantities has a single swept axis)
+    y = has(d.y) && pick(d.y) !== x ? pick(d.y) : (free.find((i) => ids[i] === 'lambda' && i !== x) ?? free.find((i) => i !== x) ?? -1);
   } else if (d.series !== 'none') {
     if (has(d.series) && pick(d.series) !== x) series = pick(d.series);
-    else if (d.series === '') series = free.find((i) => i !== x && (ids[i].startsWith('sweep:') || ids[i] === 'design' || ids[i] === 'sample')) ?? -1;
+    else if (d.series === '') series = free.find((i) => i !== x && (ids[i].startsWith('sweep:') || ids[i] === 'design' || ids[i] === 'sample' || ids[i] === 'source')) ?? -1;
   }
   const sliders = free.filter((i) => i !== x && i !== y && i !== series);
   return { mode, x, y, series, fixed, sliders, free };
 }
 
 export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
-  const { updateNodeData } = useReactFlow<AppNode>();
+  const { updateNodeData, getNode } = useReactFlow<AppNode>();
   const set = (patch: Partial<PlotData>) => updateNodeData(id, patch);
   const result = useNodeResult(id);
+  // a zone edited on the map goes back to its analysis node (an interval of FWHM, or the interval of Min / max, Sensitivity)
+  const editZone = (z: MapZone, pts: MapZone['pts']) => {
+    const owner = getNode(z.edit.node);
+    if (!owner) return;
+    if (owner.type === 'fwhm') {
+      const intervals = owner.data.intervals.map((iv, j) => (j === z.edit.index && iv.path ? { ...iv, path: { ...iv.path, pts } } : iv));
+      updateNodeData(owner.id, { intervals });
+    } else if ((owner.type === 'extremum' || owner.type === 'sensitivity') && owner.data.path) updateNodeData(owner.id, { path: { ...owner.data.path, pts } });
+  };
   const out = result?.outs.out;
   const ds = out?.type === 'data' ? out.dataset : null;
   const connected = !!result?.info?.connected;
   const view = useMemo(() => (ds ? resolveView(ds, data) : null), [ds, data]);
   const meta = (ds && (metaOf(ds, data.field) ?? ds.meta[0])) || { key: data.field, label: data.field, short: data.field, unit: '' };
   const field = meta.key;
+  // a quantity as X (curves, maps) and as Y (maps)
+  // merged data (source × row): X is a quantity by default (the first swept parameter kept as a quantity, else the first
+  // quantity other than the plotted one), not the row number
+  const autoX = ds && !data.xField && ds.axes.some((a) => a.id === 'point') ? (ds.meta.find((m) => m.key.startsWith('ax:')) ?? ds.meta.find((m) => m.key !== field))?.key : undefined;
+  const xKey = data.xField || autoX;
+  const xMeta = (ds && xKey && metaOf(ds, xKey)) || undefined;
+  const yMeta = (ds && data.yField && metaOf(ds, data.yField)) || undefined;
   const yDomain = data.autoY ? undefined : meta.domain;
   const allMarks = out?.type === 'data' ? out.annotations : NO_ANNOTATIONS;
   const annotations = useMemo(() => visibleMarks(allMarks, data.showMarks, data.hiddenMarks), [allMarks, data.showMarks, data.hiddenMarks]);
@@ -96,28 +115,42 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
         label: seriesAxis ? `${seriesAxis.label} = ${axisValueText(seriesAxis, si)}` : meta.short,
         color: seriesColor(k, selected.length),
         y: line(ds, field, view.x, idx),
+        ...(xMeta ? { x: line(ds, xMeta.key, view.x, idx), dots: true, noLine: !!data.noLines } : {}),
         idx,
       };
     });
-  }, [ds, view, selected, seriesAxis, field, meta.short]);
+  }, [ds, view, selected, seriesAxis, field, meta.short, xMeta, data.noLines]);
 
   const histValues = useMemo(() => (ds && view?.mode === 'histogram' ? line(ds, field, view.x, view.fixed) : null), [ds, view, field]);
 
   const map = useMemo(
-    () => (ds && view?.mode === 'map' ? grid(ds, field, view.x, view.y, view.fixed) : null),
-    [ds, view, field],
+    () => (ds && view?.mode === 'map' && !xMeta && !yMeta && view.y >= 0 ? grid(ds, field, view.x, view.y, view.fixed) : null),
+    [ds, view, field, xMeta, yMeta],
   );
+  // a map of three quantities: all the points of the data, on the grid of their distinct X and Y values
+  // a map with a quantity as X or Y: every point of the data at (X, Y), coloured by Z, on the grid of the distinct values
+  const pointMap = useMemo(() => {
+    if (!ds || !view || view.mode !== 'map' || !(xMeta || yMeta) || (!yMeta && view.y < 0)) return null;
+    const st = strides(ds.axes);
+    const axisAt = (i: number) => Float64Array.from({ length: ds.size }, (_, k) => ds.axes[i].values[Math.floor(k / st[i]) % ds.axes[i].values.length]);
+    const xs = xMeta ? ds.fields[xMeta.key] : axisAt(view.x);
+    const ys = yMeta ? ds.fields[yMeta.key] : axisAt(view.y);
+    return gridFromPoints(xs, ys, ds.fields[field]);
+  }, [ds, view, field, xMeta, yMeta]);
+  const pmX = xMeta ? { id: `field:${xMeta.key}`, label: xMeta.short, unit: xMeta.unit } : ds && view ? ds.axes[view.x] : null;
+  const pmY = yMeta ? { id: `field:${yMeta.key}`, label: yMeta.short, unit: yMeta.unit } : ds && view && view.y >= 0 ? ds.axes[view.y] : null;
 
   // Analysis marks for every drawn curve (labels only when few curves are shown).
   const overlays = useMemo(
-    () => (ds && view ? series.flatMap((s) => overlaysFor(annotations, ds, view.x, field, s.idx, series.length <= 3)) : []),
-    [annotations, ds, view, series, field],
+    () => (ds && view && !xMeta ? series.flatMap((s) => overlaysFor(annotations, ds, view.x, field, s.idx, series.length <= 3)) : []),
+    [annotations, ds, view, series, field, xMeta],
   );
   const traces = useMemo(
-    () => (ds && view?.mode === 'map' ? tracesFor(annotations, ds, view.x, view.y, field, view.fixed) : []),
-    [annotations, ds, view, field],
+    () => (ds && view?.mode === 'map' && view.y >= 0 && !xMeta && !yMeta ? tracesFor(annotations, ds, view.x, view.y, field, view.fixed) : []),
+    [annotations, ds, view, field, xMeta, yMeta],
   );
-  const marks = [...new Map(allMarks.filter((a) => a.kind !== 'span' && a.datasetKey === ds?.key).map((a) => [markKey(a), a])).values()];
+  const zones = useMemo(() => (ds && view?.mode === 'map' && view.y >= 0 && !xMeta && !yMeta ? zonesFor(annotations, ds, view.x, view.y) : []), [annotations, ds, view, xMeta, yMeta]);
+  const marks = [...new Map(allMarks.filter((a) => a.kind !== 'span' && a.kind !== 'zone' && a.datasetKey === ds?.key).map((a) => [markKey(a), a])).values()];
   const toggleMark = (k: string) => {
     const h = data.hiddenMarks ?? [];
     set({ hiddenMarks: h.includes(k) ? h.filter((x) => x !== k) : [...h, k] });
@@ -127,7 +160,9 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
   const fileName = `${out?.type === 'data' ? out.name : 'plot'}_${meta.short}`;
   const csv = () => {
     if (!ds || !view) return;
-    if (view.mode === 'curves') {
+    if (view.mode === 'curves' && xMeta) {
+      exportCsv(['curve', `${xMeta.short}${xMeta.unit ? ` [${xMeta.unit}]` : ''}`, meta.short], series.flatMap((s) => Array.from(s.y, (y, i) => [s.label, s.x![i], y])), fileName);
+    } else if (view.mode === 'curves') {
       const xa = ds.axes[view.x];
       exportCsv(
         [axisTitle(xa), ...series.map((s) => `${meta.short} ${s.label}`)],
@@ -146,6 +181,25 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
     }
   };
 
+  // the choices of X and Y: the swept parameters of the data (not the source / row numbers of merged data), then its quantities
+  const structural = (id: string) => id === 'source' || id === 'point';
+  const coordOptions =
+    ds && view
+      ? [
+          ...view.free.filter((i) => !structural(ds.axes[i].id)).map((i) => <option key={`a${i}`} value={`axis:${ds.axes[i].id}`}>{axisTitle(ds.axes[i])}</option>),
+          ...ds.meta.map((f) => <option key={`f${f.key}`} value={`field:${f.key}`}>{f.label}{f.unit ? ` [${f.unit}]` : ''}</option>),
+        ]
+      : null;
+  const fieldOptions = (ds?.meta ?? [meta]).map((f) => (
+    <option key={f.key} value={f.key}>{f.label}{f.unit ? ` [${f.unit}]` : ''}</option>
+  ));
+  const setCoord = (which: 'x' | 'y', v: string) => {
+    const [kind, id] = [v.slice(0, v.indexOf(':')), v.slice(v.indexOf(':') + 1)];
+    if (which === 'x') set(kind === 'field' ? { xField: id } : { x: id, xField: '' });
+    else set(kind === 'field' ? { yField: id } : { y: id, yField: '' });
+  };
+  // with a quantity as X, the parameter the points of a curve follow (when there is a choice)
+  const alongChoices = view ? view.free.filter((i) => i !== view.series) : [];
   const setSel = (idx: number[]) => seriesAxis && set({ seriesSel: { axis: seriesAxis.id, idx } });
   const isSel = (i: number) => data.seriesSel?.axis !== seriesAxis?.id || data.seriesSel!.idx.includes(i);
   const axisOptions = (list: number[]) =>
@@ -163,11 +217,6 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
       </div>
 
       <div className="row wrap">
-        <select className="nodrag" value={field} onChange={(e) => set({ field: e.target.value })}>
-          {(ds?.meta ?? [meta]).map((f) => (
-            <option key={f.key} value={f.key}>{f.label}{f.unit ? ` [${f.unit}]` : ''}</option>
-          ))}
-        </select>
         <select className="nodrag" value={data.mode} onChange={(e) => set({ mode: e.target.value as PlotMode })}>
           <option value="auto">View: auto</option>
           <option value="curves">View: curves</option>
@@ -182,37 +231,77 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
 
       {ds && view && view.mode !== 'point' && (
         <div className="row wrap">
-          <label className="radio">
-            X
-            <select className="nodrag" value={ds.axes[view.x].id} onChange={(e) => set({ x: e.target.value })}>
-              {axisOptions(view.free)}
-            </select>
-          </label>
           {view.mode === 'histogram' ? (
-            <label className="radio" title="0 = automatic (Freedman–Diaconis)">
-              bins <NumInput className="tiny" value={data.bins ?? 0} min={0} step={1} onChange={(bins) => set({ bins })} />
-            </label>
-          ) : view.mode === 'map' ? (
-            <label className="radio">
-              Y
-              <select className="nodrag" value={ds.axes[view.y].id} onChange={(e) => set({ y: e.target.value })}>
-                {axisOptions(view.free.filter((i) => i !== view.x))}
-              </select>
-            </label>
-          ) : (
-            view.free.length > 1 && (
+            <>
               <label className="radio">
-                Curves for
-                <select
-                  className="nodrag"
-                  value={view.series >= 0 ? ds.axes[view.series].id : 'none'}
-                  onChange={(e) => set({ series: e.target.value })}
-                >
-                  <option value="none">— (single curve)</option>
-                  {axisOptions(view.free.filter((i) => i !== view.x))}
+                of
+                <select className="nodrag" value={field} onChange={(e) => set({ field: e.target.value })}>
+                  {fieldOptions}
                 </select>
               </label>
-            )
+              <label className="radio">
+                over
+                <select className="nodrag" value={ds.axes[view.x].id} onChange={(e) => set({ x: e.target.value })}>
+                  {axisOptions(view.free)}
+                </select>
+              </label>
+              <label className="radio" title="0 = automatic (Freedman–Diaconis)">
+                bins <NumInput className="tiny" value={data.bins ?? 0} min={0} step={1} onChange={(bins) => set({ bins })} />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="radio" title="What is on the horizontal axis: a swept parameter of the data, or any of its quantities (e.g. the FWHM against the resonance angle)">
+                X
+                <select className="nodrag" value={xMeta ? `field:${xMeta.key}` : `axis:${ds.axes[view.x].id}`} onChange={(e) => setCoord('x', e.target.value)}>
+                  {coordOptions}
+                </select>
+              </label>
+              <label className="radio">
+                Y
+                {view.mode === 'map' ? (
+                  <select className="nodrag" value={yMeta ? `field:${yMeta.key}` : view.y >= 0 ? `axis:${ds.axes[view.y].id}` : ''} onChange={(e) => setCoord('y', e.target.value)}>
+                    {!yMeta && view.y < 0 && <option value="">choose</option>}
+                    {coordOptions}
+                  </select>
+                ) : (
+                  <select className="nodrag" value={field} onChange={(e) => set({ field: e.target.value })}>
+                    {fieldOptions}
+                  </select>
+                )}
+              </label>
+              {view.mode === 'map' && (
+                <label className="radio" title="The colour of the map">
+                  Z (colour)
+                  <select className="nodrag" value={field} onChange={(e) => set({ field: e.target.value })}>
+                    {fieldOptions}
+                  </select>
+                </label>
+              )}
+              {view.mode === 'curves' && view.free.length > 1 && (
+                <label className="radio" title="One curve for each value of this parameter (e.g. each source of Merge data)">
+                  Curves for
+                  <select className="nodrag" value={view.series >= 0 ? ds.axes[view.series].id : 'none'} onChange={(e) => set({ series: e.target.value })}>
+                    <option value="none">— (single curve)</option>
+                    {axisOptions(view.free.filter((i) => i !== view.x))}
+                  </select>
+                </label>
+              )}
+              {xMeta && view.mode === 'curves' && alongChoices.length > 1 && (
+                <label className="radio" title="With a quantity as X, the points of a curve follow this parameter of the data (in its order)">
+                  joined along
+                  <select className="nodrag" value={ds.axes[view.x].id} onChange={(e) => set({ x: e.target.value })}>
+                    {axisOptions(alongChoices)}
+                  </select>
+                </label>
+              )}
+              {xMeta && view.mode === 'curves' && (
+                <label className="radio" title="Points without the lines joining them">
+                  <input className="nodrag" type="checkbox" checked={!!data.noLines} onChange={(e) => set({ noLines: e.target.checked })} />
+                  points only
+                </label>
+              )}
+            </>
           )}
         </div>
       )}
@@ -270,11 +359,34 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
       {ds && view?.mode === 'map' && <MapViewControls view={data.mapView} onChange={(mapView) => set({ mapView })} />}
       <div className="nodrag nowheel chart" ref={chart}>
         {ds && view?.mode === 'curves' && (
-          <LinePlot xAxis={ds.axes[view.x]} series={series} yLabel={meta.short} yUnit={meta.unit} yDomain={yDomain} xLim={data.xLim} yLim={data.yLim} overlays={overlays} />
+          <LinePlot
+            xAxis={xMeta ? { id: `field:${xMeta.key}`, label: xMeta.short, unit: xMeta.unit, values: [] } : ds.axes[view.x]}
+            series={series}
+            yLabel={meta.short}
+            yUnit={meta.unit}
+            yDomain={yDomain}
+            xLim={data.xLim}
+            yLim={data.yLim}
+            overlays={overlays}
+          />
         )}
         {ds && view?.mode === 'histogram' && histValues && (
           <Histogram values={histValues} label={meta.short} unit={meta.unit} bins={data.bins ?? 0} />
         )}
+        {ds && view?.mode === 'map' && pointMap && pmX && pmY && (
+          <MapPlot
+            xAxis={{ id: pmX.id, label: pmX.label, unit: pmX.unit, values: pointMap.x }}
+            yAxis={{ id: pmY.id, label: pmY.label, unit: pmY.unit, values: pointMap.y }}
+            values={pointMap.values}
+            zLabel={meta.short}
+            zUnit={meta.unit}
+            zDomain={yDomain}
+            xLim={data.xLim}
+            yLim={data.yLim}
+            view={data.mapView}
+          />
+        )}
+        {ds && view?.mode === 'map' && (xMeta || yMeta) && !pointMap && <div className="empty small">Choose X, Y and Z.</div>}
         {ds && view?.mode === 'map' && map && (
           <MapPlot
             xAxis={ds.axes[view.x]}
@@ -287,6 +399,8 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
             yLim={data.yLim}
             view={data.mapView}
             traces={traces}
+            zones={zones}
+            onZone={editZone}
           />
         )}
         {ds && view?.mode === 'point' && (

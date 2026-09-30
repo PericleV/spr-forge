@@ -10,6 +10,47 @@ import type { Polarization } from './tmm.ts';
 
 export type FieldQuantity = 'E2' | 'H2' | 'Ex' | 'Ey' | 'Ez' | 'Hx' | 'Hy' | 'Hz';
 export type FieldPart = 'abs' | 're' | 'im' | 'phase';
+// Smoothing of the ringing of the truncated Fourier sums in x. Measured (gold grating, TM, at the plasmon): Hy is clean,
+// but Ex ∝ ∂z Hy and Ez ∝ ∂x Hy are derivatives, which multiply the (truncated) top harmonics by ~N — the raw sums ripple
+// across the whole grating, not only at the walls (4–12× the true variation at N = 30–60); σ factors, made for
+// derivatives of truncated Fourier series, bring them to the converged field (1–5 %). the harmonic of order p weighted by the Lanczos σ
+// factor sinc(πp/(N+1)) or the Fejér factor 1 − |p|/(N+1) — the map is then the field averaged in x over about Λ/(N+1)
+// (a convolution with a short kernel: the ringing goes, sharp features are blurred over that length).
+export type GibbsSmoothing = 'lanczos' | 'fejer';
+export function sigmaFactors(M: number, kind?: GibbsSmoothing): Float64Array {
+  const N = (M - 1) / 2;
+  return Float64Array.from({ length: M }, (_, m) => {
+    const p = Math.abs(m - N) / (N + 1);
+    if (!kind || p === 0) return 1;
+    return kind === 'fejer' ? 1 - p : Math.sin(Math.PI * p) / (Math.PI * p);
+  });
+}
+
+// The map grid: x over `periods` periods and z from −zIn to zOut past the structure, or a window [x0, x1] × [z0, z1]
+// (nm; z = 0 at the top of the first layer, growing into the structure) that holds all nx × nz points.
+export type FieldMapOpts = {
+  quantity: FieldQuantity;
+  part: FieldPart;
+  periods: number;
+  nx: number;
+  nz: number;
+  zIn: number;
+  zOut: number;
+  x0?: number;
+  x1?: number;
+  z0?: number;
+  z1?: number;
+  sigma?: GibbsSmoothing;
+};
+const lin = (a: number, b: number, n: number) => Array.from({ length: n }, (_, i) => a + (i / (n - 1)) * (b - a));
+export function mapGrid(o: FieldMapOpts, period: number, total: number) {
+  const winX = Number.isFinite(o.x0) && Number.isFinite(o.x1);
+  const winZ = Number.isFinite(o.z0) && Number.isFinite(o.z1);
+  return {
+    xs: winX ? lin(o.x0!, o.x1!, o.nx) : lin(0, o.periods * period, o.nx),
+    zs: winZ ? lin(o.z0!, o.z1!, o.nz) : lin(-o.zIn, total + o.zOut, o.nz),
+  };
+}
 
 export type FieldMap = {
   xs: number[]; // nm
@@ -44,7 +85,7 @@ export function fieldMap(
   layers: RcwaLayer[],
   period: number,
   pol: Polarization,
-  opts: { quantity: FieldQuantity; part: FieldPart; periods: number; nx: number; nz: number; zIn: number; zOut: number },
+  opts: FieldMapOpts,
 ): FieldMap {
   const { kx, modes, layerS: ls, Sref, Strn, k0 } = sol;
   const M = kx.length;
@@ -117,11 +158,11 @@ export function fieldMap(
 
   // grid
   const total = layers.slice(1, -1).reduce((s, L) => s + L.d, 0);
-  const xs = Array.from({ length: opts.nx }, (_, i) => (i / (opts.nx - 1)) * opts.periods * period);
-  const zs = Array.from({ length: opts.nz }, (_, k) => -opts.zIn + (k / (opts.nz - 1)) * (opts.zIn + total + opts.zOut));
+  const { xs, zs } = mapGrid(opts, period, total);
   const bounds: number[] = [0];
   for (const L of layers.slice(1, -1)) bounds.push(bounds[bounds.length - 1] + L.d);
-  const phase = xs.map((x) => Array.from(kx, (k) => X.exp(X.c(0, k * k0 * x))));
+  const sig = sigmaFactors(M, opts.sigma);
+  const phase = xs.map((x) => Array.from(kx, (k, m) => X.mul(X.c(sig[m]), X.exp(X.c(0, k * k0 * x)))));
   const eps0 = X.mul(X.c(layers[0].n!.re), X.c(layers[0].n!.re));
   const values = new Float64Array(opts.nx * opts.nz);
   const outlines: FieldMap['outlines'] = [];

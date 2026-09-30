@@ -9,7 +9,7 @@ import type { C } from './complex.ts';
 import { add, eye, inv, mul, mulVec, type CMat } from './cmat.ts';
 import { star, type RcwaLayer, type SMat } from './rcwa.ts';
 import type { ConicalSolved } from './rcwaConical.ts';
-import type { FieldMap, FieldPart, FieldQuantity } from './rcwaField.ts';
+import { mapGrid, sigmaFactors, type FieldMap, type FieldMapOpts, type FieldPart } from './rcwaField.ts';
 import type { Polarization } from './tmm.ts';
 
 type Vec = [Float64Array, Float64Array];
@@ -96,7 +96,8 @@ export function conicalRegions(sol: ConicalSolved, layers: RcwaLayer[]) {
 }
 
 // The six components along x at local depth zl (k₀z) of region `reg` (0 = incident medium, 1 … = layers, last = exit).
-export function conicalFieldsAt(sol: ConicalSolved, layers: RcwaLayer[], period: number, regions: ReturnType<typeof conicalRegions>, reg: number, zl: number, xs: number[]): Fields6[] {
+// sig: weights of the harmonics (Gibbs smoothing, sigmaFactors), none = 1
+export function conicalFieldsAt(sol: ConicalSolved, layers: RcwaLayer[], period: number, regions: ReturnType<typeof conicalRegions>, reg: number, zl: number, xs: number[], sig?: Float64Array): Fields6[] {
   const { kx, ky, k0, modes } = sol;
   const M = kx.length;
   const { e, h } = regions[reg].at(zl);
@@ -126,7 +127,7 @@ export function conicalFieldsAt(sol: ConicalSolved, layers: RcwaLayer[], period:
   return xs.map((x) => {
     const sums = [ex, ey, ez, hx, hy, hz, ...(dx ? [dx] : [])].map(() => [0, 0]);
     for (let m = 0; m < M; m++) {
-      const ph = X.exp(X.c(0, kx[m] * k0 * x));
+      const ph = sig ? X.mul(X.c(sig[m]), X.exp(X.c(0, kx[m] * k0 * x))) : X.exp(X.c(0, kx[m] * k0 * x));
       [ex, ey, ez, hx, hy, hz, ...(dx ? [dx] : [])].forEach((v, k) => {
         sums[k][0] += v[0][m] * ph.re - v[1][m] * ph.im;
         sums[k][1] += v[0][m] * ph.im + v[1][m] * ph.re;
@@ -143,13 +144,12 @@ export function conicalFieldMap(
   layers: RcwaLayer[],
   period: number,
   pol: Polarization,
-  opts: { quantity: FieldQuantity; part: FieldPart; periods: number; nx: number; nz: number; zIn: number; zOut: number },
+  opts: FieldMapOpts,
 ): FieldMap {
   const regions = conicalRegions(sol, layers);
   const nIn = layers.length - 2;
   const total = layers.slice(1, -1).reduce((s, L) => s + L.d, 0);
-  const xs = Array.from({ length: opts.nx }, (_, i) => (i / (opts.nx - 1)) * opts.periods * period);
-  const zs = Array.from({ length: opts.nz }, (_, k) => -opts.zIn + (k / (opts.nz - 1)) * (opts.zIn + total + opts.zOut));
+  const { xs, zs } = mapGrid(opts, period, total);
   const bounds: number[] = [0];
   for (const L of layers.slice(1, -1)) bounds.push(bounds[bounds.length - 1] + L.d);
   const outlines: FieldMap['outlines'] = [];
@@ -160,6 +160,7 @@ export function conicalFieldMap(
   const [e0n, h0n] = [sol.inc.E2, sol.inc.H2];
   const comp = (w: C, p: FieldPart) => (p === 'abs' ? Math.hypot(w.re, w.im) : p === 're' ? w.re : p === 'im' ? w.im : (Math.atan2(w.im, w.re) * 180) / Math.PI);
   const values = new Float64Array(opts.nx * opts.nz);
+  const sig = opts.sigma ? sigmaFactors(sol.kx.length, opts.sigma) : undefined;
   zs.forEach((z, iz) => {
     let reg = 0;
     let zl = z * sol.k0;
@@ -169,7 +170,7 @@ export function conicalFieldMap(
       reg = j < nIn ? j + 1 : nIn + 1;
       zl = (z - bounds[Math.min(j, nIn)]) * sol.k0;
     }
-    conicalFieldsAt(sol, layers, period, regions, reg, zl, xs).forEach((f, ix) => {
+    conicalFieldsAt(sol, layers, period, regions, reg, zl, xs, sig).forEach((f, ix) => {
       const q = opts.quantity;
       values[iz * xs.length + ix] =
         q === 'E2' ? (X.abs2(f.Ex) + X.abs2(f.Ey) + X.abs2(f.Ez)) / e0n : q === 'H2' ? (X.abs2(f.Hx) + X.abs2(f.Hy) + X.abs2(f.Hz)) / h0n : comp(f[q], opts.part);

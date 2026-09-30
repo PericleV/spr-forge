@@ -11,6 +11,7 @@ import type { Polarization } from '../physics/tmm.ts';
 import { gratingSlices, type GratingParams } from './grating.ts';
 import type { Bound, FieldMeta, LayerSpec, TmmSpec } from './types.ts';
 import { TMM_META } from './dataset.ts';
+import { roughPlan, sliceIndex } from './rough.ts';
 
 const at = <T,>(b: Bound<T>, dims: number[], idx: number[]) => {
   let k = 0;
@@ -46,6 +47,11 @@ export function rcwaMeta(show: number, conical = false): FieldMeta[] {
           out.push({ key: `${orderKey(q, m)}_${p}`, label: `${q} order ${sub(m)}, ${p} part`, short: `${q}(${sub(m)}) ${p}`, unit: '', domain: [0, 1] });
       }
   if (conical) out.push(...circPartsMeta());
+  // planar: the phase of every order shown (its E amplitude — TE: Ey, TM: Hy / n — as φr, φt of the zeroth order)
+  else
+    for (const q of ['R', 'T'] as const)
+      for (let m = -show; m <= show; m++)
+        out.push({ key: `${orderKey(q, m)}_ph`, label: `phase of ${q} order ${sub(m)}`, short: `φ ${q}(${sub(m)})`, unit: '°', domain: [-180, 180] });
   return out;
 }
 
@@ -88,10 +94,11 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
     const nb = j >= 0 && j < list.length && !(j > 0 && j < list.length - 1 && list[j].grating) ? indexOf(keys[j]) : undefined;
     return indexOf(keys[i], nb);
   };
-  list.forEach((L, i) => {
-    const dn = L.dn + (L.bind.dn ? at(L.bind.dn, dims, idx) : 0);
+  const shiftOf = (L: LayerSpec) => L.dn + (L.bind.dn ? at(L.bind.dn, dims, idx) : 0);
+  const emit = (L: LayerSpec, i: number, dPart?: number) => {
+    const dn = shiftOf(L);
     const shifted = (n: C) => (dn ? X.add(n, c(dn)) : n);
-    const d = L.bind.d ? at(L.bind.d, dims, idx) : L.d;
+    const d = dPart ?? (L.bind.d ? at(L.bind.d, dims, idx) : L.d);
     const g = i > 0 && i < list.length - 1 ? gratingAt(L, dims, idx) : null;
     const an = spec.instances[keys[i]].aniso;
     if (!g && an) {
@@ -142,7 +149,33 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
       out.push({ d: s.h * d, segs: s.segs.map((q) => ({ from: q.from, to: q.to, n: ns[q.m] ?? ns[1] })) });
       owner.push(i);
     }
-  });
+  };
+  // rough interfaces: slices of pixels (RCWA, a cell of the grating period if there is one) or of an effective medium
+  // (Berreman), between the flat parts of the layers
+  const gp = list.map((L, i) => (i > 0 && i < list.length - 1 ? gratingAt(L, dims, idx) : null)).find((g) => g)?.period;
+  const plan = roughPlan(list, dims, idx, gp);
+  if (!plan) list.forEach((L, i) => emit(L, i));
+  else {
+    const special = (i: number) => (i > 0 && i < list.length - 1 && !!list[i].grating) || !!spec.instances[keys[i]].aniso;
+    const fullD = (i: number) => (i === 0 || i === list.length - 1 ? 0 : list[i].bind.d ? at(list[i].bind.d!, dims, idx) : list[i].d);
+    const nOf = (m: number) => (shiftOf(list[m]) ? X.add(plain(m), c(shiftOf(list[m]))) : plain(m));
+    let pixels = false;
+    for (const it of plan.items) {
+      if (it.kind === 'layer') {
+        if (special(it.i) && Math.abs(it.d - fullD(it.i)) > 1e-9) throw new Error('a rough interface reaches a grating or an anisotropic layer');
+        emit(list[it.i], it.i, special(it.i) ? undefined : it.d);
+        continue;
+      }
+      if (it.mats.some(special)) throw new Error('a rough interface reaches a grating or an anisotropic layer');
+      if (spec.rcwa) {
+        pixels = true;
+        const ns = new Map(it.mats.map((m) => [m, nOf(m)]));
+        out.push({ d: it.d, segs: it.segs.map((q) => ({ from: q.from, to: q.to, n: ns.get(q.m)! })) });
+      } else out.push({ n: sliceIndex(it, nOf), d: it.d });
+      owner.push(it.owner);
+    }
+    if (pixels && Number.isNaN(period)) period = plan.cell;
+  }
   return { layers: out, period: Number.isNaN(period) ? 1000 : period, hasGrating: !Number.isNaN(period), owner };
 }
 
@@ -152,16 +185,35 @@ export function rcwaRegionsAt(spec: TmmSpec, idx: number[]): { incident: string;
   const dims = spec.sweeps;
   const matKey = (L: LayerSpec) => (L.bind.mat ? at(L.bind.mat, dims, idx) : L.mat);
   const layers: RegionSpec[] = [];
-  spec.layers.slice(1, -1).forEach((L) => {
-    const d = L.bind.d ? at(L.bind.d, dims, idx) : L.d;
+  const emit = (L: LayerSpec, dPart?: number) => {
+    const d = dPart ?? (L.bind.d ? at(L.bind.d, dims, idx) : L.d);
     const g = gratingAt(L, dims, idx);
     if (!g) {
       layers.push({ d, key: matKey(L) });
       return;
     }
     for (const s of gratingSlices(g)) if (s.h * d > 0) layers.push({ d: s.h * d, segs: s.segs.map((q) => ({ from: q.from, to: q.to, key: g.mats[q.m] ?? g.mats[1] })) });
-  });
+  };
+  const list = spec.layers;
+  const gp = list.map((L, i) => (i > 0 && i < list.length - 1 ? gratingAt(L, dims, idx) : null)).find((g) => g)?.period;
+  const plan = roughPlan(list, dims, idx, gp);
+  if (!plan) list.slice(1, -1).forEach((L) => emit(L));
+  else
+    for (const it of plan.items) {
+      if (it.kind === 'slice') layers.push({ d: it.d, segs: it.segs.map((q) => ({ from: q.from, to: q.to, key: matKey(list[q.m]) })) });
+      else if (it.i > 0 && it.i < list.length - 1) emit(list[it.i], list[it.i].grating ? undefined : it.d);
+    }
   return { incident: matKey(spec.layers[0]), exit: matKey(spec.layers[spec.layers.length - 1]), layers };
+}
+
+// The finite layers of the structure at sweep steps idx as given (a grating is one layer, not its slices): thickness and
+// material (none for a grating), top to bottom.
+export function rcwaLayerList(spec: TmmSpec, idx: number[]): { d: number; key?: string }[] {
+  const dims = spec.sweeps;
+  return spec.layers.slice(1, -1).map((L) => {
+    const d = L.bind.d ? at(L.bind.d, dims, idx) : L.d;
+    return gratingAt(L, dims, idx) ? { d } : { d, key: L.bind.mat ? at(L.bind.mat, dims, idx) : L.mat };
+  });
 }
 
 // The structure at sweep steps idx and wavelength lam: front, back of a thick substrate, common period, orders used.
@@ -176,7 +228,8 @@ function structureAt(spec: TmmSpec, idx: number[], lam: number): At {
 }
 
 // Rte … Ttm: the TE / TM parts of each order (conical incidence; planar: all in the incident polarization)
-type PointResult = { R: number; T: number; phiR: number; phiT: number; Rm: Float64Array; Tm: Float64Array; Rte?: Float64Array; Rtm?: Float64Array; Tte?: Float64Array; Ttm?: Float64Array; Rcp?: Float64Array; Rcm?: Float64Array; Tcp?: Float64Array; Tcm?: Float64Array };
+// phRm / phTm: the phase of every order (planar solver), NaN where the order carries no power
+type PointResult = { R: number; T: number; phiR: number; phiT: number; Rm: Float64Array; Tm: Float64Array; phRm?: Float64Array; phTm?: Float64Array; Rte?: Float64Array; Rtm?: Float64Array; Tte?: Float64Array; Ttm?: Float64Array; Rcp?: Float64Array; Rcm?: Float64Array; Tcp?: Float64Array; Tcm?: Float64Array };
 // One point with N orders (−N … N) when the structure has a grating (0 otherwise); φ ≠ 0: conical incidence.
 function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polarization, orders: number, phi = 0): PointResult {
   const N = s.grating ? orders : 0;
@@ -205,7 +258,10 @@ function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polar
     return { R: r.Rtot, T: r.Ttot, phiR: NaN, phiT: NaN, Rm: r.R, Tm: r.T };
   }
   const r = rcwaSolve(s.st.layers, s.period, lam, theta, pol, N, fact, spec.rcwa!.asr ?? 0).result;
-  return { R: r.Rtot, T: r.Ttot, phiR: Math.atan2(r.r[1][N], r.r[0][N]), phiT: wrap(Math.atan2(r.t[1][N], r.t[0][N]) - tmShift), Rm: r.R, Tm: r.T };
+  // the phases of all the orders: TM transmitted orders as E (Hy / n_exit, the same shift as the zeroth order)
+  const phRm = Float64Array.from(r.R, (e, m) => (e > 0 || m === N ? Math.atan2(r.r[1][m], r.r[0][m]) : NaN));
+  const phTm = Float64Array.from(r.T, (e, m) => (e > 0 || m === N ? wrap(Math.atan2(r.t[1][m], r.t[0][m]) - tmShift) : NaN));
+  return { R: r.Rtot, T: r.Ttot, phiR: phRm[N], phiT: phTm[N], Rm: r.R, Tm: r.T, phRm, phTm };
 }
 
 // Grid point k (flat index over [...sweeps, λ, θ]): sweep steps, λ, θ (with the angle offset) and polarization.
@@ -240,7 +296,7 @@ export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void): Record
   const conical = !!opt.conical;
   const parts = conical ? (['TE', 'TM'] as const) : [];
   const out: Record<string, Float64Array> = Object.fromEntries(
-    [...keys, ...orders.map((o) => o[0]), ...parts.flatMap((p) => ['R', 'T'].flatMap((q) => [`${q}_${p}`, ...orders.filter((o) => o[1] === q).map((o) => `${o[0]}_${p}`)])), ...(conical ? ['R_cp', 'R_cm', 'T_cp', 'T_cm'] : [])].map((k) => [k, new Float64Array(size)]),
+    [...keys, ...orders.map((o) => o[0]), ...(conical ? [] : orders.map((o) => `${o[0]}_ph`)), ...parts.flatMap((p) => ['R', 'T'].flatMap((q) => [`${q}_${p}`, ...orders.filter((o) => o[1] === q).map((o) => `${o[0]}_${p}`)])), ...(conical ? ['R_cp', 'R_cm', 'T_cp', 'T_cm'] : [])].map((k) => [k, new Float64Array(size)]),
   );
   const toDeg = 180 / Math.PI;
   let reported = 0;
@@ -270,6 +326,11 @@ export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void): Record
     out.phiR[k] = r.phiR * toDeg;
     out.phiT[k] = r.phiT * toDeg;
     for (const [key, q, m] of orders) out[key][k] = Math.abs(m) <= N ? (q === 'R' ? r.Rm[N + m] : r.Tm[N + m]) : 0;
+    if (!conical)
+      for (const [key, q, m] of orders) {
+        const ph = q === 'R' ? r.phRm : r.phTm;
+        out[`${key}_ph`][k] = ph && Math.abs(m) <= N ? ph[N + m] * toDeg : NaN;
+      }
     // per point: a single λ with many angles still moves the progress bar
     const done = (k + 1) / size;
     if (onProgress && done - reported >= 0.01) {

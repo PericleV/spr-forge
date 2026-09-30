@@ -1,8 +1,8 @@
 // Projects kept in this browser (besides the autosave of the current one): save, open, delete.
 import { useState } from 'react';
-import { deleteFromBrowser, listSaved, loadFromBrowser, saveToBrowser, type Project } from './project.ts';
+import { deleteFromBrowser, listSaved, loadFromBrowser, saveToBrowser, type LastSession, type Project } from './project.ts';
 
-export function ProjectsPanel(props: { onClose: () => void; current: () => Project; name: string; onOpen: (p: Project, name: string) => void }) {
+export function ProjectsPanel(props: { onClose: () => void; current: () => Project; name: string; onOpen: (p: Project, name: string) => void; last?: LastSession | null }) {
   const [list, setList] = useState(listSaved);
   const [msg, setMsg] = useState('');
   const save = () => {
@@ -27,6 +27,19 @@ export function ProjectsPanel(props: { onClose: () => void; current: () => Proje
         </button>
       </div>
       {msg && <div className="msg warn">{msg}</div>}
+      {props.last && (
+        <div className="lib-list">
+          <div className="project-item" title="The project open when the page was left (kept automatically)">
+            <div>
+              <b>Last session: {props.last.project.name || 'untitled'}</b>
+              <div className="muted">
+                {new Date(props.last.saved).toLocaleString()} · {props.last.project.nodes.length} nodes
+              </div>
+            </div>
+            <button onClick={() => confirm('Open the last session? It replaces the current project.') && props.onOpen(props.last!.project, props.last!.project.name ?? '')}>Open</button>
+          </div>
+        </div>
+      )}
       <div className="lib-list">
         {!list.length && <div className="muted">No saved projects yet.</div>}
         {list.map((e) => (

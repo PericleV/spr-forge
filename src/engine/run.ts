@@ -2,11 +2,12 @@
 import { c, type C } from '../physics/complex.ts';
 import { emaWithFiller, refractiveIndex } from '../physics/materials.ts';
 import { nCos, tmmPoint, type Layer, type Polarization } from '../physics/tmm.ts';
-import type { Bound, Fields, TmmSpec } from './types.ts';
+import type { Bound, Fields, LayerSpec, TmmSpec } from './types.ts';
 import { polPartsMeta, rcwaLayersAt, rcwaMeta, runRcwa } from './runRcwa.ts';
 import { rcwaConical } from '../physics/rcwaConical.ts';
 import { rcwaThickConical } from '../physics/rcwaThick.ts';
-import { TMM_META } from './dataset.ts';
+import { GD_META, TMM_META } from './dataset.ts';
+import { roughPlan, sliceIndex } from './rough.ts';
 
 export const specSize = (spec: TmmSpec) =>
   spec.sweeps.reduce((p, n) => p * n, 1) * spec.lambda.length * spec.theta.length;
@@ -24,7 +25,24 @@ export const polAt = (spec: TmmSpec, idx: number[]): Polarization =>
   spec.polSweep !== undefined ? (idx[spec.polSweep] === 0 ? 'p' : 's') : spec.pol;
 
 // Concrete layers (index and thickness) at sweep steps `idx` and wavelength `lam`.
-export function layersAt(spec: TmmSpec, idx: number[], lam: number, list = spec.layers): Layer[] {
+export const layersAt = (spec: TmmSpec, idx: number[], lam: number, list = spec.layers): Layer[] => layersOwned(spec, idx, lam, list).layers;
+
+// The same with, for each layer, the index in `list` of the layer it comes from: rough interfaces become slices of an
+// effective medium (the most abundant material owns a slice), the rest of the layers around them stays flat.
+export function layersOwned(spec: TmmSpec, idx: number[], lam: number, list = spec.layers): { layers: Layer[]; owner: number[] } {
+  const base = plainLayersAt(spec, idx, lam, list);
+  const plan = roughPlan(list, spec.sweeps, idx);
+  if (!plan) return { layers: base, owner: base.map((_, j) => j) };
+  const layers: Layer[] = [];
+  const owner: number[] = [];
+  for (const it of plan.items) {
+    layers.push(it.kind === 'layer' ? { n: base[it.i].n, d: it.d } : { n: sliceIndex(it, (m) => base[m].n), d: it.d });
+    owner.push(it.kind === 'layer' ? it.i : it.owner);
+  }
+  return { layers, owner };
+}
+
+function plainLayersAt(spec: TmmSpec, idx: number[], lam: number, list: LayerSpec[]): Layer[] {
   // one evaluation of each material instance (the layers of a stack share a few materials)
   const memo = new Map<string, C>();
   const indexOf = (key: string): C => memo.get(key) ?? memo.set(key, indexOfRaw(key)).get(key)!;
@@ -72,13 +90,59 @@ export function incoherentPoint(front: Layer[], back: Layer[], dSub: number, lam
   return { R, T, A: 1 - R - T, ...nan };
 }
 
-// TMM, Berreman 4×4 (anisotropic layers, a Jones state) or RCWA, by the spec.
+// TMM, Berreman 4×4 (anisotropic layers, a Jones state) or RCWA, by the spec; the group delay added when λ is a range.
 export function runSpec(spec: TmmSpec, onProgress?: (p: number) => void): Fields {
-  return (spec.rcwa ? runRcwa(spec, onProgress) : spec.b4 ? runBerreman(spec, onProgress) : runTmm(spec, onProgress)) as Fields;
+  const f = (spec.rcwa ? runRcwa(spec, onProgress) : spec.b4 ? runBerreman(spec, onProgress) : runTmm(spec, onProgress)) as Fields;
+  if (hasGroupDelay(spec)) Object.assign(f, groupDelay(spec, f));
+  return f;
 }
 
 // Field descriptions of a result.
-export const metaOfSpec = (spec: TmmSpec) => (spec.rcwa ? rcwaMeta(spec.rcwa.show, !!spec.rcwa.conical) : spec.b4 ? [...TMM_META, ...polPartsMeta()] : TMM_META);
+const baseMeta = (spec: TmmSpec) => (spec.rcwa ? rcwaMeta(spec.rcwa.show, !!spec.rcwa.conical) : spec.b4 ? [...TMM_META, ...polPartsMeta()] : TMM_META);
+export const metaOfSpec = (spec: TmmSpec) => (hasGroupDelay(spec) ? [...baseMeta(spec), ...GD_META] : baseMeta(spec));
+
+const hasGroupDelay = (spec: TmmSpec) => spec.lambda.length >= 3;
+const C_NM_FS = 299.792458; // speed of light, nm / fs
+
+// Group delay GD = dφ/dω (fs) and its dispersion GDD = d²φ/dω² (fs²) of r and t — the exp(−iωt) convention of the
+// solvers (an absorbing medium has Im n > 0), so a delay τ adds ωτ to the phase — from the phase unwrapped along λ at
+// every other grid point, by the quadratic through three neighbouring wavelengths (non-uniform steps in ω allowed). The
+// phase must not jump by π between two wavelengths (a fine λ step); NaN phases (incoherent substrate, Jones) give NaN.
+export function groupDelay(spec: TmmSpec, f: Record<string, Float64Array>): Record<string, Float64Array> {
+  const nL = spec.lambda.length;
+  const nT = spec.theta.length;
+  const combos = f.R.length / (nL * nT);
+  const w = spec.lambda.map((l) => (2 * Math.PI * C_NM_FS) / l); // rad / fs
+  const out: Record<string, Float64Array> = {};
+  for (const [ph, gd, gdd] of [['phiR', 'GDR', 'GDDR'], ['phiT', 'GDT', 'GDDT']] as const) {
+    const G = (out[gd] = new Float64Array(f.R.length).fill(NaN));
+    const D = (out[gdd] = new Float64Array(f.R.length).fill(NaN));
+    const src = f[ph];
+    if (!src) continue;
+    const p = new Float64Array(nL);
+    for (let c = 0; c < combos; c++)
+      for (let t = 0; t < nT; t++) {
+        const at = (i: number) => (c * nL + i) * nT + t;
+        // unwrap along λ
+        for (let i = 0; i < nL; i++) {
+          const v = (src[at(i)] * Math.PI) / 180;
+          if (i === 0 || !Number.isFinite(p[i - 1])) p[i] = v;
+          else p[i] = v + 2 * Math.PI * Math.round((p[i - 1] - v) / (2 * Math.PI));
+        }
+        for (let i = 0; i < nL; i++) {
+          const j = Math.min(nL - 3, Math.max(0, i - 1));
+          const [x0, x1, x2] = [w[j], w[j + 1], w[j + 2]];
+          const [f0, f1, f2] = [p[j], p[j + 1], p[j + 2]];
+          if (![f0, f1, f2].every(Number.isFinite)) continue;
+          const [a, b, cc] = [f0 / ((x0 - x1) * (x0 - x2)), f1 / ((x1 - x0) * (x1 - x2)), f2 / ((x2 - x0) * (x2 - x1))];
+          const x = w[i];
+          G[at(i)] = a * (2 * x - x1 - x2) + b * (2 * x - x0 - x2) + cc * (2 * x - x0 - x1);
+          D[at(i)] = 2 * (a + b + cc);
+        }
+      }
+  }
+  return out;
+}
 
 // Compute TMM through the Berreman 4×4 method: the layers of rcwaLayersAt (anisotropic ones as tensors) solved for the
 // zeroth order by the conical solver (azimuth φ, a TE / TM or Jones incident state), the thick substrate by channels.

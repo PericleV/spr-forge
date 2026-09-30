@@ -69,13 +69,17 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
   // outlines: interfaces (horizontal) and the material walls of the grating slices (vertical), in height = −z
   const traces: Trace[] = [];
   if (map && data.outlines && info?.period) {
-    const x1 = map.xs[map.xs.length - 1];
-    map.boundaries.forEach((z, i) => traces.push({ key: `b${i}`, x: [0, x1], y: [-z, -z], color: '#ffffff' }));
+    // every period the map covers (a window may start anywhere); the plot clips what lies outside
+    const [x0, x1] = [map.xs[0], map.xs[map.xs.length - 1]];
+    const P = info.period;
+    map.boundaries.forEach((z, i) => traces.push({ key: `b${i}`, x: [x0, x1], y: [-z, -z], color: '#ffffff' }));
     map.outlines.forEach((o, i) => {
-      for (let p = 0; p < data.periods; p++)
-        o.xs.forEach((x, j) => traces.push({ key: `w${i}-${p}-${j}`, x: [x + p * info.period!, x + p * info.period!], y: [-o.z0, -o.z1], color: '#ffffff' }));
+      for (let p = Math.floor(x0 / P); p <= Math.ceil(x1 / P); p++)
+        o.xs.forEach((x, j) => traces.push({ key: `w${i}-${p}-${j}`, x: [x + p * P, x + p * P], y: [-o.z0, -o.z1], color: '#ffffff' }));
     });
   }
+  const winX = Number.isFinite(data.x0) || Number.isFinite(data.x1);
+  const winZ = Number.isFinite(data.z0) || Number.isFinite(data.z1);
   const csv = () => {
     if (!map) return;
     const rows: number[][] = [];
@@ -130,17 +134,68 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
         </>
       )}
       <div className="row wrap">
-        <label className="radio">periods <NumInput className="tiny" value={data.periods} min={1} step={1} onChange={(periods) => set({ periods })} /></label>
-        <label className="radio" title="Points across (x)">Nx <NumInput className="tiny" value={data.nx} min={8} step={20} onChange={(nx) => set({ nx })} /></label>
-        <label className="radio" title="Points through the depth (z)">Nz <NumInput className="tiny" value={data.nz} min={8} step={20} onChange={(nz) => set({ nz })} /></label>
-      </div>
-      <div className="row wrap">
-        <label className="radio">show <NumInput className="tiny" value={data.zIn} min={0} step={50} onChange={(zIn) => set({ zIn })} /> nm above</label>
-        <label className="radio"><NumInput className="tiny" value={data.zOut} min={0} step={50} onChange={(zOut) => set({ zOut })} /> nm below</label>
+        <label className="radio" title="Periods shown across (setting them clears an x window)">
+          periods <NumInput className="tiny" value={data.periods} min={1} step={1} onChange={(periods) => set({ periods, x0: NaN, x1: NaN })} />
+        </label>
+        <label className="radio" title="Points across (x), all inside the window if one is set">Nx <NumInput className="tiny" value={data.nx} min={8} step={20} onChange={(nx) => set({ nx })} /></label>
+        <label className="radio" title="Points through the depth (z), all inside the window if one is set">Nz <NumInput className="tiny" value={data.nz} min={8} step={20} onChange={(nz) => set({ nz })} /></label>
         <label className="radio">
           <input className="nodrag" type="checkbox" checked={data.outlines} onChange={(e) => set({ outlines: e.target.checked })} />
           outlines
         </label>
+      </div>
+      <div className="row wrap">
+        <label className="radio" title="Orders N of the map: a field map needs more orders than a spectrum (its ripples have the width Λ / (2N + 1)); empty = the Compute RCWA's N. Only this point is recomputed, so a larger N is affordable here.">
+          map orders N <NumInput className="tiny" value={data.orders ?? NaN} min={0} step={5} placeholder={info?.job ? `${info.job.spec.rcwa?.orders ?? ''}` : ''} onChange={(orders) => set({ orders })} />
+        </label>
+        <label className="radio" title="Gibbs ringing of the Fourier sums in x: Lanczos σ (or Fejér) weights the harmonic of order p by sinc(πp/(N+1)) (1 − |p|/(N+1)): the map becomes the field averaged in x over about Λ/(N+1) — the ripples go, sharp features blur over that length. None = the exact truncated sums (as RETICOLO).">
+          Gibbs
+          <select className="nodrag" value={data.sigma ?? 'none'} onChange={(e) => set({ sigma: e.target.value as NonNullable<typeof data.sigma> })}>
+            <option value="none">none (exact sums)</option>
+            <option value="lanczos">Lanczos σ smoothing</option>
+            <option value="fejer">Fejér smoothing</option>
+          </select>
+        </label>
+      </div>
+      {!winZ && (
+        <div className="row wrap">
+          <label className="radio">show <NumInput className="tiny" value={data.zIn} min={0} step={50} onChange={(zIn) => set({ zIn })} /> nm above</label>
+          <label className="radio"><NumInput className="tiny" value={data.zOut} min={0} step={50} onChange={(zOut) => set({ zOut })} /> nm below</label>
+        </div>
+      )}
+      <div className="section" title="Compute the map only in a part of the structure: all Nx × Nz points go into it (finer detail at the same cost). Empty = the whole map.">
+        Window
+      </div>
+      <div className="row wrap">
+        <span className="interval" title="Across, nm (x = 0 at the start of a period)">
+          x <NumInput className="short" value={data.x0 ?? NaN} placeholder="0" onChange={(x0) => set({ x0 })} />–
+          <NumInput className="short" value={data.x1 ?? NaN} placeholder={info?.periodNm ? `${+(data.periods * info.periodNm).toFixed(1)}` : 'end'} onChange={(x1) => set({ x1 })} /> nm
+        </span>
+      </div>
+      <div className="row wrap">
+        <span className="interval" title="Depth, nm: 0 = top of the first layer, growing into the structure (negative = the incident medium)">
+          z <NumInput className="short" value={data.z0 ?? NaN} placeholder={`${-data.zIn}`} onChange={(z0) => set({ z0 })} />–
+          <NumInput className="short" value={data.z1 ?? NaN} placeholder="end" onChange={(z1) => set({ z1 })} /> nm
+        </span>
+        {info?.layers.length ? (
+          <select
+            className="nodrag"
+            value=""
+            title="The window on one layer (its whole thickness)"
+            onChange={(e) => {
+              const L = info.layers[Number(e.target.value)];
+              if (L) set({ z0: +L.z0.toFixed(4), z1: +L.z1.toFixed(4) });
+            }}
+          >
+            <option value="">layer…</option>
+            {info.layers.map((L, i) => (
+              <option key={i} value={i}>{L.label}</option>
+            ))}
+          </select>
+        ) : null}
+        {(winX || winZ) && (
+          <button className="nodrag" title="The whole map again (periods across, offsets above / below)" onClick={() => set({ x0: NaN, x1: NaN, z0: NaN, z1: NaN })}>whole map</button>
+        )}
       </div>
       <div className="row wrap">
         {!running ? (

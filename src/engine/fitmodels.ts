@@ -5,7 +5,7 @@ import { HC_EV_NM } from '../physics/materials.ts';
 
 export type ParamKind = 'x' | 'width' | 'amp' | 'positive' | 'offset' | 'slope' | 'q' | 'ratio' | 'index';
 export type ParamDef = { key: string; label: string; kind: ParamKind; hint?: string };
-export type ComponentType = 'baseline' | 'lorentz' | 'fano' | 'coupled';
+export type ComponentType = 'baseline' | 'lorentz' | 'gauss' | 'fano' | 'coupled';
 // mode2: how the tunable mode of the dispersion depends on x (linear, or a cavity vs the angle θ in degrees)
 export type Mode2Model = 'linear' | 'angle';
 export type ModelCtx = { energy: boolean; xref: number; mode2?: Mode2Model };
@@ -43,6 +43,16 @@ export const COMPONENTS: Record<ComponentType, { label: string; params: ParamDef
       { key: 'w', label: 'Γ (FWHM)', kind: 'width' },
     ],
     f: (x, p) => p.A * lorentz(x, p.x0, p.w),
+  },
+  gauss: {
+    label: 'Gaussian',
+    note: 'A·exp(−4 ln2 (x − x₀)²/Γ²) (Γ = FWHM = 2√(2 ln2)·σ); A < 0 for a dip',
+    params: [
+      { key: 'A', label: 'A', kind: 'amp' },
+      { key: 'x0', label: 'x₀', kind: 'x' },
+      { key: 'w', label: 'Γ (FWHM)', kind: 'width' },
+    ],
+    f: (x, p) => p.A * Math.exp((-4 * Math.LN2 * (x - p.x0) ** 2) / (p.w * p.w)),
   },
   fano: {
     label: 'Fano',
@@ -197,7 +207,7 @@ export function guessSpectrum(comps: FitComponent[], xs: ArrayLike<number>, ys: 
   });
   return comps.map((k) => {
     if (k.type === 'baseline') return set(k, { c: base, s: 0 });
-    if (k.type === 'lorentz') return set(k, nextFeature());
+    if (k.type === 'lorentz' || k.type === 'gauss') return set(k, nextFeature());
     if (k.type === 'fano') {
       const f = nextFeature();
       // q = 0: a dip of depth A; large q: a peak of height ≈ A

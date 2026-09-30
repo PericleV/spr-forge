@@ -21,6 +21,7 @@ import type {
   FormulaData,
   InfoData,
   ReverseData,
+  RoughData,
   ToleranceData,
   GratingData,
   RcwaData,
@@ -161,6 +162,7 @@ export const RCWAFIELD_DEFAULTS: RcwaFieldData = {
   runKey: '',
 };
 export const REVERSE_DEFAULTS: ReverseData = { name: '', swapMedia: false };
+export const ROUGH_DEFAULTS: RoughData = { label: '', side: 'top', kind: 'rms', size: 2, cl: 20, cell: 1000, px: 1000, seed: 1, slices: 10, ema: 'bruggeman' };
 export const INFO_DEFAULTS: InfoData = { title: 'Note', text: '', color: '#8a93a6', width: 280, height: 150 };
 export const NOTES_DEFAULTS: NotesData = { name: '', count: 3 };
 // The default iteration count of an Optimization Engine algorithm (switching algorithm keeps a count the user changed).

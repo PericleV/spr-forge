@@ -273,6 +273,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       {job?.state === 'idle' && !result?.errors.length && <div className="msg info">Not computed yet: press Run.</div>}
       <Messages result={result} />
       {ready && info && job?.state === 'done' && <div className="msg okay">✓ R, T, A, orders ±{data.show}</div>}
+      {ready && info?.gdNote && <div className="hint">{info.gdNote}</div>}
       <Convergence id={id} info={info} dataset={out?.type === 'data' && job?.state === 'done' ? out.dataset : null} orders={data.orders} onUse={(orders) => set({ orders })} />
       <OutPort label="data" port="data" />
     </div>
@@ -478,7 +479,7 @@ export function DrawGratingNodeView({ id, data }: NodeProps<DrawGratingNode>) {
               });
             })()}
             {/* grid lines over the material colours: a dark line on a light halo, visible on any material and theme */}
-            {data.grid && (
+            {data.grid && nx <= 200 && (
               <g className="px-grid">
                 {Array.from({ length: periods * nx + 1 }, (_, i) => {
                   const x = pad.l + (i * cellW) / nx;
@@ -523,7 +524,7 @@ export function DrawGratingNodeView({ id, data }: NodeProps<DrawGratingNode>) {
             </span>
           ))}
           <span className="muted">
-            Λ = {+g.period.toFixed(1)} nm · {slices.length} slice{slices.length === 1 ? '' : 's'} · Nx = {nx}
+            {L.rough ? 'cell' : 'Λ'} = {+g.period.toFixed(1)} nm · {slices.length} slice{slices.length === 1 ? '' : 's'} · Nx = {nx}
           </span>
         </div>
       )}
@@ -539,7 +540,8 @@ export function DrawGratingNodeView({ id, data }: NodeProps<DrawGratingNode>) {
           <button className="nodrag" onClick={invert}>swap A ↔ B</button>
         </div>
       )}
-      {g && g.profile === 'pixel' && !editable && <div className="hint">To draw the cells, connect the Grating layer node directly.</div>}
+      {L?.rough && <div className="hint">The rough zone as the RCWA computes it: {slices.length} slices of {nx} points (Compute TMM: an effective medium per slice).</div>}
+      {g && g.profile === 'pixel' && !editable && !L?.rough && <div className="hint">To draw the cells, connect the Grating layer node directly.</div>}
       {info?.stack && <LayerListView stack={info.stack} name={L?.label || 'grating'} />}
       <Messages result={result} />
     </div>

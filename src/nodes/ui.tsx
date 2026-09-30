@@ -1,9 +1,11 @@
 import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode, MapView } from '../types.ts';
+import { COLOR_MAPS, type ColorMapName } from '../plot/colors.ts';
 import { isMultiInput, PORT_COLORS, type PortType } from '../engine/ports.ts';
 import type { NodeResult } from '../engine/types.ts';
 import { useLibrary } from '../library/context.ts';
+import { groupOf, MATERIAL_GROUPS, USER_GROUP } from '../physics/library.ts';
 import type { SliceInfo, SpecPol } from '../engine/spec.ts';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
@@ -117,9 +119,17 @@ export function MaterialSelect({ value, onChange, none }: { value: string; onCha
     <select className="nodrag" value={value} onChange={(e) => onChange(e.target.value)}>
       {none !== undefined && <option value="">{none}</option>}
       {value && !lib.has(value) && <option value={value}>{value} (missing)</option>}
-      {list.map((m) => (
-        <option key={m.id} value={m.id}>{m.name}</option>
-      ))}
+      {/* the sections of the library, then the user's own materials */}
+      {[...MATERIAL_GROUPS, USER_GROUP].map((g) => {
+        const ms = list.filter((m) => groupOf(m) === g);
+        return ms.length ? (
+          <optgroup key={g} label={g}>
+            {ms.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </optgroup>
+        ) : null;
+      })}
     </select>
   );
 }
@@ -131,12 +141,19 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
   const z = v.zLim ?? [NaN, NaN];
   const set = (patch: Partial<MapView>) => {
     const next = { ...v, ...patch };
-    const empty = !next.zLog && !next.smooth && !(next.blur! > 0) && !(next.zLim ?? []).some(Number.isFinite) && !Number.isFinite(next.cap ?? NaN);
+    const empty = !next.zLog && !next.smooth && !(next.blur! > 0) && !(next.zLim ?? []).some(Number.isFinite) && !Number.isFinite(next.cap ?? NaN) && !next.cmap;
     onChange(empty ? undefined : next);
   };
   const lim = (a: number, b: number) => ([a, b].some(Number.isFinite) ? ([a, b] as [number, number]) : undefined);
   return (
     <div className="row wrap map-view">
+      <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0 — for Re / Im of a field)">
+        <select className="nodrag" value={v.cmap ?? 'viridis'} onChange={(e) => set({ cmap: e.target.value === 'viridis' ? undefined : (e.target.value as ColorMapName) })}>
+          {(Object.keys(COLOR_MAPS) as ColorMapName[]).map((k) => (
+            <option key={k} value={k}>{COLOR_MAPS[k].label}</option>
+          ))}
+        </select>
+      </label>
       <span className="interval" title="Colour range (empty = automatic)">
         colours <NumInput className="short" value={z[0]} placeholder="auto" onChange={(a) => set({ zLim: lim(a, z[1]) })} />–
         <NumInput className="short" value={z[1]} placeholder="auto" onChange={(b) => set({ zLim: lim(z[0], b) })} />

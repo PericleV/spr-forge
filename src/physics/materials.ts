@@ -29,6 +29,7 @@ export type MaterialDef = {
   monolayer?: number; // nm; set for 2D materials (thickness = layers × monolayer)
   source?: string;
   builtin?: boolean;
+  group?: string; // section of the library (built-in materials): MATERIAL_GROUPS
 };
 
 export type Models = Record<string, MaterialModel>;

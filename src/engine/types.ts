@@ -1,5 +1,6 @@
 import type { NoteDoc } from '../notes/markup.ts';
 import type { GratingParams } from './grating.ts';
+import type { RoughParams, RoughSpec } from './rough.ts';
 // Values flowing along edges, and the TMM job description shared with the worker.
 import type { Models } from '../physics/materials.ts';
 import type { Polarization } from '../physics/tmm.ts';
@@ -38,6 +39,7 @@ export type LayerSpec = {
   grating?: GratingParams<string>; // materials as instance keys
   lc?: LcProfile; // anisotropic layer: director profile
   flipZ?: boolean; // turned by π about y (Reverse stack)
+  rough?: RoughSpec[]; // rough top / bottom interface (Roughness node)
 };
 
 // Output is row-major over [...sweeps, lambda, theta] (theta varies fastest).
@@ -87,6 +89,8 @@ export type Annotation = { id: string; label: string; color: string; datasetKey:
   | { kind: 'curve'; dataset: Dataset }
   | { kind: 'xy'; field: string; k: number; x: ArrayLike<number>; y: ArrayLike<number>; dash?: boolean } // a curve for one plotted curve k
   | { kind: 'span'; lo: number; hi: number }
+  // a zone following axis `at` (lo / hi along `along` at each y); `edit`: the analysis node and interval it belongs to
+  | { kind: 'zone'; at: string; pts: { y: number; lo: number; hi: number }[]; edit: { node: string; index: number } }
   | { kind: 'area'; field: string; dataset: Dataset; lo: string; hi: string } // shaded range between two fields of `dataset` (same axes)
 );
 
@@ -146,7 +150,10 @@ export type StackLayer = {
   grating?: GratingParams<MaterialValue>; // 1D grating layer (RCWA): profile, period, materials
   lc?: LcProfile; // anisotropic layer: the director turns / tilts through the thickness
   flipZ?: boolean; // seen from the other side (Reverse stack): turned by π about y (anisotropic layers change)
+  rough?: RoughLayer[]; // rough interfaces (Roughness nodes after the layer): at most one per side
 };
+// A rough interface of a layer; RMS / peak-to-peak height, correlation length and seed possibly swept.
+export type RoughLayer = RoughParams & { side: 'top' | 'bottom'; node: string; sweeps: { size?: VaryAxis; cl?: VaryAxis; seed?: VaryAxis } };
 // A liquid-crystal profile: the orientation of the top face turned by `twist` (degrees, about z) down to the bottom face,
 // the tilt going linearly to `tiltEnd` (degrees; absent = the same), in `slices` sublayers.
 // pitch (nm): the twist is 360° · d / pitch at every step (a swept thickness keeps the helix); autoSlices: one per 4.5°

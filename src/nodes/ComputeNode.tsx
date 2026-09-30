@@ -89,6 +89,7 @@ export function ComputeNodeView({ id, data }: NodeProps<ComputeNode>) {
           ✓ R, T, A{info.berreman ? ', TE / TM and σ± parts' : ''}{data.polMix ? '' : ', φr, φt'} · {info.dims} ({info.size?.toLocaleString('en')} pts)
         </div>
       )}
+      {ready && info?.gdNote && <div className="hint">{info.gdNote}</div>}
       <OutPort label="data" port="data" />
     </div>
   );

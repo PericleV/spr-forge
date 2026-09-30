@@ -4,6 +4,20 @@
 // x inside [lo, hi]; a non-finite bound (NaN, or null from an old project file) leaves that side open.
 export const inWindow = (x: number, lo: number, hi: number) => (!Number.isFinite(lo) || x >= lo) && (!Number.isFinite(hi) || x <= hi);
 
+// The interval [lo, hi] of a zone at y: straight lines between its points (in any order), constant beyond the ends.
+export function zoneAt(pts: { y: number; lo: number; hi: number }[], y: number): [number, number] {
+  const p = [...pts].filter((q) => Number.isFinite(q.y)).sort((a, b) => a.y - b.y);
+  if (!p.length) return [NaN, NaN];
+  if (y <= p[0].y) return [p[0].lo, p[0].hi];
+  const last = p[p.length - 1];
+  if (y >= last.y) return [last.lo, last.hi];
+  let j = 1;
+  while (p[j].y < y) j++;
+  const [a, b] = [p[j - 1], p[j]];
+  const t = b.y === a.y ? 0 : (y - a.y) / (b.y - a.y);
+  return [a.lo + t * (b.lo - a.lo), a.hi + t * (b.hi - a.hi)];
+}
+
 export function windowOf(xs: ArrayLike<number>, lo: number, hi: number): [number, number] {
   let i0 = 0;
   let i1 = xs.length - 1;

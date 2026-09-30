@@ -3,6 +3,7 @@ import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { matName, nominalMat } from '../engine/evaluate.ts';
 import { gratingSlices } from '../engine/grating.ts';
+import { roughShape } from '../engine/rough.ts';
 import type { MaterialValue, StackLayer, StackValue } from '../engine/types.ts';
 import { useLibrary } from '../library/context.ts';
 import { FigureTools } from '../plot/FigureTools.tsx';
@@ -116,6 +117,39 @@ function GratingPattern({ g, r, vertical }: { g: NonNullable<StackLayer['grating
     z += h;
   });
   return <g>{out}</g>;
+}
+
+// A rough interface drawn on the edge of a layer (schematic: the profile over a dozen correlation lengths, a few pixels
+// high): the neighbour's colour where the surface dips into the layer, the layer's where it rises.
+type Rect = { x: number; y: number; width: number; height: number };
+function RoughEdge({ r, rough, color, other, vertical }: { r: Rect; rough: NonNullable<StackLayer['rough']>[number]; color: string; other: string; vertical: boolean }) {
+  const h = roughShape(rough.px, rough.cl / rough.cell, rough.seed);
+  const along = vertical ? r.width : r.height;
+  const depth = vertical ? r.height : r.width;
+  const A = Math.max(1.5, Math.min(5, depth / 3));
+  const span = Math.max(8, Math.min(h.length, Math.round((12 * rough.cl * h.length) / rough.cell)));
+  const peak = Math.max(1e-9, ...Array.from(h.subarray(0, span), Math.abs));
+  const top = rough.side === 'top';
+  // the edge and the side of the layer, along the stack direction
+  const e = vertical ? (top ? r.y : r.y + r.height) : top ? r.x : r.x + r.width;
+  const inward = top ? 1 : -1;
+  const n = Math.min(span, 160);
+  const pts: [number, number][] = Array.from({ length: n }, (_, i) => {
+    const t = i / (n - 1);
+    const v = h[Math.round(t * (span - 1))] / peak;
+    return [t * along, e - inward * v * A]; // a positive height rises out of the layer
+  });
+  const P = (a: number, z: number) => (vertical ? `${(r.x + a).toFixed(1)},${z.toFixed(1)}` : `${z.toFixed(1)},${(r.y + a).toFixed(1)}`);
+  const line = pts.map(([a, z]) => P(a, z)).join(' ');
+  const band = [P(0, e - A), P(along, e - A), P(along, e + A), P(0, e + A)].join(' ');
+  const fill = `${line} ${P(along, e + inward * A)} ${P(0, e + inward * A)}`;
+  return (
+    <g>
+      <polygon points={band} fill={other} />
+      <polygon points={fill} fill={color} />
+      <polyline points={line} fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth={0.6} />
+    </g>
+  );
 }
 
 // Label override key: one entry per stack layer identity (a DBR period layer is shared by all periods).
@@ -265,6 +299,12 @@ export function DrawNodeView({ id, data }: NodeProps<DrawNode>) {
                 </g>
               );
             })}
+            {blocks.map((b, i) =>
+              b.layer?.rough?.map((q) => {
+                const nb = blocks[q.side === 'top' ? i - 1 : i + 1];
+                return nb && <RoughEdge key={`rough${i}${q.side}`} r={rect(i)} rough={q} color={b.mat.color} other={nb.mat.color} vertical={vertical} />;
+              }),
+            )}
             {blocks.map((b, i) => {
               if (!b.bracket?.first) return null;
               const j = blocks.findIndex((x, k) => k >= i && x.bracket?.last);

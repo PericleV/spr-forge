@@ -6,9 +6,10 @@ export type NodeMeta = { caption?: string; collapsed?: boolean };
 // Display settings of a colour map (the data are not changed): colour range (NaN bound = automatic), log10 colour
 // scale, bilinear smoothing between the samples, Gaussian blur (σ in cells, 0 = none), cap: values above it drawn in
 // the colour of the cap (saturated) or not drawn (capHide); the automatic colour range then ends at the cap.
-export type MapView = { zLim?: [number, number]; zLog?: boolean; smooth?: boolean; blur?: number; cap?: number; capHide?: boolean };
+export type MapView = { zLim?: [number, number]; zLog?: boolean; smooth?: boolean; blur?: number; cap?: number; capHide?: boolean; cmap?: ColorMapName };
 type Node<D extends Record<string, unknown>, T extends string> = FlowNode<D & NodeMeta, T>;
 import type { Polarization } from './physics/tmm.ts';
+import type { ColorMapName } from './plot/colors.ts';
 import type { FitComponent, FitParam, Mode2Model } from './engine/fitmodels.ts';
 import type { Component } from './physics/field.ts';
 import type { FitStats } from './engine/fitrun.ts';
@@ -98,6 +99,10 @@ export type PlotData = {
   mapView?: MapView; // 2D map: colour range, log, smoothing, blur
   showMarks?: boolean; // analysis marks (minima, FWHM, fits, ranges …); default on
   hiddenMarks?: string[]; // marks hidden from the legend (markKey)
+  // a quantity as X instead of an axis (e.g. FWHM vs the resonance angle), and as Y of a map (three quantities make a map)
+  xField?: string;
+  yField?: string;
+  noLines?: boolean; // points only (a quantity as X)
 };
 export type Dash = 'solid' | 'dash' | 'dot';
 export type CompareCurve = {
@@ -129,8 +134,13 @@ export type DrawData = {
 };
 
 // Analysis nodes. Intervals are in units of the analysed axis; NaN = open end.
-export type Interval = { lo: number; hi: number };
-export type ExtremumData = { mode: 'min' | 'max'; field: string; along: string; lo: number; hi: number; color: string };
+// A zone that follows another axis of the data (e.g. a resonance moving with θ): at each value y of axis `at` the interval
+// runs from lo(y) to hi(y), straight lines between the points (sorted by y), constant beyond the first and last.
+export type ZonePoint = { y: number; lo: number; hi: number };
+export type ZonePath = { at: string; pts: ZonePoint[] };
+// With a path the interval is the zone; lo / hi are kept for when the path is removed.
+export type Interval = { lo: number; hi: number; path?: ZonePath };
+export type ExtremumData = { mode: 'min' | 'max'; field: string; along: string; lo: number; hi: number; path?: ZonePath; color: string };
 export type FwhmData = {
   kind: 'dip' | 'peak';
   field: string;
@@ -148,6 +158,7 @@ export type SensitivityData = {
   along: string;
   lo: number;
   hi: number;
+  path?: ZonePath;
   color: string;
 };
 
@@ -185,6 +196,10 @@ export type FieldData = {
   layers: boolean;
   labels: boolean;
   color: string;
+  // penetration depth: where |E| falls to 1/e of its value at the edge of a region ('incident', 'exit' or 'layer:<j>',
+  // j = the layer of the stack), measured from its top / bottom edge (auto: the edge where |E| is larger); overlay on the plot
+  depth?: { on: boolean; region: string; edge: 'auto' | 'top' | 'bottom'; overlay: boolean };
+  cut?: 'z' | 'x'; // a cut of an RCWA field map: along z at a chosen x (default) or along x at a chosen z (at.x / at.z: indices)
 };
 
 // ---- Optimization ----
@@ -335,6 +350,8 @@ export type TargetData = {
   field: string; // data mode: field of the input
   fitId: string; // fit mode: fitted curve (annotation) of the input
   color: string;
+  // λ axis, model and bands: min / max / step in wavenumber (cm⁻¹), i.e. points evenly spaced in 1/λ (the x values stay λ in nm)
+  gridUnit?: 'nm' | 'cm-1';
   // what the target is (defaults of the bands): quantity ('' = chosen by the node using it; R, T, A, OD), slice, kind,
   // tolerance (the error is divided by it: 0.01 gives MF = 100·RMS)
   quantity?: string;
@@ -351,6 +368,8 @@ export type MatchData = {
   weight: number;
   lo: number;
   hi: number;
+  // only the target points below (lt) or above (gt) a level, e.g. the resonances of a target with dips: target < 0.95
+  only?: { op: 'lt' | 'gt'; level: number };
   p?: number;
   pol?: SpecPol; // slice for the target terms that do not set their own
   angle?: number;
@@ -369,6 +388,23 @@ export type NotesNode = Node<NotesData, 'notes'>;
 // Reverses the order of the layers of a stack (optionally also swaps the incident and exit media).
 export type ReverseData = { name: string; swapMedia: boolean };
 export type ReverseNode = Node<ReverseData, 'reverse'>;
+
+// Roughness: the top or bottom interface of the connected layer made rough (random profile of a given RMS or
+// peak-to-peak height and correlation length over a periodic cell), cut into slices (RCWA: pixels, TMM: an effective
+// medium). size / cl / seed may be swept (ports).
+export type RoughData = {
+  label: string;
+  side: 'top' | 'bottom';
+  kind: 'rms' | 'pp';
+  size: number; // nm
+  cl: number; // nm
+  cell: number; // nm
+  px: number;
+  seed: number;
+  slices: number;
+  ema: 'bruggeman' | 'maxwell-garnett' | 'looyenga';
+};
+export type RoughNode = Node<RoughData, 'rough'>;
 
 // Filter designer: target bands (λ), materials H / L (/ M), constraints, algorithm; the designed layers are kept here.
 export type FilterBand = { lo: number; hi: number; q: 'R' | 'T' | 'A' | 'OD'; value: number; weight: number; kind?: SpecKind; tol?: number };
@@ -441,6 +477,9 @@ export type ToleranceData = {
   spec: boolean; // pass / fail specification → yield
   specBands: ToleranceSpecBand[];
   specTol: number; // ± tolerance around a connected target curve
+  // the axis the limits (bands, target curve) and the chart follow: an axis id, '' / absent = automatic (the target
+  // curve's axis, else λ when it is a range, else θ)
+  along?: string;
   criteria?: ToleranceCriterion[];
 };
 export type ToleranceNode = Node<ToleranceData, 'tolerance'>;
@@ -475,7 +514,14 @@ export type RcwaFieldData = {
   nz: number;
   zIn: number;
   zOut: number;
+  // a window of the map (nm; NaN / absent = the periods across, the offsets above / below): all Nx × Nz points go into it
+  x0?: number;
+  x1?: number;
+  z0?: number; // depth: 0 = top of the first layer, growing into the structure
+  z1?: number;
   outlines: boolean;
+  orders?: number; // N of the map (NaN / absent: the Compute RCWA's): a map needs more orders than a spectrum
+  sigma?: 'none' | 'lanczos' | 'fejer'; // Gibbs smoothing of the Fourier sums in x
   runKey: string; // key of the stored result (set by Run)
   mapView?: MapView;
 };
@@ -504,7 +550,23 @@ export type PlotNode = Node<PlotData, 'plot'>;
 export type CompareNode = Node<CompareData, 'compare'>;
 export type DrawNode = Node<DrawData, 'draw'>;
 
+// ---- Data nodes: take values out of a result, gather results, compute new quantities from them ----
+// Extract data: some quantities of a data input, over all its curves (the axes kept), or at fixed steps of some axes
+// (fixed: axis id → step index; every axis fixed gives single values).
+export type ExtractData = { name: string; fields: string[]; fixed: Record<string, number>; mean?: string[] }; // mean: axes averaged out
+// Merge data: several data inputs side by side, each with its own points (no interpolation); labels by source node id.
+export type MergeData = { name: string; labels: Record<string, string> };
+// Custom data: new quantities from formulas of the quantities (and axes) of its inputs (one port, several connections),
+// point by point; each input has a short name (aliases: `<source>:<handle>` → name, a, b, c… by default).
+export type CustomData = { name: string; rows: { name: string; expr: string }[]; aliases?: Record<string, string> };
+export type ExtractNode = Node<ExtractData, 'extract'>;
+export type MergeNode = Node<MergeData, 'merge'>;
+export type CustomNode = Node<CustomData, 'custom'>;
+
 export type AppNode =
+  | ExtractNode
+  | MergeNode
+  | CustomNode
   | MaterialNode
   | MaterialSweepNode
   | AnisoNode
@@ -533,6 +595,7 @@ export type AppNode =
   | InfoNode
   | NotesNode
   | ReverseNode
+  | RoughNode
   | FilterNode
   | ToleranceNode
   | GratingNode

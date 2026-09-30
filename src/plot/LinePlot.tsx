@@ -13,6 +13,7 @@ export type Series = {
   dash?: string;
   width?: number;
   dots?: boolean; // mark the samples (sparse data)
+  noLine?: boolean; // the samples only (e.g. x taken from a quantity: points in any order)
 };
 
 type Props = {
@@ -29,6 +30,17 @@ type Props = {
 };
 
 const M = { l: 54, r: 12, t: 10, b: 38 };
+
+// Index of the finite value nearest to v, for values in any order.
+function nearestAny(xs: ArrayLike<number>, v: number): number {
+  let k = 0;
+  let best = Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    const d = Math.abs(xs[i] - v);
+    if (d < best) [best, k] = [d, i];
+  }
+  return k;
+}
 
 function extentOf(series: Series[], xs: ArrayLike<number>, x0: number, x1: number): [number, number] {
   let lo = Infinity;
@@ -66,6 +78,7 @@ export function LinePlot({ xAxis, series, yLabel, yUnit, yDomain, xLim, yLim, wi
     let hi = -Infinity;
     for (const sx of series.length ? series.map((s) => s.x ?? xs) : [xs]) {
       for (let i = 0; i < sx.length; i++) {
+        if (!Number.isFinite(sx[i])) continue;
         lo = Math.min(lo, sx[i]);
         hi = Math.max(hi, sx[i]);
       }
@@ -97,7 +110,7 @@ export function LinePlot({ xAxis, series, yLabel, yUnit, yDomain, xLim, yLim, wi
     let pen = false;
     for (let i = 0; i < s.y.length; i++) {
       const y = s.y[i];
-      if (!Number.isFinite(y)) {
+      if (!Number.isFinite(y) || !Number.isFinite(px[i])) {
         pen = false;
         continue;
       }
@@ -120,7 +133,8 @@ export function LinePlot({ xAxis, series, yLabel, yUnit, yDomain, xLim, yLim, wi
     let best: { s: Series; i: number; dist: number } | null = null;
     for (const s of series) {
       const px = s.x ?? xs;
-      const i = nearest(px, xv);
+      // x of a series may be in any order (a quantity as x): the nearest point by a scan
+      const i = s.x ? nearestAny(px, xv) : nearest(px, xv);
       const y = s.y[i];
       if (!Number.isFinite(y)) continue;
       const dist = Math.abs(sy(y) - hover[1]) + Math.abs(sx(px[i]) - hover[0]);
@@ -213,14 +227,12 @@ export function LinePlot({ xAxis, series, yLabel, yUnit, yDomain, xLim, yLim, wi
         {extra.map((s) => (
           <path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth={s.dash ? 1.6 : 2.2} strokeDasharray={s.dash} />
         ))}
-        {series.map((s) => (
-          <path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth={s.width ?? 1.8} strokeDasharray={s.dash} />
-        ))}
+        {series.map((s) => (s.noLine ? null : <path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth={s.width ?? 1.8} strokeDasharray={s.dash} />))}
         {series.map(
           (s) =>
-            s.dots && (
+            (s.dots || s.noLine) && (
               <g key={`${s.key}:dots`} fill={s.color}>
-                {Array.from(s.y, (y, i) => (Number.isFinite(y) ? <circle key={i} cx={sx((s.x ?? xs)[i])} cy={sy(y)} r={2.6} /> : null))}
+                {Array.from(s.y, (y, i) => (Number.isFinite(y) && Number.isFinite((s.x ?? xs)[i]) ? <circle key={i} cx={sx((s.x ?? xs)[i])} cy={sy(y)} r={s.noLine ? 3 : 2.6} /> : null))}
               </g>
             ),
         )}

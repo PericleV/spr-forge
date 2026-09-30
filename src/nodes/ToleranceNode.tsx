@@ -183,6 +183,17 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
         <span className="muted">target curve (optional): pass if within ±</span>
         <NumInput className="short" value={data.specTol} step={0.01} onChange={(specTol) => set({ specTol })} />
       </div>
+      {data.spec && (info?.axes.length ?? 0) > 1 && (
+        <label className="radio" title="The axis the limits (or the target curve) and the chart follow; the other axes give more curves, and a sample passes only when all of its curves do. Automatic: the target curve's axis, else λ, else θ.">
+          limits along
+          <select className="nodrag" value={data.along ?? ''} onChange={(e) => set({ along: e.target.value })}>
+            <option value="">auto ({info!.axes.find((a) => a.id === info!.along)?.label ?? '—'})</option>
+            {info!.axes.map((a) => (
+              <option key={a.id} value={a.id}>{a.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
       {data.spec && !targetConnected && (
         <div className="zones">
           {data.specBands.map((b, i) => (
