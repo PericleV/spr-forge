@@ -553,7 +553,8 @@ export type DrawNode = Node<DrawData, 'draw'>;
 // ---- Data nodes: take values out of a result, gather results, compute new quantities from them ----
 // Extract data: some quantities of a data input, over all its curves (the axes kept), or at fixed steps of some axes
 // (fixed: axis id → step index; every axis fixed gives single values).
-export type ExtractData = { name: string; fields: string[]; fixed: Record<string, number>; mean?: string[] }; // mean: axes averaged out
+// mean: axes averaged out; at: axes held at a value (interpolated)
+export type ExtractData = { name: string; fields: string[]; fixed: Record<string, number>; mean?: string[]; at?: Record<string, number> };
 // Merge data: several data inputs side by side, each with its own points (no interpolation); labels by source node id.
 export type MergeData = { name: string; labels: Record<string, string> };
 // Custom data: new quantities from formulas of the quantities (and axes) of its inputs (one port, several connections),

@@ -3,6 +3,7 @@ import { useNodeResult, useProgress } from '../engine/engine.ts';
 import type { ComputeInfo } from '../engine/evaluate.ts';
 import { polChoice, polPatch } from './pol.ts';
 import type { AppNode, ComputeData, ComputeNode } from '../types.ts';
+import type { Dataset } from '../engine/types.ts';
 import { useConnected } from './hooks.ts';
 import { Messages, NumInput, OutPort, Port } from './ui.tsx';
 
@@ -75,7 +76,7 @@ export function ComputeNodeView({ id, data }: NodeProps<ComputeNode>) {
           <span className="hint">ψ = 45°, δ = ±90°: circular</span>
         </div>
       )}
-      {info?.berreman && <div className="hint">Berreman 4×4 (anisotropic layers{data.polMix ? ', Jones / circular state' : ''}): R, T also split into TE / TM and circular σ± parts.</div>}
+      {info?.berreman && <div className="hint">Berreman 4×4 method (anisotropic layers{data.polMix ? ', Jones / circular state' : ''}).</div>}
 
       <Messages result={result} />
       {result?.pending && (
@@ -84,13 +85,21 @@ export function ComputeNodeView({ id, data }: NodeProps<ComputeNode>) {
           <div className="bar" style={{ width: `${(progress ?? 0) * 100}%` }} />
         </div>
       )}
-      {ready && info && (
-        <div className="msg okay">
-          ✓ R, T, A{info.berreman ? ', TE / TM and σ± parts' : ''}{data.polMix ? '' : ', φr, φt'} · {info.dims} ({info.size?.toLocaleString('en')} pts)
-        </div>
-      )}
+      {ready && <ComputationDone ds={out.dataset!} />}
       {ready && info?.gdNote && <div className="hint">{info.gdNote}</div>}
       <OutPort label="data" port="data" />
+    </div>
+  );
+}
+
+const duration = (s: number) => (s < 1 ? `${s.toFixed(2)} s` : s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
+
+// The status of a finished computation: points and time (the quantities are listed by the nodes that use them).
+export function ComputationDone({ ds }: { ds: Dataset }) {
+  return (
+    <div className="msg okay">
+      ✓ Computation done · {ds.size.toLocaleString('en')} {ds.size === 1 ? 'point' : 'points'}
+      {ds.seconds !== undefined && ` · ${duration(ds.seconds)}`}
     </div>
   );
 }

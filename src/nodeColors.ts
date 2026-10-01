@@ -135,3 +135,6 @@ export function nodeDisplayName(n: AppNode): string {
   const own = [d.name, d.label, d.caption].find((v): v is string => typeof v === 'string' && v.trim() !== '');
   return own ? `${nodeTitle(n)} “${own}”` : nodeTitle(n);
 }
+
+// Nodes not offered for new graphs (they still open in saved projects): Merge data (hidden by the user, 2026-09-30).
+export const HIDDEN_NODES = new Set<string>(['merge']);

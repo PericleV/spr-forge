@@ -227,9 +227,13 @@ function structureAt(spec: TmmSpec, idx: number[], lam: number): At {
   return { st, bk, period: st.hasGrating || !bk?.hasGrating ? st.period : bk.period, grating: st.hasGrating || !!bk?.hasGrating };
 }
 
+// TM transmission amplitude of the tangential H → TMM's of E: t_E = t_H n₀ / n_exit (n₀ real).
+export const tmToE = (tH: C, n0: number, nExit: C): C => X.div(X.mul(tH, c(n0)), nExit);
+
 // Rte … Ttm: the TE / TM parts of each order (conical incidence; planar: all in the incident polarization)
 // phRm / phTm: the phase of every order (planar solver), NaN where the order carries no power
-type PointResult = { R: number; T: number; phiR: number; phiT: number; Rm: Float64Array; Tm: Float64Array; phRm?: Float64Array; phTm?: Float64Array; Rte?: Float64Array; Rtm?: Float64Array; Tte?: Float64Array; Ttm?: Float64Array; Rcp?: Float64Array; Rcm?: Float64Array; Tcp?: Float64Array; Tcm?: Float64Array };
+// r0 / t0: the complex amplitudes of the zeroth orders, as TMM's r and t (absent where the phases are not defined)
+type PointResult = { R: number; T: number; phiR: number; phiT: number; r0?: C; t0?: C; Rm: Float64Array; Tm: Float64Array; phRm?: Float64Array; phTm?: Float64Array; Rte?: Float64Array; Rtm?: Float64Array; Tte?: Float64Array; Ttm?: Float64Array; Rcp?: Float64Array; Rcm?: Float64Array; Tcp?: Float64Array; Tcm?: Float64Array };
 // One point with N orders (−N … N) when the structure has a grating (0 otherwise); φ ≠ 0: conical incidence.
 function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polarization, orders: number, phi = 0): PointResult {
   const N = s.grating ? orders : 0;
@@ -237,6 +241,7 @@ function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polar
   // they differ by arg(n_exit) for an absorbing exit medium
   const nx = s.st.layers[s.st.layers.length - 1].n;
   const tmShift = pol === 'p' && nx ? Math.atan2(nx.im, nx.re) : 0;
+  const n0 = s.st.layers[0].n!.re;
   const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
   const fact = spec.rcwa!.fact ?? 'li';
   const jones = spec.rcwa!.jones;
@@ -251,7 +256,8 @@ function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polar
     const r = rcwaConical(s.st.layers, s.period, lam, theta, phi, inc, N, fact);
     // the phases of the zeroth orders: the co-polarized amplitudes (as the planar u-field Ey or Hy); none for a Jones state
     const [ar, at] = pol === 's' ? [r.r0.te, r.t0.te] : [r.r0.tm, r.t0.tm];
-    return { R: r.Rtot, T: r.Ttot, phiR: jones ? NaN : Math.atan2(ar.im, ar.re), phiT: jones ? NaN : wrap(Math.atan2(at.im, at.re) - tmShift), Rm: r.R, Tm: r.T, Rte: r.RTE, Rtm: r.RTM, Tte: r.TTE, Ttm: r.TTM, Rcp: r.RCP, Rcm: r.RCM, Tcp: r.TCP, Tcm: r.TCM };
+    const amp = jones ? {} : { r0: ar, t0: pol === 's' ? at : nx ? tmToE(at, n0, nx) : undefined };
+    return { R: r.Rtot, T: r.Ttot, phiR: jones ? NaN : Math.atan2(ar.im, ar.re), phiT: jones ? NaN : wrap(Math.atan2(at.im, at.re) - tmShift), ...amp, Rm: r.R, Tm: r.T, Rte: r.RTE, Rtm: r.RTM, Tte: r.TTE, Ttm: r.TTM, Rcp: r.RCP, Rcm: r.RCM, Tcp: r.TCP, Tcm: r.TCM };
   }
   if (s.bk) {
     const r = rcwaThickPoint(s.st.layers, s.bk.layers, spec.back!.d, s.period, lam, theta, pol, N, fact);
@@ -261,7 +267,8 @@ function solvePoint(spec: TmmSpec, s: At, lam: number, theta: number, pol: Polar
   // the phases of all the orders: TM transmitted orders as E (Hy / n_exit, the same shift as the zeroth order)
   const phRm = Float64Array.from(r.R, (e, m) => (e > 0 || m === N ? Math.atan2(r.r[1][m], r.r[0][m]) : NaN));
   const phTm = Float64Array.from(r.T, (e, m) => (e > 0 || m === N ? wrap(Math.atan2(r.t[1][m], r.t[0][m]) - tmShift) : NaN));
-  return { R: r.Rtot, T: r.Ttot, phiR: phRm[N], phiT: phTm[N], Rm: r.R, Tm: r.T, phRm, phTm };
+  const t0 = c(r.t[0][N], r.t[1][N]);
+  return { R: r.Rtot, T: r.Ttot, phiR: phRm[N], phiT: phTm[N], r0: c(r.r[0][N], r.r[1][N]), t0: pol === 's' ? t0 : tmToE(t0, n0, nx!), Rm: r.R, Tm: r.T, phRm, phTm };
 }
 
 // Grid point k (flat index over [...sweeps, λ, θ]): sweep steps, λ, θ (with the angle offset) and polarization.
@@ -280,17 +287,20 @@ function gridPoint(spec: TmmSpec, k: number) {
   const pol: Polarization = spec.polSweep !== undefined ? (idx[spec.polSweep] === 0 ? 'p' : 's') : spec.pol;
   const dTheta = spec.thetaOffset ? at(spec.thetaOffset, dims, idx) : 0;
   const phi = spec.phiBind ? at(spec.phiBind, dims, idx) : (spec.rcwa?.phi ?? 0);
-  return { idx, lam: spec.lambda[li], theta: spec.theta[ti] + dTheta, pol, phi };
+  const orders = spec.ordersBind ? at(spec.ordersBind, dims, idx) : spec.rcwa!.orders;
+  return { idx, lam: spec.lambda[li], theta: spec.theta[ti] + dTheta, pol, phi, orders };
 }
 
-export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void): Record<string, Float64Array> {
+// range: the points k0 … k1 − 1 of the grid only (the parts of a job computed by several workers), arrays of k1 − k0
+export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void, range?: [number, number]): Record<string, Float64Array> {
   const opt = spec.rcwa!;
   const nL = spec.lambda.length;
   const nT = spec.theta.length;
   const dims = spec.sweeps;
   const combos = dims.reduce((p, n) => p * n, 1);
-  const size = combos * nL * nT;
-  const keys = ['R', 'T', 'A', 'phiR', 'phiT'];
+  const [k0, k1] = range ?? [0, combos * nL * nT];
+  const size = k1 - k0;
+  const keys = ['R', 'T', 'A', 'phiR', 'phiT', 'rRe', 'rIm', 'tRe', 'tIm'];
   const orders: [string, 'R' | 'T', number][] = [];
   for (const q of ['R', 'T'] as const) for (let m = -opt.show; m <= opt.show; m++) orders.push([orderKey(q, m), q, m]);
   const conical = !!opt.conical;
@@ -301,10 +311,11 @@ export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void): Record
   const toDeg = 180 / Math.PI;
   let reported = 0;
   let s: At | null = null;
-  for (let k = 0; k < size; k++) {
-    const p = gridPoint(spec, k);
-    if (k % nT === 0) s = structureAt(spec, p.idx, p.lam); // the layers change with λ and the sweeps, not with θ
-    const r = solvePoint(spec, s!, p.lam, p.theta, p.pol, opt.orders, p.phi);
+  for (let kk = k0; kk < k1; kk++) {
+    const k = kk - k0;
+    const p = gridPoint(spec, kk);
+    if (kk % nT === 0 || kk === k0) s = structureAt(spec, p.idx, p.lam); // the layers change with λ and the sweeps, not with θ
+    const r = solvePoint(spec, s!, p.lam, p.theta, p.pol, p.orders, p.phi);
     const N = (r.Rm.length - 1) / 2;
     if (conical) {
       // the TE / TM parts; at φ = 0 (planar) everything stays in the incident polarization
@@ -325,6 +336,8 @@ export function runRcwa(spec: TmmSpec, onProgress?: (p: number) => void): Record
     out.A[k] = 1 - r.R - r.T;
     out.phiR[k] = r.phiR * toDeg;
     out.phiT[k] = r.phiT * toDeg;
+    [out.rRe[k], out.rIm[k]] = r.r0 ? [r.r0.re, r.r0.im] : [NaN, NaN];
+    [out.tRe[k], out.tIm[k]] = r.t0 ? [r.t0.re, r.t0.im] : [NaN, NaN];
     for (const [key, q, m] of orders) out[key][k] = Math.abs(m) <= N ? (q === 'R' ? r.Rm[N + m] : r.Tm[N + m]) : 0;
     if (!conical)
       for (const [key, q, m] of orders) {

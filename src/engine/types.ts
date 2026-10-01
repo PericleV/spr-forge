@@ -9,7 +9,7 @@ import type { TargetSpec } from './spec.ts';
 export type Quantity = 'theta' | 'lambda';
 export type SweepKind = 'number' | 'polarization';
 
-export type Field = 'R' | 'T' | 'A' | 'phiR' | 'phiT';
+export type Field = 'R' | 'T' | 'A' | 'phiR' | 'phiT' | 'rRe' | 'rIm' | 'tRe' | 'tIm';
 
 // ---- TMM job (plain data, sent to the worker) ----
 
@@ -60,6 +60,7 @@ export type TmmSpec = {
   // jones: an incident Jones state (ψ, δ in degrees) instead of `pol` (computed by the conical solver, TE / TM parts output)
   rcwa?: { orders: number; show: number; fact?: 'li' | 'laurent'; asr?: number; conical?: boolean; phi?: number; jones?: { psi: number; delta: number } };
   phiBind?: Bound<number>; // swept azimuth φ (RCWA, Berreman)
+  ordersBind?: Bound<number>; // swept orders N (RCWA: convergence figures); else rcwa.orders
   // Berreman 4×4 (Compute TMM with anisotropic layers or a Jones polarization): the azimuth φ (degrees) and the state
   b4?: { phi: number; jones?: { psi: number; delta: number } };
 };
@@ -69,7 +70,8 @@ export type Fields = Record<Field, Float64Array>;
 export type Axis = { id: string; label: string; unit: string; values: number[]; labels?: string[] };
 
 // `of`: id of the axis a position or width was measured along (e.g. 'lambda' for a resonance wavelength).
-export type FieldMeta = { key: string; label: string; short: string; unit: string; domain?: [number, number]; of?: string };
+// `cx`: one part of a complex quantity `name` (its two parts are two real fields; Custom data joins them again).
+export type FieldMeta = { key: string; label: string; short: string; unit: string; domain?: [number, number]; of?: string; cx?: { name: string; part: 're' | 'im' } };
 
 // Row-major values over `axes`, one array per field. TMM results carry their spec (for re-runs).
 export type Dataset = {
@@ -79,6 +81,7 @@ export type Dataset = {
   meta: FieldMeta[];
   size: number;
   spec?: TmmSpec;
+  seconds?: number; // time the worker took (a computation in the app)
 };
 
 // Marks added to a curve by the analysis nodes. Per-curve arrays are indexed by the combination of

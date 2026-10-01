@@ -12,6 +12,7 @@ import { useConnected } from './hooks.ts';
 import { Messages, NumInput, OutPort, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 import { LayerListView } from './LayerListView.tsx';
+import { ComputationDone } from './ComputeNode.tsx';
 
 const PROFILES: [GratingProfile, string][] = [
   ['lamellar', 'lamellar (binary)'],
@@ -163,6 +164,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
   const out = result?.outs.out;
   const ready = out?.type === 'data' && out.dataset && !out.pending;
   const phiSwept = useConnected('phi');
+  const ordersSwept = useConnected('orders');
   return (
     <div className="node node-compute node-rcwa">
 <label>
@@ -219,9 +221,10 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
           <span className="hint">ψ = 45°, δ = ±90°: circular</span>
         </div>
       )}
-      <div className="row wrap">
-        <label className="radio" title="Fourier orders −N … +N kept in the computation (accuracy vs speed)">
-          orders N <NumInput className="tiny" value={data.orders} min={0} step={1} onChange={(orders) => set({ orders: Math.round(orders) })} />
+      <div className="port-row">
+        <Port kind="target" id="orders" port="sweep-number" />
+        <label className="radio" title="Fourier orders −N … +N kept in the computation (accuracy vs speed). A Sweep on this port computes every step at its own N: the data get an axis “orders N” (convergence figures: R, a Min / max or FWHM result vs N).">
+          orders N {ordersSwept ? <span className="val swept">swept</span> : <NumInput className="tiny" value={data.orders} min={0} step={1} onChange={(orders) => set({ orders: Math.round(orders) })} />}
         </label>
         <label className="radio" title="Diffraction efficiencies output for the orders −M … +M">
           outputs ±<NumInput className="tiny" value={data.show} min={0} step={1} onChange={(show) => set({ show: Math.round(show) })} />
@@ -243,8 +246,8 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       </div>
       )}
       <div className="hint">
-        {2 * data.orders + 1} harmonics. “Check convergence” compares N, 1.5 N and 2 N{data.asr ? ' (with ASR)' : ''}.
-        {data.orders > 60 && ' Above 60 orders each point takes seconds (the time grows as N³: ~1 s at N = 100, ~7 s at 200, ~26 s at 300).'}
+        {ordersSwept ? `Every step of the N sweep is computed at its own N; the time grows as (2N + 1)³${info?.orderCost ? `: the whole sweep ≈ ${info.orderCost.toFixed(0)}× the time of its smallest N alone` : ''}.` : `${2 * data.orders + 1} harmonics. “Check convergence” compares N, 1.5 N and 2 N${data.asr ? ' (with ASR)' : ''}.`}
+        {!ordersSwept && data.orders > 60 && ' Above 60 orders each point takes seconds (the time grows as N³: ~1 s at N = 100, ~7 s at 200, ~26 s at 300).'}
       </div>
       <div className="row wrap">
         {job?.state === 'running' ? (
@@ -272,7 +275,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       )}
       {job?.state === 'idle' && !result?.errors.length && <div className="msg info">Not computed yet: press Run.</div>}
       <Messages result={result} />
-      {ready && info && job?.state === 'done' && <div className="msg okay">✓ R, T, A, orders ±{data.show}</div>}
+      {ready && job?.state === 'done' && <ComputationDone ds={out.dataset!} />}
       {ready && info?.gdNote && <div className="hint">{info.gdNote}</div>}
       <Convergence id={id} info={info} dataset={out?.type === 'data' && job?.state === 'done' ? out.dataset : null} orders={data.orders} onUse={(orders) => set({ orders })} />
       <OutPort label="data" port="data" />
@@ -289,7 +292,8 @@ function Convergence(props: { id: string; info?: ComputeInfo; dataset: Dataset |
   const run = useConvRun(id);
   const [tol, setTol] = useState(1e-3);
   const job = info?.job;
-  if (!info?.spec || !job || !info.gratings) return null;
+  // (a swept N is its own convergence study)
+  if (!info?.spec || !job || !info.gratings || info.ordersSwept) return null;
   const Ns = convergenceOrders(Math.max(orders, 2));
   const start = () => {
     const size = info.size ?? 0;

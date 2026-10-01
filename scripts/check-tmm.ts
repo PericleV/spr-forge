@@ -6,6 +6,7 @@ import { interfaceCoeffs as interfaceCoeffsTmm, nCos as nCosTmm, tmmPoint, type 
 import * as CX from '../src/physics/complex.ts';
 import { fieldProfile, layerOfZ, profileGrid } from '../src/physics/field.ts';
 import { incoherentPoint, layersAt, metaOfSpec, runSpec, runTmm } from '../src/engine/run.ts';
+import { joinParts, partsFor, splitRange } from '../src/engine/computePool.ts';
 import { evaluateGraph, rangeValues, type FitInfo, type JobState, type FormulaInfo, type MatchInfo, type OptimizerInfo, type TargetInfo } from '../src/engine/evaluate.ts';
 import { line, strides, TMM_META } from '../src/engine/dataset.ts';
 import { extremum, halfWidth, zoneAt } from '../src/engine/metrics.ts';
@@ -13,9 +14,11 @@ import { branches, COMPONENTS, crossingOf, guessDispersion, guessSpectrum, mode2
 import { fitDispersion, fitSpectrum } from '../src/engine/fitrun.ts';
 import { rng as rngOpt, adam, DEFAULT_PARAMS, differentialEvolution, fromScalar, genetic, levenbergMarquardtBatch, mergeParams, nelderMead, nsga2, particleSwarm, simulatedAnnealing, Tracker, type Box, type Control, type Crossover, type Evaluate } from '../src/engine/optimize.ts';
 import { evaluateHeadless, meritOf } from '../src/engine/headless.ts';
-import { absorberExample, anisoBicExample, lcCavityExample, liuBicExample, LIU2023, PANKIN2022, conicalSprExample, toleranceExample, ANALYSIS_DEFAULTS, dbrExample, filterExample, materialData, TOLERANCE_DEFAULTS, FIELD_DEFAULTS, gratingSprExample, gmrExample, metrologyExample, sprExample, METROLOGY_TRUTH, sprDesignExample, strongCouplingExample, strongCouplingAngleExample, tammExample, TAMM_LU2019, rabiJenaExample, RABI_JENA, TARGET_DEFAULTS, notchExample, NOTCH_SPEC, bandpassExample, arBothSidesExample, thermalEmitterSaExample, PAN2024, heTammExample, he2021TargetCsv, pelesExample, SEBEK2023, sprGaExample, sprDualModeExample } from '../src/examples.ts';
+import { OIC_A_MF, OIC_B_MF } from '../src/data/oic2025.ts';
+import { huGratingExample, HU2011, HU_N, roughSprExample, teneMalariaExample, TENE2025, oicCastleExample, oicNotchExample, CONV_N, rcwaConvergenceExample, absorberExample, anisoBicExample, lcCavityExample, liuBicExample, LIU2023, PANKIN2022, conicalSprExample, toleranceExample, ANALYSIS_DEFAULTS, dbrExample, filterExample, materialData, TOLERANCE_DEFAULTS, FIELD_DEFAULTS, gratingSprExample, gmrExample, metrologyExample, sprExample, METROLOGY_TRUTH, sprDesignExample, strongCouplingExample, strongCouplingAngleExample, tammExample, TAMM_LU2019, rabiJenaExample, RABI_JENA, TARGET_DEFAULTS, notchExample, NOTCH_SPEC, bandpassExample, arBothSidesExample, thermalEmitterSaExample, PAN2024, heTammExample, he2021TargetCsv, pelesExample, SEBEK2023, sprGaExample, sprDualModeExample } from '../src/examples.ts';
 import { countsBreak, crossover, evaluateSensor, geneD, mergedGenes, mutate, randomStructure, runSprGa, sprClassOf, sprScan, withMaterial, type SprGene, type SprMaterial, type SprOk, type SprProblem, type SprStructure } from '../src/engine/sprDesign.ts';
-import { compile } from '../src/engine/expr.ts';
+import { compile, compileComplex } from '../src/engine/expr.ts';
+import { customData } from '../src/engine/dataOps.ts';
 import { interp, parseSpectrum } from '../src/engine/match.ts';
 import { pMerit, sliceLines, type MeritPoint } from '../src/engine/spec.ts';
 import { formulaStat } from '../src/engine/objectives.ts';
@@ -47,8 +50,14 @@ import { rcwaThickConical, rcwaThickPoint } from '../src/physics/rcwaThick.ts';
 import { RCWA_DEFAULTS, ROUGH_DEFAULTS } from '../src/defaults.ts';
 import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type Plan, type RoughSpec } from '../src/engine/rough.ts';
 import { fieldResults } from '../src/engine/rcwaFieldRun.ts';
-import type { DrawGratingInfo, FieldInfo, RcwaFieldInfo } from '../src/engine/evaluate.ts';
+import type { CustomInfo, DrawGratingInfo, FieldInfo, RcwaFieldInfo } from '../src/engine/evaluate.ts';
 
+
+// npm run check:tmm -- --quick: skips the slow blocks (10 s or more each: RCWA conical / fields, literature examples,
+// global optimizers; ~1 min instead of ~12). The full run before every commit and whenever asked.
+const QUICK = process.argv.includes('--quick');
+const skipped: string[] = [];
+const full = (what: string) => (QUICK ? (skipped.push(what), false) : true);
 
 const lib = makeLibrary([]);
 const models: Models = Object.fromEntries([...lib].map(([id, d]) => [id, d.model]));
@@ -609,7 +618,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Simulated annealing: test functions and the thermal-emitter benchmark (Pan et al., Opt. Express 32, 47154 (2024)) ----
-{
+if (full('simulated annealing, Pan 2024 (47 s)')) {
   const sctl = { stopped: () => false, waitIfPaused: async () => {}, report: () => {} };
   const sbox = (d: number, lo: number, hi: number): Box => ({ lo: Array(d).fill(lo), hi: Array(d).fill(hi), integer: Array(d).fill(false) });
   const rastr = (x: number[]) => 10 * x.length + x.reduce((s, v) => s + v * v - 10 * Math.cos(2 * Math.PI * v), 0);
@@ -661,7 +670,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Gradient inverse design after M. He et al., Nat. Mater. 20, 1663 (2021): CdO carrier model, Adam stages / decay, loss ----
-{
+if (full('He 2021 inverse design (21 s)')) {
   // (1) doped-semiconductor Drude model = the CdO function of the reference code (which uses 3.14 for π: ~0.1 % in ωp²)
   const hp = heTammExample();
   const hlib = makeLibrary(hp.materials);
@@ -1517,7 +1526,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Filter design algorithms (N materials, formula starts, deep search, gradual evolution, cleaner) and benchmarks ----
-{
+if (full('filter design algorithms (26 s)')) {
   const log = (x: string) => console.log(x);
   const mean = (v: number[]) => v.reduce((x, y) => x + y, 0) / v.length;
   // (1) formula starts
@@ -1717,7 +1726,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Castle filter (Peleș contour, in the spirit of OIC 2025 Problem A) and the optimizer waiting for Compute RCWA ----
-{
+if (full('castle filter (20 s)')) {
   const pp = pelesExample();
   const plib = makeLibrary(pp.materials);
   const pev = evaluateHeadless(pp.nodes, pp.edges, plib);
@@ -1744,7 +1753,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- SPR sensors by a genetic algorithm (M. Sebek et al., ACS Omega 8, 20792 (2023)): evaluation, operators, benchmarks ----
-{
+if (full('Sebek 2023 genetic algorithm (17 s)')) {
   const log = (x: string) => console.log(x);
   const glib = makeLibrary([]);
   const gm = Object.fromEntries([...glib].map(([id, dd]) => [id, dd.model]));
@@ -2093,7 +2102,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Literature benchmark: Tamm plasmon induced reflection, H. Lu et al., Opt. Express 27, 5383 (2019) ----
-{
+if (full('Lu 2019 Tamm EIT (12 s)')) {
   const tp = tammExample();
   const tlib = makeLibrary(tp.materials);
   const HC = 1239.84193;
@@ -2357,7 +2366,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Stage 6: RCWA (1D gratings) ----
-{
+if (full('stage 6 RCWA (59 s)')) {
   const rows: string[] = [];
   // (a) eigen decomposition of general complex matrices
   let seed = 11;
@@ -2774,7 +2783,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Conical RCWA: checks that do not rely on Reticolo ----
-{
+if (full('conical RCWA without Reticolo (50 s)')) {
   const cz = (z: [number, number]) => c(z[0], z[1]);
   const toL = (rc: (typeof RETICOLO_CASES)[number]): RcwaLayer[] => [
     { n: cz(rc.top), d: 0 },
@@ -2917,7 +2926,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Conical RCWA through the graph: Compute RCWA with φ (a value, a Sweep), TE / TM outputs, unsupported cases ----
-{
+if (full('conical RCWA through the graph (50 s)')) {
   const gp = gratingSprExample();
   const glib = makeLibrary(gp.materials);
   const withRc = (patch: object, extraNodes: AppNode[] = [], extraEdges: typeof gp.edges = []) => {
@@ -2987,7 +2996,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
   console.log(`Compute RCWA with φ = 20°: R_TE + R_TM = R, orders too (${eSum.toExponential(1)}), = direct conical RCWA (${eDirect.toExponential(1)}); φ Sweep 0 / 20°: φ = 0 all TM (${e0.toExponential(1)}), 20° = node value (${e20.toExponential(1)}); φ = 0 keeps the planar job; the field map job carries φ; thick substrate at φ = 10° = direct (${eThick.toExponential(1)})`);
 }
 // Check convergence of Compute RCWA at φ ≠ 0: the same points as the job at the job's N (the azimuth is used)
-{
+if (full('conical convergence check (15 s)')) {
   const gp = gratingSprExample();
   const ev = evaluateHeadless(gp.nodes.map((n) => (n.id === 'rc' ? ({ ...n, data: { ...n.data, phi: 25 } } as AppNode) : n)), gp.edges, makeLibrary(gp.materials));
   const o = ev.results.get('rc')!.outs.out;
@@ -2999,7 +3008,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
   console.log(`Check convergence at φ = 25°: the points of the job reproduced at its N (${e.toExponential(1)})`);
 }
 // The conical SPR example: the dip of each φ (Min / max) follows the matching condition, TE appears only at φ ≠ 0
-{
+if (full('conical SPR example (50 s)')) {
   const cp = conicalSprExample();
   const ev = evaluateHeadless(cp.nodes, cp.edges, makeLibrary(cp.materials));
   const bad = [...ev.results].filter(([, r]) => r.errors.length).map(([id, r]) => `${id}: ${r.errors[0]}`);
@@ -3082,7 +3091,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 
 // ---- Conical field maps: φ = 0 = planar maps, films = TMM profiles, continuity, through the graph ----
-{
+if (full('conical field maps (45 s)')) {
   const out: string[] = [];
   // 1) φ = 0: every component, |E|², |H|² = the planar map; the components of the other polarization vanish
   const G: RcwaLayer[] = [{ n: c(1), d: 0 }, { d: 40, segs: [{ from: 0, to: 0.5, n: c(0.18, 3.4) }, { from: 0.5, to: 1, n: c(1) }] }, { n: c(2.3, 0.01), d: 30 }, { n: c(1.52), d: 0 }];
@@ -3236,7 +3245,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
   console.log(`conical thick substrate (channels order × polarization): no grating = TMM incoherent at any θ, φ (${e1.toExponential(1)}); φ = 0 = planar thick (${e2.toExponential(1)}); lossless R + T = 1 (${e3.toExponential(1)}); index-matched back = semi-infinite, TE / TM parts (${e4.toExponential(1)})`);
 }
 // Tolerance with azimuth errors (RCWA): every sample computed at its own φ = direct conical RCWA at that φ
-{
+if (full('tolerance with azimuth errors (RCWA, 110 s)')) {
   const gp = gratingSprExample();
   const tol: AppNode = { id: 'tol', type: 'tolerance', position: { x: 0, y: 0 }, data: { ...TOLERANCE_DEFAULTS, samples: 8, seed: 5, thickness: false, index: false, angle: false, azimuth: true, phiSigma: 3, spec: false } } as AppNode;
   const ev = evaluateHeadless([...gp.nodes, tol], [...gp.edges, { id: 'e-rc-tol', source: 'rc', sourceHandle: 'out', target: 'tol', targetHandle: 'in' }], makeLibrary(gp.materials));
@@ -3340,7 +3349,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 }
 // Compute RCWA with a Jones polarization: = direct conical solve with that state, TE / TM parts, no phases; the field map
 // job carries the state (all six components)
-{
+if (full('Jones polarization in Compute RCWA (21 s)')) {
   const gp = gratingSprExample();
   const lib = makeLibrary(gp.materials);
   let e = 0;
@@ -3424,7 +3433,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 // Liquid crystals, analytic: a cholesteric (helix along z) reflects the circular polarization of its own handedness in
 // the band n_o p … n_e p (de Vries), the other is transmitted; a 90° twisted nematic between crossed polarizers leaks
 // sin²(π/2 √(1+u²)) / (1+u²), u = 2 d Δn / λ (Gooch & Tarry 1975)
-{
+if (full('cholesteric, Gooch–Tarry (16 s)')) {
   const no = c(1.53);
   const ne = c(1.71);
   const helix = (pitch: number, turns: number, perTurn: number, sense: number, amb: CX.C): RcwaLayer[] => [
@@ -3607,7 +3616,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 // Liquid-crystal microcavity example: at normal incidence the x-polarized wave in the tilted nematic sees exactly
 // n(θ_c) = n_o n_e / √(n_o² cos²θ_c + n_e² sin²θ_c) and the y wave n_o, uncoupled: T for ψ = 45° = (T_x + T_y) / 2 of
 // two isotropic TMM stacks
-{
+if (full('LC microcavity example (11 s)')) {
   const p = lcCavityExample();
   const llib = makeLibrary(p.materials);
   const ev = evaluateHeadless(p.nodes, p.edges, llib);
@@ -3637,7 +3646,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 // the defect is a full-wave plate, (n_e − n_o) L = λ; near it the width grows as (L − L_BIC)² (a BIC's Q ∝ 1/δ²); at
 // λ = L_BIC exactly, R does not depend on the defect's rotation φ. Through the graph: the map has the line at L = 960 nm
 // and none at 1000 nm.
-{
+if (full('BIC, Pankin 2022 (49 s)')) {
   const { armPeriods, dA, dB, lBic } = PANKIN2022;
   const A: RcwaLayer = { eps: uniaxial(c(1), c(2), 0, 0), d: dA };
   const B: RcwaLayer = { n: c(1), d: dB };
@@ -3809,7 +3818,7 @@ console.log('stop after 5 generations:', tt.history.length, 'reports,', tt.evalu
 // Liu et al., Opt. Express 31, 8384 (2023) example: the map = the direct solve (prism / (TiO₂ SiO₂)×10 / uniaxial / air);
 // around the FW-BIC e the narrow Fano dip (its depth under the chord ±3 nm) shrinks to nothing at ϕ = 37.2° and is deep
 // at 30° and 44°; SP-BIC: no narrow dip at ϕ = 0 on the TE mode that couples at ϕ = 1°
-{
+if (full('Liu 2023 example, chiral Tamm (27 s)')) {
   const p = liuBicExample();
   const llib = makeLibrary(p.materials);
   const t0 = performance.now();
@@ -4055,7 +4064,7 @@ await import('./check-notes.ts');
 
 // RCWA map orders and Gibbs smoothing: σ factors; no smoothing = the exact sums; the node's own N reaches the job; the
 // Lanczos map converges (gold grating, TM, at the plasmon: the raw derivatives Ex, Ez ripple across the whole grating)
-{
+if (full('RCWA map orders, Lanczos (12 s)')) {
   const sl = sigmaFactors(7, 'lanczos');
   const sf = sigmaFactors(7, 'fejer');
   const s0 = sigmaFactors(7);
@@ -4197,3 +4206,421 @@ await import('./check-notes.ts');
     throw new Error(`GD sampling note: coarse ${coarse.gd} (${!!coarse.note}), fine ${fine.gd} (${!!fine.note}), finer ${finer.gd}`);
   console.log(`GD sampling: DBR cavity mode GD r = ${finer.gd.toFixed(0)} fs (0.01 nm step), ${fine.gd.toFixed(0)} fs at 0.05 nm (no note), ${coarse.gd.toFixed(0)} fs at 0.5 nm with the undersampling note`);
 }
+
+// Complex r and t: |r|² = R, arg = φr / φt, T_s = |t|² Re(q_exit) / q₀ (absorbing exit medium Si); the same r, t from the
+// Berreman 4×4 solver and from RCWA (no grating: planar path), and of a grating between the planar and the conical RCWA
+// (φ → 0); complex formulas of Custom data (real, imag, abs, arg, conj, i) and a complex result read again downstream
+{
+  const st = [layer('BK7'), layer('Au', 38), layer('TiO2', 85), layer('Si')];
+  const lamC = [550, 633, 780];
+  const thC = [0, 25, 50];
+  const base = { models, instances: inst(), layers: st, lambda: lamC, theta: thC, sweeps: [] as number[] };
+  let eSelf = 0;
+  let eB4 = 0;
+  let eRc = 0;
+  for (const pol of ['s', 'p'] as const) {
+    const t = runSpec({ ...base, pol }) as unknown as Record<string, Float64Array>;
+    const b = runSpec({ ...base, pol, b4: { phi: 0 } }) as unknown as Record<string, Float64Array>;
+    const r = runSpec({ ...base, pol, rcwa: { orders: 5, show: 0 } }) as unknown as Record<string, Float64Array>;
+    for (let k = 0; k < t.R.length; k++) {
+      const wr = (x: number) => Math.abs(((((x + 180) % 360) + 360) % 360) - 180);
+      const toDeg = 180 / Math.PI;
+      eSelf = Math.max(eSelf, Math.abs(t.rRe[k] ** 2 + t.rIm[k] ** 2 - t.R[k]), wr(Math.atan2(t.rIm[k], t.rRe[k]) * toDeg - t.phiR[k]) / 360, wr(Math.atan2(t.tIm[k], t.tRe[k]) * toDeg - t.phiT[k]) / 360);
+      if (pol === 's') {
+        const th = thC[k % thC.length];
+        const lam = lamC[Math.floor(k / thC.length)];
+        const n0 = n('BK7', lam).re;
+        const kx = n0 * Math.sin((th * Math.PI) / 180);
+        const q = csqrt(csub(cmulC(n('Si', lam), n('Si', lam)), c(kx * kx)));
+        eSelf = Math.max(eSelf, Math.abs(((t.tRe[k] ** 2 + t.tIm[k] ** 2) * q.re) / (n0 * Math.cos((th * Math.PI) / 180)) - t.T[k]));
+      }
+      for (const f of ['rRe', 'rIm', 'tRe', 'tIm']) {
+        eB4 = Math.max(eB4, Math.abs(b[f][k] - t[f][k]));
+        eRc = Math.max(eRc, Math.abs(r[f][k] - t[f][k]));
+      }
+    }
+  }
+  // a grating: planar RCWA vs the conical solver at φ = 1e-7° (TM: t of E from t of H in both)
+  const Gr: LayerSpec = { ...layer('Air', 120), grating: { profile: 'trapezoid', period: 500, fill: 0.5, fillTop: 0.5, shift: 0, slices: 1, nx: 32, pixels: [], mats: ['Au', 'Air'] } };
+  let eCon = 0;
+  for (const pol of ['s', 'p'] as const) {
+    const g = { models, instances: inst(), layers: [layer('BK7'), Gr, layer('Si')], lambda: [633], theta: [20], pol, sweeps: [] as number[] };
+    const a = runSpec({ ...g, rcwa: { orders: 12, show: 0 } }) as unknown as Record<string, Float64Array>;
+    const b = runSpec({ ...g, rcwa: { orders: 12, show: 0, conical: true, phi: 1e-7 } }) as unknown as Record<string, Float64Array>;
+    for (const f of ['rRe', 'rIm', 'tRe', 'tIm']) eCon = Math.max(eCon, Math.abs(a[f][0] - b[f][0]));
+  }
+  const jonesNaN = runSpec({ ...base, pol: 'p', b4: { phi: 0, jones: { psi: 45, delta: 90 } } }) as unknown as Record<string, Float64Array>;
+  const nanOk = Number.isNaN(jonesNaN.rRe[0]) && Number.isNaN(jonesNaN.tIm[0]);
+  if (!(eSelf < 1e-12 && eB4 < 1e-9 && eRc < 1e-9 && eCon < 1e-6 && nanOk)) throw new Error(`complex r, t: self ${eSelf}, Berreman ${eB4}, RCWA ${eRc}, conical ${eCon}, Jones NaN ${nanOk}`);
+
+  // complex expressions
+  const z = (e: string, v: Record<string, { re: number; im: number }> = {}) => {
+    const cc = compileComplex(e);
+    if (typeof cc === 'string') throw new Error(`complex expression ${e}: ${cc}`);
+    return cc.fn(v);
+  };
+  const near = (a: { re: number; im: number }, re: number, im: number) => Math.abs(a.re - re) < 1e-12 && Math.abs(a.im - im) < 1e-12;
+  const cases: [string, number, number][] = [
+    ['sqrt(-4)', 0, 2], ['exp(i*pi)', -1, 0], ['(1+i)^2', 0, 2], ['arg(i)', Math.PI / 2, 0], ['abs(3+4*i)', 5, 0], ['conj(2-3i)', 2, 3],
+    ['real(x*conj(x))', 13, 0], ['imag(x)', 3, 0], ['(-8)^(1/3)', 1, Math.sqrt(3)], ['2^10 - max(1, 3)', 1021, 0], ['1/(1-i)', 0.5, 0.5],
+  ];
+  for (const [e, re, im] of cases) {
+    const got = e === 'conj(2-3i)' ? z('conj(2-3*i)') : z(e, { x: { re: 2, im: 3 } });
+    if (!near(got, re, im)) throw new Error(`complex expression ${e} = ${got.re}+${got.im}i, expected ${re}+${im}i`);
+  }
+  if (typeof compileComplex('real(a') !== 'string' || typeof compileComplex('foo(a)') !== 'string') throw new Error('complex expression errors not reported');
+
+  // Custom data: the complex r, t of a computation; a complex formula → Re / Im, read as one complex quantity again
+  const f = runSpec({ ...base, pol: 'p' }) as unknown as Record<string, Float64Array>;
+  const ds: Dataset = {
+    key: 'cx',
+    axes: [{ id: 'lambda', label: 'λ', unit: 'nm', values: lamC }, { id: 'theta', label: 'θ', unit: '°', values: thC }],
+    fields: f,
+    meta: metaOfSpec({ ...base, pol: 'p' }),
+    size: 9,
+  };
+  const c1 = customData([['a', ds]], [{ name: 'R2', expr: 'abs(a_r)^2' }, { name: 'rt', expr: 'a_r * a_t' }, { name: 'phi', expr: 'arg(a_r) * 180 / pi' }, { name: 'rr', expr: 'real(a_r)' }], 'c1');
+  if (!c1.dataset) throw new Error(`Custom data complex: ${c1.errors.join('; ')}`);
+  const d1 = c1.dataset;
+  const varsOk = c1.vars.some((v) => v.name === 'a_r' && v.complex) && c1.vars.some((v) => v.name === 'a_t' && v.complex) && !c1.vars.some((v) => v.name === 'a_Re_r');
+  const metaOk = d1.meta.map((m) => m.key).join(',') === 'c0,c1re,c1im,c2,c3';
+  const c2 = customData([['b', d1]], [{ name: 'back', expr: 'b_rt / a' }], 'c2');
+  let eCd = 0;
+  for (let k = 0; k < 9; k++) {
+    const rt = cmulC(c(f.rRe[k], f.rIm[k]), c(f.tRe[k], f.tIm[k]));
+    eCd = Math.max(eCd, Math.abs(d1.fields.c0[k] - f.R[k]), Math.abs(d1.fields.c1re[k] - rt.re), Math.abs(d1.fields.c1im[k] - rt.im), Math.abs(d1.fields.c2[k] - f.phiR[k]), Math.abs(d1.fields.c3[k] - f.rRe[k]));
+  }
+  const c3 = customData([['b', d1]], [{ name: 'back', expr: 'real(b_rt) + imag(b_rt)' }], 'c3');
+  const chainOk = c2.errors.some((e) => e.includes('unknown a')) && !!c3.dataset && c3.vars.some((v) => v.name === 'b_rt' && v.complex) && Math.abs(c3.dataset.fields.c0[4] - d1.fields.c1re[4] - d1.fields.c1im[4]) < 1e-15;
+  if (!(varsOk && metaOk && eCd < 1e-12 && chainOk)) throw new Error(`Custom data complex: vars ${varsOk}, meta ${d1.meta.map((m) => m.key)}, values ${eCd}, chain ${chainOk}`);
+  console.log(`complex r, t: |r|² = R, arg = φr, φt, T_s = |t|² Re q_exit / q₀ (${eSelf.toExponential(1)}); Berreman ${eB4.toExponential(1)}, RCWA without grating ${eRc.toExponential(1)}, grating planar vs conical φ → 0 ${eCon.toExponential(1)}, Jones NaN; complex formulas (${cases.length} cases), Custom data a_r, a_t → |r|², r·t (Re, Im), read again as b_rt`);
+}
+
+// Trigonometric functions of the formulas (real and complex): identities, principal branches, degrees ↔ radians
+{
+  const z = (e: string, v: Record<string, { re: number; im: number }> = {}) => {
+    const cc = compileComplex(e);
+    if (typeof cc === 'string') throw new Error(`complex expression ${e}: ${cc}`);
+    return cc.fn(v);
+  };
+  const W = { w: { re: 0.7, im: 1.3 } };
+  const d = (a: { re: number; im: number }, re: number, im = 0) => Math.hypot(a.re - re, a.im - im);
+  const eId = Math.max(
+    d(z('sin(w)^2 + cos(w)^2', W), 1),
+    d(z('tan(w) - sin(w)/cos(w)', W), 0),
+    d(z('cot(w) * tan(w)', W), 1),
+    d(z('ctan(w) - cot(w)', W), 0),
+    d(z('asin(sin(w)) - w', W), 0),
+    d(z('acos(cos(w)) - w', W), 0),
+    d(z('atan(tan(w)) - w', W), 0),
+    d(z('sinh(w) + i*sin(i*w)', W), 0),
+    d(z('cosh(w) - cos(i*w)', W), 0),
+    d(z('tanh(w) - sinh(w)/cosh(w)', W), 0),
+    d(z('cosh(w)^2 - sinh(w)^2', W), 1),
+    d(z('exp(i*w) - cos(w) - i*sin(w)', W), 0),
+    d(z('deg(pi)'), 180),
+    d(z('sin(rad(30))'), 0.5),
+    d(z('atan2(-1, -1)'), (-3 * Math.PI) / 4),
+    d(z('atan2(1, -1)'), (3 * Math.PI) / 4),
+    d(z('asin(0.5)'), Math.PI / 6),
+    d(z('acos(-1)'), Math.PI),
+    d(z('atan(1)'), Math.PI / 4),
+    // a value beyond ±1 (a complex angle, as sin θ > 1 of an evanescent wave) comes back through sin, cos
+    d(z('sin(asin(2.5))'), 2.5),
+    d(z('cos(acos(-3))'), -3),
+  );
+  const r = compile('sin(a)^2 + cos(a)^2 + deg(atan2(1, 1)) + cot(pi/4) - ctan(pi/4) + tanh(0) + asin(1) - acos(0)');
+  const rv = typeof r === 'string' ? NaN : r.fn({ a: 0.3 });
+  if (!(Math.abs(rv - 46) < 1e-12 && eId < 1e-12)) throw new Error(`trigonometric formulas: identities ${eId}, real ${typeof r === 'string' ? r : rv}`);
+  console.log(`trigonometric formulas: sin, cos, tan, cot, asin, acos, atan, atan2, sinh, cosh, tanh, deg, rad — identities at z = 0.7 + 1.3i and principal branches (${eId.toExponential(1)}); the same functions in objective formulas`);
+}
+
+// Compute RCWA with the orders N swept: an axis "orders N", every step = the node at that N; FWHM per N; Extract data at a
+// value (interpolated); the field map takes the step's N
+{
+  const gp = gratingSprExample();
+  const glib = makeLibrary(gp.materials);
+  const sw = { id: 'ns', type: 'sweep', position: { x: 0, y: 0 }, data: { name: 'N', kind: 'number', mode: 'list', min: 5, max: 15, step: 5, list: '5, 10, 15' } } as AppNode;
+  const ex1 = { id: 'x1', type: 'extract', position: { x: 0, y: 0 }, data: { name: '', fields: ['R'], fixed: {}, at: { theta: 10.37 } } } as AppNode;
+  const nodes = [...gp.nodes.map((n) => (n.id === 'fm' ? ({ ...n, data: { ...n.data, at: { 'sweep:ns': 0 } } } as AppNode) : n)), sw, ex1];
+  const edges = [...gp.edges, { id: 'e-ns', source: 'ns', sourceHandle: 'out', target: 'rc', targetHandle: 'orders' }, { id: 'e-x1', source: 'rc', sourceHandle: 'out', target: 'x1', targetHandle: 'in' }];
+  const ev = evaluateHeadless(nodes, edges, glib);
+  const rc = ev.results.get('rc')!;
+  const o = rc.outs.out;
+  const ds = o?.type === 'data' ? o.dataset : null;
+  if (!ds || ds.axes[0].id !== 'sweep:ns' || ds.axes[0].values.join() !== '5,10,15') throw new Error(`orders N sweep: ${rc.errors} ${ds?.axes.map((a) => a.id)}`);
+  const nTh = ds.axes[ds.axes.length - 1].values.length;
+  let eStep = 0;
+  for (const [j, N] of [5, 10, 15].entries()) {
+    const one = evaluateHeadless(gp.nodes.map((n) => (n.id === 'rc' ? ({ ...n, data: { ...n.data, orders: N } } as AppNode) : n)), gp.edges, glib).results.get('rc')!.outs.out;
+    const d1 = one?.type === 'data' ? one.dataset! : null;
+    for (let t = 0; t < nTh; t++) eStep = Math.max(eStep, Math.abs(ds.fields.R[j * nTh + t] - d1!.fields.R[t]), Math.abs(ds.fields.R_m1[j * nTh + t] - d1!.fields.R_m1[t]));
+  }
+  // FWHM of the dip for every N: a metrics dataset along the N axis
+  const fm = ev.results.get('fwhm')!.outs.metrics;
+  const fds = fm?.type === 'data' ? fm.dataset : null;
+  const fOk = !!fds && fds.axes.some((a) => a.id === 'sweep:ns' && a.values.length === 3);
+  // Extract data: R at θ = 10.37° (between two steps of 0.1°), linear
+  const xo = ev.results.get('x1')!.outs.out;
+  const xds = xo?.type === 'data' ? xo.dataset : null;
+  const th = ds.axes[ds.axes.length - 1].values;
+  const i0 = th.findIndex((v, i) => v <= 10.37 && th[i + 1] >= 10.37);
+  const wgt = (10.37 - th[i0]) / (th[i0 + 1] - th[i0]);
+  let eAt = 0;
+  for (let j = 0; j < 3; j++) {
+    const ref = ds.fields.R[j * nTh + i0] * (1 - wgt) + ds.fields.R[j * nTh + i0 + 1] * wgt;
+    eAt = Math.max(eAt, Math.abs(xds!.fields.R[j] - ref));
+  }
+  const xOk = !!xds && xds.size === 3 && xds.axes[0].id === 'sweep:ns';
+  // outside the axis: NaN and a warning
+  const evOut = evaluateHeadless(nodes.map((n) => (n.id === 'x1' ? ({ ...n, data: { ...n.data, at: { theta: 45 } } } as AppNode) : n)), edges, glib).results.get('x1')!;
+  const outOk = evOut.warnings.some((w2) => w2.includes('outside')) && Number.isNaN((evOut.outs.out as { dataset: Dataset }).dataset.fields.R[0]);
+  // the field map at the first step computes with N = 5 (its own N empty)
+  const fmJob = (ev.results.get('fm')!.info as RcwaFieldInfo).job;
+  const cost = (rc.info as ComputeInfo).orderCost!;
+  if (!(eStep === 0 && fOk && eAt < 1e-15 && xOk && outOk && fmJob?.orders === 5 && Math.abs(cost - (11 ** 3 + 21 ** 3 + 31 ** 3) / 11 ** 3) < 1e-9))
+    throw new Error(`orders N sweep: steps ${eStep}, FWHM per N ${fOk}, at value ${eAt} (${xOk}), outside ${outOk}, field map N ${fmJob?.orders}, cost ${cost}`);
+  console.log(`orders N swept (5, 10, 15): every step = Compute RCWA at that N (exact), FWHM along N, Extract R at θ = 10.37° (interpolated, ${eAt.toExponential(1)}: ${Array.from(xds!.fields.R).map((v) => v.toFixed(4)).join(', ')}); outside the axis NaN + warning; field map at the step's N; cost ${cost.toFixed(1)}× N = 5`);
+}
+
+// Materials in Custom data: n, k, nc, ε at the λ of every point (= the library); a Material sweep follows its axis in the
+// data; materials with a λ Parameter only; errors without wavelengths
+{
+  const p = sprExample();
+  const slib = makeLibrary([...p.materials]);
+  const smodels: Models = Object.fromEntries([...slib].map(([id, dd]) => [id, dd.model]));
+  const au = { id: 'aum', type: 'material', position: { x: 0, y: 0 }, data: materialData('Au') } as AppNode;
+  const ms = { id: 'ms', type: 'matsweep', position: { x: 0, y: 0 }, data: { name: 'metal' } } as AppNode;
+  const cu = { id: 'cu', type: 'custom', position: { x: 0, y: 0 }, data: { name: 'with n', rows: [{ name: 'n', expr: 'b_n' }, { name: 'k', expr: 'b_k' }, { name: 'e2', expr: 'imag(b_eps)' }, { name: 'chk', expr: 'abs(b_nc^2 - b_eps)' }], aliases: {} } } as AppNode;
+  // the Ag layer takes a Material sweep (Ag, Au)
+  const edges = [
+    ...p.edges.filter((e) => !(e.source === 'agm' && e.target === 'ag')),
+    { id: 'm1', source: 'agm', sourceHandle: 'out', target: 'ms', targetHandle: 'in' },
+    { id: 'm2', source: 'aum', sourceHandle: 'out', target: 'ms', targetHandle: 'in' },
+    { id: 'm3', source: 'ms', sourceHandle: 'out', target: 'ag', targetHandle: 'mat' },
+    { id: 'c1', source: 'tmm', sourceHandle: 'out', target: 'cu', targetHandle: 'in' },
+    { id: 'c2', source: 'ms', sourceHandle: 'out', target: 'cu', targetHandle: 'in' },
+  ];
+  const ev = evaluateHeadless([...p.nodes, au, ms, cu], edges, slib);
+  const r = ev.results.get('cu')!;
+  const cds = r.outs.out?.type === 'data' ? r.outs.out.dataset : null;
+  if (!cds) throw new Error(`Custom data with a material: ${r.errors} ${ev.results.get('tmm')!.errors}`);
+  const ax = cds.axes.findIndex((a) => a.id === 'sweep:ms');
+  const stA = strides(cds.axes);
+  let eN = 0;
+  for (let k = 0; k < cds.size; k += 37) {
+    const m = ax >= 0 ? Math.floor(k / stA[ax]) % 2 : -1;
+    const ref = refractiveIndex(m === 0 ? 'Ag' : 'Au', smodels, 633);
+    eN = Math.max(eN, Math.abs(cds.fields.c0[k] - ref.re), Math.abs(cds.fields.c1[k] - ref.im), Math.abs(cds.fields.c2[k] - 2 * ref.re * ref.im), cds.fields.c3[k]);
+  }
+  // a material with a λ Parameter only: n(λ) on that axis
+  const lp = { id: 'lp', type: 'param', position: { x: 0, y: 0 }, data: { quantity: 'lambda', mode: 'range', value: 600, min: 500, max: 900, step: 100 } } as AppNode;
+  const cu2 = { id: 'cu2', type: 'custom', position: { x: 0, y: 0 }, data: { name: 'n(λ)', rows: [{ name: 'n', expr: 'a_n' }, { name: 'lam', expr: 'b_lambda' }], aliases: { 'agm:out': 'a', 'lp:out': 'b' } } } as AppNode;
+  const ev2 = evaluateHeadless([...p.nodes, lp, cu2], [...p.edges, { id: 'd1', source: 'agm', sourceHandle: 'out', target: 'cu2', targetHandle: 'in' }, { id: 'd2', source: 'lp', sourceHandle: 'out', target: 'cu2', targetHandle: 'in' }], slib);
+  const r2 = ev2.results.get('cu2')!;
+  const d2 = r2.outs.out?.type === 'data' ? r2.outs.out.dataset : null;
+  const lamOk = !!d2 && d2.size === 5 && [500, 600, 700, 800, 900].every((l, i) => Math.abs(d2.fields.c0[i] - refractiveIndex('Ag', smodels, l).re) < 1e-15 && d2.fields.c1[i] === l);
+  // a material alone: asks for wavelengths
+  const ev3 = evaluateHeadless([...p.nodes, cu2], [...p.edges, { id: 'd1', source: 'agm', sourceHandle: 'out', target: 'cu2', targetHandle: 'in' }], slib);
+  const noLam = ev3.results.get('cu2')!.errors.some((e) => e.includes('wavelengths'));
+  const chips = (r.info as CustomInfo).vars.filter((v) => v.input === 'b').map((v) => v.name).join(',');
+  if (!(ax >= 0 && eN < 1e-12 && lamOk && noLam && chips === 'b_n,b_k,b_nc,b_eps'))
+    throw new Error(`materials in Custom data: axis ${ax}, n / k / ε ${eN}, λ Parameter ${lamOk} (${r2.errors}), no λ ${noLam}, vars ${chips}`);
+  console.log(`materials in Custom data: n, k, Im ε = 2nk, |nc² − ε| of a Material sweep (Ag, Au) following its axis in the SPR data (${eN.toExponential(1)}); Ag with a λ Parameter only (5 wavelengths, = library); no wavelengths → message`);
+}
+
+// The example "RCWA convergence vs the orders N": no errors; n_sp of gold from Custom data = Re √(ε/(ε + 1)), the
+// shallow-grating angle asin(λ/Λ − n_sp), the shift = the FWHM dip angle − that angle for every N; the dip angle between
+// N = 30 and 40 within 0.01°; R at 10.5° for each N
+if (full('RCWA convergence example (30 s)')) {
+  const p = rcwaConvergenceExample();
+  const clib = makeLibrary(p.materials);
+  const cmodels: Models = Object.fromEntries([...clib].map(([id, dd]) => [id, dd.model]));
+  const ev = evaluateHeadless(p.nodes, p.edges, clib);
+  const bad = [...ev.results].filter(([, r]) => r.errors.length || r.warnings.length);
+  const get = (id: string, h = 'out') => (ev.results.get(id)!.outs[h] as { dataset: Dataset }).dataset;
+  const f = get('fwhm', 'metrics').fields;
+  const cu = get('cu').fields;
+  const x = get('xR').fields;
+  const eps = CX.mul(refractiveIndex('Au', cmodels, 633), refractiveIndex('Au', cmodels, 633));
+  const nsp = CX.sqrt(CX.div(eps, CX.add(eps, c(1)))).re;
+  const thS = (Math.asin(633 / 500 - nsp) * 180) / Math.PI;
+  const nN = CONV_N.length;
+  let e = 0;
+  for (let j = 0; j < nN; j++) e = Math.max(e, Math.abs(cu.c0[j] - nsp), Math.abs(cu.c1[j] - thS), Math.abs(cu.c2[j] - (f.c0[j] - thS)));
+  const dTh = Math.abs(f.c0[nN - 1] - f.c0[nN - 2]);
+  if (!(bad.length === 0 && e < 1e-9 && dTh < 0.01 && x.R.length === nN && Math.abs(nsp - 1.04487) < 1e-5))
+    throw new Error(`RCWA convergence example: ${bad.map(([id, r]) => `${id}: ${[...r.errors, ...r.warnings]}`)}; Custom data ${e}, dip N 30 / 40 ${dTh}, n_sp ${nsp}`);
+  console.log(`RCWA convergence example (N = ${CONV_N.join(', ')}): dip ${Array.from(f.c0).map((v) => v.toFixed(3)).join(' / ')}°, R at the dip ${Array.from(f.e0).map((v) => v.toFixed(3)).join(' / ')}; n_sp = ${nsp.toFixed(5)}, shallow-grating angle ${thS.toFixed(2)}° (Custom data = direct, ${e.toExponential(1)}); dip N 30 → 40 moves ${dTh.toFixed(3)}°`);
+}
+
+// OIC 2025 (Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026)): the committee's example designs (figshare Data Files
+// 2, 3) give the official merit functions through the nodes (Extract data, Custom data with step()): Problem A 7.006763
+// (the castle target, 8001 points), Problem B 1.8540762059025715 (Ts/Tp at 450 / 550 / 650 nm + #(Rs ≥ 99 %) / #(Ts ≥ 99 %))
+{
+  const mfOf = (p: Project, id: string) => {
+    const ev = evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials));
+    const bad = [...ev.results].filter(([, r]) => r.errors.length);
+    const o = ev.results.get(id)!.outs.out as { dataset?: Dataset } | undefined;
+    return { mf: o?.dataset?.fields.c0[0] ?? NaN, bad: bad.map(([k, r]) => `${k}: ${r.errors}`) };
+  };
+  const a = mfOf(oicCastleExample(), 'mf');
+  const b = mfOf(oicNotchExample(), 'mfB');
+  const st = compile('step(x) + 2*step(-x) + 4*step(x - 1)');
+  const stOk = typeof st !== 'string' && st.fn({ x: 0 }) === 3 && st.fn({ x: -1e-12 }) === 2 && st.fn({ x: 2 }) === 5;
+  if (!(a.bad.length === 0 && b.bad.length === 0 && Math.abs(a.mf - OIC_A_MF) < 5e-7 && Math.abs(b.mf - OIC_B_MF) < 1e-12 && stOk))
+    throw new Error(`OIC 2025 examples: A ${a.mf} (${a.bad}), B ${b.mf} (${b.bad}), step ${stOk}`);
+  console.log(`OIC 2025 committee designs through the nodes: Problem A MF ${a.mf.toFixed(7)} (official ${OIC_A_MF}), Problem B MF ${b.mf} (official ${OIC_B_MF}, ${Math.abs(b.mf - OIC_B_MF).toExponential(1)}); step() = Heaviside`);
+}
+
+// Tene et al., Front. Bioeng. Biotechnol. 13, 1580344 (2025), graphene SPR biosensor for malaria: the five initial
+// configurations (dip angle and depth, §3.1) and the optimized Sys3 / Sys4 through the example's nodes — dip angles,
+// Δθ, S = Δθ/Δn, R at the dip and LoD as in their Tables 3, 4 (their widths follow an undeclared definition: DA, QF, FoM,
+// CSF are reported, not asserted)
+{
+  const BK = c(1.5151), AGt = c(0.056253, 4.276), SN = c(2.0394), Gt = c(3, 1.1491), DN = c(1.462);
+  const dip = (films: Layer[], ns: number) => {
+    let best = { th: 0, R: 2 };
+    for (let t = 60; t <= 89.99; t += 0.001) {
+      const R = tmmPoint([{ n: BK, d: 0 }, ...films, { n: c(ns), d: 0 }], 633, t, 'p').R;
+      if (R < best.R) best = { th: t, R };
+    }
+    return best;
+  };
+  const init: [Layer[], number, number, number][] = [
+    [[{ n: AGt, d: 55 }], 1.34, 68.6, 0.02],
+    [[{ n: AGt, d: 55 }], 1.402, 78.2, 0.55],
+    [[{ n: AGt, d: 55 }, { n: SN, d: 5 }], 1.402, 84.2, 10.34],
+    [[{ n: AGt, d: 55 }, { n: SN, d: 5 }, { n: Gt, d: 0.34 }], 1.402, 85.3, 35.45],
+    [[{ n: AGt, d: 55 }, { n: SN, d: 5 }, { n: Gt, d: 0.34 }, { n: DN, d: 3.2 }], 1.402, 86.2, 45.37],
+  ];
+  let eTh0 = 0;
+  let eR0 = 0;
+  for (const [f, ns, th, rp] of init) {
+    const r = dip(f, ns);
+    eTh0 = Math.max(eTh0, Math.abs(r.th - th));
+    eR0 = Math.max(eR0, Math.abs(100 * r.R - rp));
+  }
+  const rows: string[] = [];
+  let eTh = 0, eS = 0, eR = 0, eL = 0;
+  for (const sys of [3, 4] as const) {
+    const P = TENE2025[sys === 3 ? 'sys3' : 'sys4'];
+    const p = teneMalariaExample(sys);
+    const ev = evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials));
+    const bad = [...ev.results].filter(([, r]) => r.errors.length);
+    if (bad.length) throw new Error(`Tene example Sys${sys}: ${bad.map(([k, r]) => `${k}: ${r.errors}`)}`);
+    const get = (id: string, h = 'out') => (ev.results.get(id)!.outs[h] as { dataset: Dataset }).dataset;
+    const fm = get('fwhm', 'metrics').fields;
+    const se = get('sens').fields;
+    const pe = get('perf').fields;
+    for (let j = 0; j < 4; j++) {
+      eTh = Math.max(eTh, Math.abs(fm.c0[j] - P.theta[j]));
+      eR = Math.max(eR, Math.abs(100 * fm.e0[j] - P.Rmin[j]));
+    }
+    for (let j = 1; j < 4; j++) {
+      eS = Math.max(eS, Math.abs(se.c2[j] / P.S[j - 1] - 1));
+      eL = Math.max(eL, Math.abs(pe.c3[j] - P.LoD[j - 1]));
+    }
+    rows.push(`Sys${sys} S ${Array.from(se.c2).slice(1).map((v) => v.toFixed(2)).join(' / ')} (paper ${P.S.join(' / ')}), FWHM ${Array.from(fm.w0).map((v) => v.toFixed(2)).join(' / ')}° (paper ${P.FWHM.join(' / ')}), QF ${Array.from(pe.c1).slice(1).map((v) => v.toFixed(1)).join(' / ')} (paper ${P.QF.join(' / ')})`);
+  }
+  if (!(eTh0 < 0.06 && eR0 < 0.006 && eTh < 0.006 && eR < 0.006 && eS < 5e-4 && eL < 1.5e-3))
+    throw new Error(`Tene 2025: initial θ ${eTh0}, Rmin ${eR0}; optimized θ ${eTh}, Rmin ${eR}, S ${eS}, LoD ${eL}`);
+  console.log(`Tene et al. 2025 (graphene SPR, malaria): initial Sys0–4 dip angles within ${eTh0.toFixed(3)}° of 68.6 / 78.2 / 84.2 / 85.3 / 86.2°, depths within ${eR0.toFixed(3)} %; optimized, through the nodes: dip angles within ${eTh.toFixed(4)}°, R at the dip ${eR.toFixed(4)} %, S within ${(100 * eS).toFixed(3)} %, LoD ${eL.toFixed(4)}·10⁻⁵ — ${rows.join('; ')}`);
+}
+
+// The compute pool (engine/computePool.ts): a job cut into 2, 3 or 7 parts and joined = the whole job, every field and
+// point exactly (group delay added after joining) — TMM with sweeps and a λ range, a thick substrate, Berreman 4×4, RCWA
+// planar and conical, rough interfaces; the parts follow the cost (TMM below 6·10⁵ point-layers: one part; at most 4 per slot)
+{
+  const specs: { name: string; spec: TmmSpec }[] = [];
+  for (const [name, mk] of [['DBR', dbrExample], ['AR both faces', arBothSidesExample], ['LC cavity', lcCavityExample], ['grating SPR', gratingSprExample], ['conical SPR', conicalSprExample], ['rough SPR', roughSprExample], ['BIC', anisoBicExample]] as const) {
+    const p = mk();
+    // the jobs the graph asks for (not computed here)
+    const ev = evaluateGraph(p.nodes, p.edges, { cache: new Map(), lastDone: new Map(), failed: new Map() }, makeLibrary(p.materials));
+    for (const { requester: id, spec: sp } of ev.jobs) {
+      if (specs.some((x) => JSON.stringify(x.spec) === JSON.stringify(sp))) continue;
+      // RCWA and Berreman: a few λ and θ (and N ≤ 15) are enough — the parts cut through the λ / θ rows anyway
+      const few = { theta: sp.theta.slice(0, 4), lambda: sp.lambda.slice(0, 3) };
+      specs.push({ name: `${name}/${id}`, spec: sp.rcwa ? { ...sp, ...few, rcwa: { ...sp.rcwa, orders: Math.min(15, sp.rcwa.orders) } } : sp.b4 ? { ...sp, ...few } : sp });
+    }
+  }
+  let worst = 0;
+  let checked = 0;
+  const kinds = new Set<string>();
+  for (const { name, spec } of specs) {
+    const whole = runSpec(spec) as unknown as Record<string, Float64Array>;
+    const size = whole.R.length;
+    for (const n of [2, 3, 7]) {
+      if (n > size) continue;
+      const parts = splitRange(size, n).map((range) => ({ range, fields: runSpec(spec, undefined, range) }));
+      const joined = joinParts(spec, parts) as unknown as Record<string, Float64Array>;
+      const keys = Object.keys(whole);
+      if (keys.length !== Object.keys(joined).length) throw new Error(`compute pool ${name}: fields ${keys.length} vs ${Object.keys(joined).length}`);
+      for (const k of keys)
+        for (let i = 0; i < size; i++) {
+          const [a, b] = [whole[k][i], joined[k][i]];
+          if (Number.isNaN(a) && Number.isNaN(b)) continue;
+          worst = Math.max(worst, Math.abs(a - b));
+        }
+      checked++;
+    }
+    kinds.add(spec.rcwa ? (spec.rcwa.conical ? 'RCWA conical' : 'RCWA') : spec.b4 ? 'Berreman' : spec.back ? 'thick substrate' : spec.layers.some((L) => L.rough) ? 'rough' : 'TMM');
+  }
+  const cheap = partsFor(specs.find((x) => x.name.startsWith('DBR'))!.spec, 15);
+  const big: TmmSpec = { ...specs.find((x) => x.name.startsWith('DBR'))!.spec, lambda: Array.from({ length: 4000 }, (_, i) => 400 + i * 0.1), theta: Array.from({ length: 50 }, (_, i) => i) };
+  const rc = partsFor(specs.find((x) => x.spec.rcwa)!.spec, 15);
+  if (!(worst === 0 && checked >= 15 && kinds.size >= 5 && cheap === 1 && partsFor(big, 15) >= 15 && partsFor(big, 15) <= 60 && rc > 1))
+    throw new Error(`compute pool: |Δ| ${worst}, ${checked} splits, kinds ${[...kinds]}, parts small TMM ${cheap}, big ${partsFor(big, 15)}, RCWA ${rc}`);
+  console.log(`compute pool: ${specs.length} job specs of the examples (${[...kinds].join(', ')}) cut into 2 / 3 / 7 parts and joined = whole (${checked} splits, max |Δ| ${worst}); parts: small TMM 1, 200 000-point DBR ${partsFor(big, 15)}, RCWA ${rc}`);
+}
+
+// Hu, Optik 122, 1881 (2011): grating-coupled SPR with the −1st order at 900 nm (Drude Au / Al of the paper, Λ = 350 nm,
+// metal fraction 0.9, N = 20): the dip angles for n = 1.32 / 1.37 — gold 40 nm deep (Fig. 2(d)), gold 30 nm (Fig. 4(a),
+// 54.37° for their printed 53.37°), aluminium 30 nm (Fig. 4(b)) — within the convergence band of metal gratings in TM
+// (±0.2° between N = 10 and 50; their N is not given); and the example (Al 27 nm + conformal 3 nm Au): shift ≈ their 9.39°
+if (full('Hu 2011 grating SPR (9 s)')) {
+  const hp = huGratingExample();
+  const hlib = makeLibrary(hp.materials);
+  const hmodels: Models = Object.fromEntries([...hlib].map(([id, d]) => [id, d.model]));
+  const hm: Models = { ...hmodels, n132: { type: 'constant', n: 1.32, k: 0 }, n137: { type: 'constant', n: 1.37, k: 0 } };
+  const hinst = Object.fromEntries(Object.keys(hm).map((k) => [k, { lib: k }]));
+  const lam = (metal: string, an: string): LayerSpec['grating'] => ({ profile: 'lamellar', period: 350, fill: 0.9, fillTop: 0.9, shift: 0, slices: 1, nx: 64, pixels: [], mats: [metal, an] });
+  const dipNear = (metal: string, an: string, depth: number, guess: number) => {
+    const theta = Array.from({ length: 41 }, (_, i) => +(guess - 1 + i * 0.05).toFixed(3));
+    const f = runSpec({ models: hm, instances: hinst, layers: [layer(an), { ...layer(an, depth), grating: lam(metal, an) }, layer(metal)], lambda: [900], theta, pol: 'p', sweeps: [], rcwa: { orders: 20, show: 0 } }) as unknown as Record<string, Float64Array>;
+    let k = 1;
+    for (let i = 1; i < theta.length - 1; i++) if (f.R[i] < f.R[k]) k = i;
+    const [a, b, cc] = [f.R[k - 1], f.R[k], f.R[k + 1]];
+    return theta[k] + (0.05 * (a - cc)) / (2 * (a - 2 * b + cc));
+  };
+  const AU = 'user-au-hu2011', AL = 'user-al-hu2011';
+  const got: [string, number, number, number][] = [
+    ['Au 40 nm, n 1.32', dipNear(AU, 'n132', 40, HU2011.base350.theta[0]), HU2011.base350.theta[0], 0.3],
+    ['Au 40 nm, n 1.37', dipNear(AU, 'n137', 40, HU2011.base350.theta[1]), HU2011.base350.theta[1], 0.3],
+    ['Au 30 nm, n 1.32', dipNear(AU, 'n132', 30, HU2011.au30.theta[0]), HU2011.au30.theta[0], 0.3],
+    ['Au 30 nm, n 1.37', dipNear(AU, 'n137', 30, HU2011.au30.theta[1]), HU2011.au30.theta[1], 0.3],
+    ['Al 30 nm, n 1.32', dipNear(AL, 'n132', 30, HU2011.al30.theta[0]), HU2011.al30.theta[0], 0.4],
+    ['Al 30 nm, n 1.37', dipNear(AL, 'n137', 30, HU2011.al30.theta[1]), HU2011.al30.theta[1], 0.4],
+  ];
+  const bad = got.filter(([, v, ref, tol]) => !(Math.abs(v - ref) < tol));
+  // the example's coated grating at its two extreme indices (two narrow windows of its own spec)
+  const ev = evaluateGraph(hp.nodes, hp.edges, { cache: new Map(), lastDone: new Map(), failed: new Map() }, hlib);
+  const spec = ev.jobs[0].spec;
+  const nT = spec.theta.length;
+  const dipOfStep = (step: number, guess: number) => {
+    const sub: TmmSpec = { ...spec, theta: Array.from({ length: 41 }, (_, i) => +(guess - 1 + i * 0.05).toFixed(3)), sweeps: [1], layers: spec.layers.map((L) => L) };
+    // the index sweep at one step: the analyte instance with that n only
+    const inst = Object.fromEntries(Object.entries(spec.instances).map(([k, v]) => [k, v.n ? { ...v, n: { s: [0], v: [v.n.v[step]] } } : v]));
+    const f = runSpec({ ...sub, instances: inst }) as unknown as Record<string, Float64Array>;
+    let k = 1;
+    for (let i = 1; i < 40; i++) if (f.R[i] < f.R[k]) k = i;
+    const [a, b, cc] = [f.R[k - 1], f.R[k], f.R[k + 1]];
+    return sub.theta[k] + (0.05 * (a - cc)) / (2 * (a - 2 * b + cc));
+  };
+  const shift = dipOfStep(0, 67.45) - dipOfStep(HU_N.length - 1, 58.2);
+  if (bad.length || !(nT > 100 && Math.abs(shift - HU2011.alAu.shift) < 0.25))
+    throw new Error(`Hu 2011: ${bad.map(([n, v, r]) => `${n} ${v.toFixed(2)} vs ${r}`).join('; ')}; coated shift ${shift}`);
+  console.log(`Hu 2011 (grating SPR, −1st order, N = 20): ${got.map(([n, v, r]) => `${n} ${v.toFixed(2)}° (${r})`).join(', ')}; Al + 3 nm Au shift ${shift.toFixed(2)}° (${HU2011.alAu.shift})`);
+}
+
+if (QUICK) console.log(`quick run: ${skipped.length} slow blocks skipped — ${skipped.join('; ')}. The full run: npm run check:tmm`);

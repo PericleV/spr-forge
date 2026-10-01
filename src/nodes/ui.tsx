@@ -146,43 +146,48 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
   };
   const lim = (a: number, b: number) => ([a, b].some(Number.isFinite) ? ([a, b] as [number, number]) : undefined);
   return (
-    <div className="row wrap map-view">
-      <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0 — for Re / Im of a field)">
-        <select className="nodrag" value={v.cmap ?? 'viridis'} onChange={(e) => set({ cmap: e.target.value === 'viridis' ? undefined : (e.target.value as ColorMapName) })}>
-          {(Object.keys(COLOR_MAPS) as ColorMapName[]).map((k) => (
-            <option key={k} value={k}>{COLOR_MAPS[k].label}</option>
-          ))}
-        </select>
-      </label>
-      <span className="interval" title="Colour range (empty = automatic)">
-        colours <NumInput className="short" value={z[0]} placeholder="auto" onChange={(a) => set({ zLim: lim(a, z[1]) })} />–
-        <NumInput className="short" value={z[1]} placeholder="auto" onChange={(b) => set({ zLim: lim(z[0], b) })} />
-      </span>
-      <span className="interval" title="Cap: the values above it are drawn in the colour of the cap (saturate) or not drawn (hide); the colour scale ends at the cap. The data are not changed.">
-        cap <NumInput className="short" value={v.cap ?? NaN} placeholder="none" onChange={(c) => set({ cap: Number.isFinite(c) ? c : undefined })} />
-        {Number.isFinite(v.cap ?? NaN) && (
-          <select className="nodrag" value={v.capHide ? 'hide' : 'saturate'} onChange={(e) => set({ capHide: e.target.value === 'hide' || undefined })}>
-            <option value="saturate">saturate above</option>
-            <option value="hide">hide above</option>
+    // two fixed lines: the colour scale (map, range, log), then how the picture is drawn (cap, smooth, blur)
+    <div className="map-view">
+      <div className="row wrap">
+        <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0 — for Re / Im of a field)">
+          <select className="nodrag" value={v.cmap ?? 'viridis'} onChange={(e) => set({ cmap: e.target.value === 'viridis' ? undefined : (e.target.value as ColorMapName) })}>
+            {(Object.keys(COLOR_MAPS) as ColorMapName[]).map((k) => (
+              <option key={k} value={k}>{COLOR_MAPS[k].label}</option>
+            ))}
           </select>
-        )}
-      </span>
-      <label className="radio" title="Logarithmic colour scale (values ≤ 0 are left empty)">
-        <input className="nodrag" type="checkbox" checked={!!v.zLog} onChange={(e) => set({ zLog: e.target.checked || undefined })} />
-        log
-      </label>
-      <label className="radio" title="Bilinear interpolation between the computed points">
-        <input className="nodrag" type="checkbox" checked={!!v.smooth} onChange={(e) => set({ smooth: e.target.checked || undefined })} />
-        smooth
-      </label>
-      <label className="radio" title="Gaussian blur of the picture (σ in grid cells; 0 = none). The data are not changed.">
-        blur
-        <select className="nodrag" value={v.blur ?? 0} onChange={(e) => set({ blur: Number(e.target.value) || undefined })}>
-          {[0, 0.5, 1, 1.5, 2, 3].map((b) => (
-            <option key={b} value={b}>{b === 0 ? 'off' : `σ ${b}`}</option>
-          ))}
-        </select>
-      </label>
+        </label>
+        <span className="interval" title="Colour range (empty = automatic)">
+          colours <NumInput className="short" value={z[0]} placeholder="auto" onChange={(a) => set({ zLim: lim(a, z[1]) })} />–
+          <NumInput className="short" value={z[1]} placeholder="auto" onChange={(b) => set({ zLim: lim(z[0], b) })} />
+        </span>
+        <label className="radio" title="Logarithmic colour scale (values ≤ 0 are left empty)">
+          <input className="nodrag" type="checkbox" checked={!!v.zLog} onChange={(e) => set({ zLog: e.target.checked || undefined })} />
+          log
+        </label>
+      </div>
+      <div className="row wrap">
+        <span className="interval" title="Cap: the values above it are drawn in the colour of the cap (saturate) or not drawn (hide); the colour scale ends at the cap. The data are not changed.">
+          cap <NumInput className="short" value={v.cap ?? NaN} placeholder="none" onChange={(c) => set({ cap: Number.isFinite(c) ? c : undefined })} />
+          {Number.isFinite(v.cap ?? NaN) && (
+            <select className="nodrag" value={v.capHide ? 'hide' : 'saturate'} onChange={(e) => set({ capHide: e.target.value === 'hide' || undefined })}>
+              <option value="saturate">saturate above</option>
+              <option value="hide">hide above</option>
+            </select>
+          )}
+        </span>
+        <label className="radio" title="Bilinear interpolation between the computed points">
+          <input className="nodrag" type="checkbox" checked={!!v.smooth} onChange={(e) => set({ smooth: e.target.checked || undefined })} />
+          smooth
+        </label>
+        <label className="radio" title="Gaussian blur of the picture (σ in grid cells; 0 = none). The data are not changed.">
+          blur
+          <select className="nodrag" value={v.blur ?? 0} onChange={(e) => set({ blur: Number(e.target.value) || undefined })}>
+            {[0, 0.5, 1, 1.5, 2, 3].map((b) => (
+              <option key={b} value={b}>{b === 0 ? 'off' : `σ ${b}`}</option>
+            ))}
+          </select>
+        </label>
+      </div>
     </div>
   );
 }

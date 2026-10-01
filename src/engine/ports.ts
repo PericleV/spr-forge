@@ -116,7 +116,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'rcwa':
     case 'compute':
       if (handle === 'stack') return ['stack'];
-      if (handle === 'phi') return ['sweep-number'];
+      if (handle === 'phi' || (handle === 'orders' && node.type === 'rcwa')) return ['sweep-number'];
       if (handle === 'lambda') return ['param-lambda'];
       if (handle === 'theta') return ['param-theta'];
       return handle === 'pol' ? ['sweep-polarization'] : [];
@@ -129,8 +129,9 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'field':
     case 'extract':
     case 'merge':
-    case 'custom':
       return handle === 'in' ? ['data'] : [];
+    case 'custom':
+      return handle === 'in' ? ['data', 'material', 'param-lambda'] : [];
     case 'draw':
     case 'reverse':
       return handle === 'in' ? ['layer', 'stack'] : [];

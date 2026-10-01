@@ -308,10 +308,13 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
         profile
         <Port kind="source" id="out" port="data" />
       </div>
-      <div className="port-row out">
-        absorption per layer
-        <Port kind="source" id="metrics" port="data" />
-      </div>
+      {/* a cut of an RCWA map has no layer absorptions */}
+      {!cut && (
+        <div className="port-row out">
+          absorption per layer
+          <Port kind="source" id="metrics" port="data" />
+        </div>
+      )}
       {dp?.on && (
         <div className="port-row out">
           penetration depth

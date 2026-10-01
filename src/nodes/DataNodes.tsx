@@ -5,11 +5,11 @@ import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { CustomInfo, ExtractInfo, MergeInfo } from '../engine/evaluate.ts';
 import { flatten } from '../engine/dataOps.ts';
-import { FUNCTION_NAMES } from '../engine/expr.ts';
+import { COMPLEX_FUNCTION_NAMES } from '../engine/expr.ts';
 import type { Dataset } from '../engine/types.ts';
 import { exportCsv } from '../plot/export.ts';
 import type { AppNode, CustomData, CustomNode, ExtractData, ExtractNode, MergeData, MergeNode } from '../types.ts';
-import { Messages, OutPort, Port } from './ui.tsx';
+import { Messages, NumInput, OutPort, Port } from './ui.tsx';
 
 const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '—');
 const PREVIEW = 12;
@@ -103,37 +103,47 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
       )}
       {info?.axes.some((a) => a.labels.length > 1) && (
         <>
-          <div className="section" title="Keep every curve along an axis, take the values at one of its steps (every axis fixed: single values), or average over it (e.g. over the seeds of a rough interface: the mean and the standard deviation of every quantity)">
+          <div className="section" title="Keep every curve along an axis, take the values at one of its steps or at any value (interpolated between the two neighbouring steps; every axis fixed: single values), or average over it (e.g. over the seeds of a rough interface: the mean and the standard deviation of every quantity)">
             Along the axes
           </div>
           {info.axes
             .filter((a) => a.labels.length > 1)
-            .map((a) => (
-              <label key={a.id} className="radio">
-                {a.label}
-                {a.unit ? ` [${a.unit}]` : ''}
-                <select
-                  className="nodrag"
-                  value={a.id in data.fixed ? String(data.fixed[a.id]) : data.mean?.includes(a.id) ? 'mean' : 'all'}
-                  onChange={(e) => {
-                    const fixed = { ...data.fixed };
-                    const mean = (data.mean ?? []).filter((k) => k !== a.id);
-                    if (e.target.value === 'mean') mean.push(a.id);
-                    if (e.target.value === 'all' || e.target.value === 'mean') delete fixed[a.id];
-                    else fixed[a.id] = Number(e.target.value);
-                    set({ fixed, mean });
-                  }}
-                >
-                  <option value="all">all ({a.labels.length})</option>
-                  <option value="mean">mean over all (± std)</option>
-                  {a.labels.map((l, i) => (
-                    <option key={i} value={i}>
-                      at {l}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
+            .map((a) => {
+              const mode = a.id in data.fixed ? String(data.fixed[a.id]) : data.at && a.id in data.at ? 'at' : data.mean?.includes(a.id) ? 'mean' : 'all';
+              return (
+                <label key={a.id} className="radio extract-axis">
+                  {a.label}
+                  {a.unit ? ` [${a.unit}]` : ''}
+                  <select
+                    className="nodrag"
+                    value={mode}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const fixed = { ...data.fixed };
+                      const mean = (data.mean ?? []).filter((k) => k !== a.id);
+                      const at = { ...data.at };
+                      delete fixed[a.id];
+                      delete at[a.id];
+                      if (v === 'mean') mean.push(a.id);
+                      // the value to interpolate at starts at the middle of the axis
+                      else if (v === 'at') at[a.id] = +a.values[Math.floor(a.values.length / 2)].toPrecision(6);
+                      else if (v !== 'all') fixed[a.id] = Number(v);
+                      set({ fixed, mean, at });
+                    }}
+                  >
+                    <option value="all">all ({a.labels.length})</option>
+                    <option value="mean">mean over all (± std)</option>
+                    {a.numeric && <option value="at">at a value (interpolated)…</option>}
+                    {a.labels.map((l, i) => (
+                      <option key={i} value={i}>
+                        at {l}
+                      </option>
+                    ))}
+                  </select>
+                  {mode === 'at' && <NumInput className="short" value={data.at?.[a.id] ?? NaN} onChange={(v) => set({ at: { ...data.at, [a.id]: v } })} />}
+                </label>
+              );
+            })}
         </>
       )}
       {info && info.points > 0 && (
@@ -221,7 +231,7 @@ export function CustomNodeView({ id, data }: NodeProps<CustomNode>) {
     <div className="node node-custom">
       <div className="port-row">
         <Port kind="target" id="in" port="data" />
-        <span className="muted">data (several)</span>
+        <span className="muted" title="Data (computations, analyses, Extract data…), Material nodes (their n, k, nc = n + ik and ε at the λ of every point) and a λ Parameter (the wavelengths when there are no data)">data, materials, λ (several)</span>
       </div>
       <label>
         Name
@@ -261,8 +271,9 @@ export function CustomNodeView({ id, data }: NodeProps<CustomNode>) {
                 {info.vars
                   .filter((v) => v.input === x.alias)
                   .map((v) => (
-                    <button key={v.name} className="nodrag chip" title={v.label} onClick={() => insert(v.name)}>
+                    <button key={v.name} className="nodrag chip" title={v.complex ? `${v.label} (complex)` : v.label} onClick={() => insert(v.name)}>
                       {v.name}
+                      {v.complex ? <sup> ℂ</sup> : null}
                     </button>
                   ))}
               </div>
@@ -271,7 +282,7 @@ export function CustomNodeView({ id, data }: NodeProps<CustomNode>) {
         </>
       ) : null}
       <div className="hint">
-        + − * / ^, ( ), {FUNCTION_NAMES.join(', ')}. The points are those of the first input; another input has the same points, or a single value (used everywhere).
+        + − * / ^, ( ), {COMPLEX_FUNCTION_NAMES.join(', ')}; i = √−1; angles in radians (deg(), rad() convert: sin(rad(a_theta))). ℂ: complex (r, t); a complex result gives its Re and Im. The points are those of the first input; another input has the same points, or a single value (used everywhere).
       </div>
       {ds && <ValuesTable ds={ds} name={data.name || 'custom'} />}
       <Messages result={result} />

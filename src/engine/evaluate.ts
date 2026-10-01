@@ -48,7 +48,7 @@ import { berremanProfile } from '../physics/berremanField.ts';
 import type { NoteDoc } from '../notes/markup.ts';
 import { fieldProfile, layerOfZ, profileGrid, type Complexes, type Profile } from '../physics/field.ts';
 import { penetrationDepth, type DepthResult } from './depth.ts';
-import { customData, extract, merge, type CustomVar } from './dataOps.ts';
+import { customData, extract, fracStep, lambdaAt, merge, type CustomExtra, type CustomVar } from './dataOps.ts';
 import { extremum, halfWidth, inWindow, windowOf, zoneAt } from './metrics.ts';
 import { formulaStat, metricCost, statOf, zonesCost, type Outside, type Zone, type ZoneGoal } from './objectives.ts';
 import { bandTerms, effectiveSlice, odOf, pMerit, sliceCurves, sliceInfo, sliceLines, sliceValues, termText, type MeritPoint, type Slice, type SliceInfo, type SpecTerm, type TargetSpec } from './spec.ts';
@@ -845,6 +845,8 @@ export type ComputeInfo = {
   conical?: boolean; // Compute RCWA at φ ≠ 0
   spec?: TmmSpec; // Compute RCWA: for the convergence check
   asrMinN?: number; // Compute RCWA with ASR: orders needed to resolve the mapping
+  ordersSwept?: boolean; // Compute RCWA: the orders N come from a sweep
+  orderCost?: number; // … the time of the whole N sweep in units of its smallest N
   gratings?: number; // Compute RCWA: grating layers in the stack
   berreman?: boolean; // Compute TMM through the Berreman 4×4 method (anisotropic layers or a Jones state)
   gdNote?: string; // the phase is undersampled somewhere: the GD / GDD there are not converged (a note, not a warning)
@@ -875,6 +877,16 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   if (lambda) info.lambdaText = rangeText(lambda, ' nm');
   if (theta) info.thetaText = rangeText(theta, '°');
 
+  // Compute RCWA: the orders N, a value or a sweep on its port (convergence figures: every step computed at its own N)
+  const ordersSweep = method === 'rcwa' ? numberSweep(ctx, node.id, 'orders', 'orders N', errors) : undefined;
+  const orderList = ordersSweep ? ordersSweep.values : method === 'rcwa' ? [(d as RcwaNode['data']).orders] : [];
+  const nMin = Math.min(...orderList);
+  if (ordersSweep) {
+    info.ordersSwept = true;
+    // relative cost of the sweep: Σ (2N + 1)³ over its steps, in units of the smallest N
+    info.orderCost = orderList.reduce((a, n) => a + (2 * n + 1) ** 3, 0) / (2 * nMin + 1) ** 3;
+  }
+
   const stackIn = input(ctx, node.id, 'stack');
   let stack: StackValue | undefined;
   if (!stackIn.connected) errors.push('Connect a stack.');
@@ -895,7 +907,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
         errors.push('All grating layers of the stack must have the same period (connect the same Design variable or Sweep to their period ports).');
       if (!gratings.length && ![...stack.layers, ...(stack.substrate?.back ?? [])].some((L) => L.rough?.length)) warnings.add('No grating layer: the result equals Compute TMM (zeroth order only).');
       const rd = d as RcwaNode['data'];
-      if (!(Number.isInteger(rd.orders) && rd.orders >= 0 && rd.orders <= MAX_ORDERS)) errors.push(`Orders N: an integer 0 – ${MAX_ORDERS}.`);
+      if (!orderList.every((n) => Number.isInteger(n) && n >= 0 && n <= MAX_ORDERS)) errors.push(`Orders N${ordersSweep ? ' (the sweep)' : ''}: ${ordersSweep ? 'integers' : 'an integer'} 0 – ${MAX_ORDERS}.`);
       if (!(Number.isInteger(rd.show) && rd.show >= 0 && rd.show <= 10)) errors.push('Orders shown: 0 – 10.');
       if (rd.asr) {
         const eta = rd.eta ?? ASR_ETA;
@@ -904,14 +916,14 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
         const knots = asrKnots(gratings.flatMap((L) => gratingSlices(L.grating!).map((s) => s.segs)));
         const dMin = knots.length > 1 ? Math.min(...knots.map((k, i) => (i + 1 < knots.length ? knots[i + 1] : knots[0] + 1) - k)) : 1;
         info.asrMinN = Math.ceil(4 / dMin);
-        if (rd.orders < info.asrMinN)
+        if (nMin < info.asrMinN)
           warnings.add(`ASR: the narrowest part between two edges is ${(100 * dMin).toFixed(1)} % of the period; use N ≥ ${info.asrMinN} for the mapping to be resolved (below that ASR can be worse than no ASR).`);
         if (stack.substrate) warnings.add('ASR is not used with a thick substrate (plain RCWA there).');
       }
       // the orders must resolve the smallest feature of the profiles
       for (const L of gratings) {
         const w = smallestFeature(gratingSlices(L.grating!));
-        if (rd.orders < Math.min(40, Math.ceil(1.5 / w))) {
+        if (nMin < Math.min(40, Math.ceil(1.5 / w))) {
           warnings.add(`${L.label || 'Grating'}: its smallest feature is ${(100 * w).toFixed(1)} % of the period; N ≥ ${Math.min(40, Math.ceil(1.5 / w))} orders are needed to resolve it.`);
           break;
         }
@@ -1013,6 +1025,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   // coupled), a value or a sweep / Design variable on its port
   let phi0 = 0;
   let phiBind: Bound<number> | undefined;
+  let ordersBind: Bound<number> | undefined;
   let conical = false;
   // anisotropic layers (Berreman 4×4): the exit medium may be anisotropic (a semi-infinite Berreman medium), the incident
   // medium, a thick substrate and its back medium stay isotropic
@@ -1051,6 +1064,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       conical = true;
     }
     if (anisoUsed) conical = true;
+    if (ordersSweep) ordersBind = { s: [sweepIndex({ sweep: ordersSweep, label: 'orders N', unit: '' })], v: ordersSweep.values };
     if (conical && rd.asr) warnings.add('ASR is not used at φ ≠ 0 or with a Jones polarization (the conical solver): the plain RCWA with Li’s factorization.');
     info.conical = conical;
   }
@@ -1118,7 +1132,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       // the staircase of a metal profile converges slowly: about 2 orders per correlation length of the cell (measured:
       // gold, RMS 3 nm, cl 20 nm, 500 nm cell: |ΔR| ≈ 0.01 between N = 50 and 70, 0.1 at N = 30)
       const need = Math.ceil((2 * cell) / clMin);
-      if (rd.orders < need) warnings.add(`Roughness: N ≥ ${need} orders are advised for cl = ${clMin} nm over the ${cell} nm cell (2 per cl; check the convergence).`);
+      if (nMin < need) warnings.add(`Roughness: N ≥ ${need} orders are advised for cl = ${clMin} nm over the ${cell} nm cell (2 per cl; check the convergence).`);
       if (rd.asr) warnings.add('ASR is not used with rough interfaces (plain RCWA).');
     }
     if (!errors.length)
@@ -1158,6 +1172,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
               ...(rd.polMix && !polSweep ? { jones: { psi: rd.polMix.psi, delta: rd.polMix.delta } } : {}),
             },
             ...(phiBind ? { phiBind } : {}),
+            ...(ordersBind ? { ordersBind } : {}),
           };
         })()
       : {}),
@@ -2856,7 +2871,7 @@ function evalMatch(ctx: Ctx, node: MatchNode): NodeResult {
 
 // ---- Data nodes: Extract data, Merge data, Custom data ----
 
-export type ExtractInfo = { axes: { id: string; label: string; unit: string; labels: string[] }[]; fields: FieldMeta[]; points: number; curves: number };
+export type ExtractInfo = { axes: { id: string; label: string; unit: string; labels: string[]; values: number[]; numeric: boolean }[]; fields: FieldMeta[]; points: number; curves: number };
 
 function evalExtract(ctx: Ctx, node: ExtractNode): NodeResult {
   const d = node.data;
@@ -2866,17 +2881,25 @@ function evalExtract(ctx: Ctx, node: ExtractNode): NodeResult {
   if (!value) return fail(errors, [], info);
   const ds = value.dataset;
   if (!ds) return { ...fail([], [], info), pending: value.pending };
-  info.axes = ds.axes.map((a) => ({ id: a.id, label: a.label, unit: a.unit, labels: a.values.map((_, i) => axisValueText(a, i)) }));
+  info.axes = ds.axes.map((a) => ({ id: a.id, label: a.label, unit: a.unit, labels: a.values.map((_, i) => axisValueText(a, i)), values: a.values, numeric: !a.labels }));
   info.fields = ds.meta.filter((m) => ds.fields[m.key]);
   const fixed = Object.fromEntries(Object.entries(d.fixed).filter(([k]) => ds.axes.some((a) => a.id === k)));
   const fields = d.fields.filter((k) => ds.fields[k]);
   if (d.fields.length && !fields.length) return fail(['None of the chosen quantities is in the input: choose them again.'], [], info);
   const mean = (d.mean ?? []).filter((k) => ds.axes.some((a) => a.id === k) && !(k in fixed));
-  const out = extract(ds, fields, fixed, mean);
+  // held at a value: numeric axes only (not polarization / material labels)
+  const at = Object.fromEntries(Object.entries(d.at ?? {}).filter(([k]) => ds.axes.some((a) => a.id === k && !a.labels) && !(k in fixed) && !mean.includes(k)));
+  const warnings: string[] = [];
+  for (const [k, v] of Object.entries(at)) {
+    const a = ds.axes.find((x) => x.id === k)!;
+    if (!Number.isFinite(v)) return fail([`${a.label}: enter the value to interpolate at.`], [], info);
+    if (Number.isNaN(fracStep(a.values, v))) warnings.push(`${a.label} = ${v}${a.unit ? ` ${a.unit}` : ''} is outside its range (${a.values[0]} … ${a.values[a.values.length - 1]}): no values (NaN).`);
+  }
+  const out = extract(ds, fields, fixed, mean, at);
   info.points = out.size;
   const free = out.axes.filter((a) => a.values.length > 1);
   info.curves = free.length > 1 ? out.size / free[0].values.length : 1;
-  return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: d.name || `${value.name} · extract`, annotations: [] }, info), pending: value.pending };
+  return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: d.name || `${value.name} · extract`, annotations: [] }, info, warnings), pending: value.pending };
 }
 
 export type MergeInfo = { sources: { id: string; label: string; points: number; fields: string[] }[] };
@@ -2929,26 +2952,106 @@ function evalCustom(ctx: Ctx, node: CustomNode): NodeResult {
   const info: CustomInfo = { vars: [], inputs: [] };
   let pending = false;
   const got: [string, Dataset][] = [];
+  const mats: { alias: string; sel: MatSel }[] = [];
+  let lam: { alias: string; values: number[] } | undefined;
   const ins = inputs(ctx, node.id, 'in').filter((x) => x.connected);
   const keys = ins.map((x) => (x.connected ? `${x.source}:${x.handle}` : ''));
   const names = customAliases(keys, d.aliases);
   ins.forEach((inp, i) => {
     if (!inp.connected) return;
     const v = inp.value;
+    if (v?.type === 'material') {
+      mats.push({ alias: names[i], sel: v.sel });
+      info.inputs.push({ key: keys[i], alias: names[i], name: matName(v.sel) });
+      return;
+    }
+    if (v?.type === 'param' && v.quantity === 'lambda') {
+      if (lam) return void errors.push('Connect one λ Parameter at most.');
+      lam = { alias: names[i], values: v.values };
+      info.inputs.push({ key: keys[i], alias: names[i], name: `λ ${rangeText(v.values, ' nm')}` });
+      return;
+    }
     if (v?.type !== 'data') return void errors.push(`Input ${names[i]} (${inp.source}) has errors.`);
     pending ||= v.pending;
     info.inputs.push({ key: keys[i], alias: names[i], name: v.name });
     if (v.dataset) got.push([names[i], v.dataset]);
   });
+  // no data: the λ Parameter gives the points (its values as the axis λ); with data, it is the λ of data without one
+  let lamFallback: number | undefined;
+  if (lam && !got.length && !pending) got.push([lam.alias, { key: `lambda:${lam.values.join(',')}`, axes: [{ id: 'lambda', label: 'λ', unit: 'nm', values: lam.values }], fields: {}, meta: [], size: lam.values.length }]);
+  else if (lam) {
+    if (lam.values.length === 1) lamFallback = lam.values[0];
+    else if (got.length && !got[0][1].axes.some((a) => a.id === 'lambda')) errors.push('With data, the λ Parameter must be a single value (the wavelength of data without a λ axis).');
+  }
+  if (mats.length && !got.length && !pending && !lam) errors.push('A material needs wavelengths: connect data with a λ axis (a computation) or a λ Parameter.');
+  const extras: CustomExtra[] = mats.map((m) => ({ alias: m.alias, make: (base) => materialVars(ctx, m.sel, base, lamFallback) }));
   const bad = names.filter((n) => !/^[A-Za-z_]\w*$/.test(n));
   if (bad.length) errors.push(`Input names must be letters, digits or _: ${bad.join(', ')}.`);
   if (new Set(names).size < names.length) errors.push('Two inputs have the same name.');
   if (errors.length) return { ...fail(errors, [], info), pending };
-  if (!got.length) return { ...fail(pending ? [] : ['Connect data (several connections allowed): Extract data, analyses, Compute…'], [], info), pending };
-  const r = customData(got, d.rows, node.id);
+  if (!got.length) return { ...fail(pending ? [] : ['Connect data (several connections allowed): Extract data, analyses, Compute…, or materials with a λ Parameter.'], [], info), pending };
+  const r = customData(got, d.rows, node.id, extras);
   info.vars = r.vars;
   if (!r.dataset) return { ...fail(r.errors, [], info), pending };
   return { ...ok({ type: 'data', dataset: r.dataset, pending, name: d.name || 'custom data', annotations: [] }, info), pending };
+}
+
+// The variables of a material in Custom data, at the wavelength of every point of `base`: n, k, the complex index nc = n + ik
+// and ε = nc² (complex). A Material sweep: its material at each point when the data carry its axis, else one set per
+// material; an index or porosity sweep of the Material node: its value at each point when the data carry its axis, else the
+// library value; an anisotropic material: its principal indices (o, e or 1, 2, 3).
+function materialVars(ctx: Ctx, sel: MatSel, base: Dataset, lamFallback?: number): ReturnType<CustomExtra['make']> {
+  const lamOf = lambdaAt(base, lamFallback);
+  if (typeof lamOf === 'string') return lamOf;
+  const st = strides(base.axes);
+  // the step of a sweep at point k, when the data have its axis
+  const stepOf = (id: string) => {
+    const i = base.axes.findIndex((a) => a.id === `sweep:${id}`);
+    return i < 0 ? undefined : (k: number) => Math.floor(k / st[i]) % base.axes[i].values.length;
+  };
+  // the complex index of one material at point k (its own index / porosity sweeps followed when the data have them)
+  const indexFn = (m: MaterialValue): ((k: number) => C) => {
+    const memo = new Map<string, C>();
+    const idxStep = m.index ? stepOf(m.index.sweep.id) : undefined;
+    const pStep = m.porositySweep ? stepOf(m.porositySweep.id) : undefined;
+    return (k) => {
+      const l = lamOf(k);
+      const p = pStep ? m.porositySweep!.values[pStep(k)] : m.porosity;
+      const key = `${l}|${p}`;
+      let n = memo.get(key);
+      if (!n) memo.set(key, (n = refractiveIndex(m.id, ctx.models, l, p)));
+      if (m.index && idxStep) {
+        const v = m.index.sweep.values[idxStep(k)];
+        return m.index.prop === 'n' ? { re: v, im: n.im } : { re: n.re + v, im: n.im };
+      }
+      return n;
+    };
+  };
+  const setOf = (f: (k: number) => C, suffix: string) => {
+    const eps = (k: number) => {
+      const z = f(k);
+      return { re: z.re * z.re - z.im * z.im, im: 2 * z.re * z.im };
+    };
+    return [
+      { label: `n${suffix}`, get: (k: number) => ({ re: f(k).re, im: 0 }) },
+      { label: `k${suffix}`, get: (k: number) => ({ re: f(k).im, im: 0 }) },
+      { label: `nc${suffix}`, complex: true, get: f },
+      { label: `eps${suffix}`, complex: true, get: eps },
+    ];
+  };
+  const ofMat = (m: MaterialValue, tag: string) => {
+    if (!m.aniso) return setOf(indexFn(m), tag);
+    const parts = m.aniso.kind === 'uniaxial' ? ['o', 'e'] : ['1', '2', '3'];
+    return m.aniso.comps.flatMap((c, j) => setOf(indexFn(c), `${parts[j]}${tag}`));
+  };
+  if (sel.kind === 'fixed') return ofMat(sel.mat, '');
+  const step = stepOf(sel.sweep.id);
+  if (step) {
+    const fns = sel.mats.map((m) => (m.aniso ? null : indexFn(m)));
+    if (fns.some((f) => !f)) return 'a Material sweep with anisotropic materials: connect them one by one';
+    return setOf((k) => fns[step(k)]!(k), '');
+  }
+  return sel.mats.flatMap((m) => ofMat(m, `_${m.name}`));
 }
 
 // ---- Custom objective: an expression of analysis results ----
@@ -4127,6 +4230,14 @@ function evalRcwaField(ctx: Ctx, node: RcwaFieldNode): NodeResult {
     phi = spec.phiBind.v[k];
   }
   const jones = spec.rcwa.jones;
+  // the orders of the computation at this step (swept N: the step's), unless the map has its own
+  let stepN = spec.rcwa.orders;
+  if (spec.ordersBind) {
+    let k = 0;
+    for (const s of spec.ordersBind.s) k = k * spec.sweeps[s] + pt.sweepIdx[s];
+    stepN = spec.ordersBind.v[k];
+  }
+  const useN = mapN ?? stepN;
   const comp = FIELD_COMP(d, pt.pol, phi !== 0 || !!jones);
   const job: FieldJob = {
     spec,
@@ -4145,7 +4256,7 @@ function evalRcwaField(ctx: Ctx, node: RcwaFieldNode): NodeResult {
     zOut: d.zOut,
     ...(wx ? { x0: wx.lo, x1: wx.hi } : {}),
     ...(wz ? { z0: wz.lo, z1: wz.hi } : {}),
-    ...(mapN !== undefined && mapN !== spec.rcwa.orders ? { orders: mapN } : {}),
+    ...(useN !== spec.rcwa.orders ? { orders: useN } : {}),
     ...(d.sigma && d.sigma !== 'none' ? { sigma: d.sigma } : {}),
   };
   const key = hash(JSON.stringify(job));

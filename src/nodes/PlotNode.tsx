@@ -279,7 +279,7 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
                 </label>
               )}
               {view.mode === 'curves' && view.free.length > 1 && (
-                <label className="radio" title="One curve for each value of this parameter (e.g. each source of Merge data)">
+                <label className="radio" title="One curve for each value of this parameter (e.g. each step of a sweep)">
                   Curves for
                   <select className="nodrag" value={view.series >= 0 ? ds.axes[view.series].id : 'none'} onChange={(e) => set({ series: e.target.value })}>
                     <option value="none">— (single curve)</option>

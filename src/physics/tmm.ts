@@ -149,5 +149,5 @@ export function tmmPoint(input: Layer[], lambdaNm: number, thetaDeg: number, pol
     T = (t2 * reNConjQoverN(f)) / reNConjQoverN(0);
   }
   const R = rOutR * rOutR + rOutI * rOutI;
-  return { R, T, A: 1 - R - T, phir: Math.atan2(rOutI, rOutR), phit: Math.atan2(tOutI, tOutR) };
+  return { R, T, A: 1 - R - T, phir: Math.atan2(rOutI, rOutR), phit: Math.atan2(tOutI, tOutR), rRe: rOutR, rIm: rOutI, tRe: tOutR, tIm: tOutI };
 }

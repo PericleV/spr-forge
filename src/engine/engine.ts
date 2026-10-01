@@ -5,7 +5,7 @@ import type { Library } from '../physics/library.ts';
 import type { AppNode } from '../types.ts';
 import { metaOfSpec } from './run.ts';
 import { evaluateGraph, type JobState } from './evaluate.ts';
-import type { WorkerMsg } from './tmm.worker.ts';
+import { runJob } from './computePool.ts';
 import type { Fields, NodeResult, TmmJob } from './types.ts';
 
 const MAX_CACHE_POINTS = 8_000_000;
@@ -64,9 +64,9 @@ export const logicalKey = (nodes: AppNode[], edges: Edge[]) => {
   ]);
 };
 
-function store(s: JobState, job: TmmJob, fields: Fields) {
+function store(s: JobState, job: TmmJob, fields: Fields, seconds: number) {
   s.cache.delete(job.key);
-  s.cache.set(job.key, { key: job.key, spec: job.spec, axes: job.axes, fields, meta: metaOfSpec(job.spec), size: fields.R.length });
+  s.cache.set(job.key, { key: job.key, spec: job.spec, axes: job.axes, fields, meta: metaOfSpec(job.spec), size: fields.R.length, seconds });
   s.lastDone.set(job.requester, job.key);
   s.failed.delete(job.requester);
   // Evict oldest entries, never ones currently shown by a node.
@@ -83,7 +83,7 @@ function store(s: JobState, job: TmmJob, fields: Fields) {
 
 export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): EngineState {
   const [jobState] = useState<JobState>(() => ({ cache: new Map(), lastDone: new Map(), failed: new Map(), armed: new Map() }));
-  const running = useRef(new Map<string, { key: string; worker: Worker }>());
+  const running = useRef(new Map<string, { key: string; cancel: () => void }>());
   const [version, setVersion] = useState(0);
   const [progress, setProgress] = useState<Record<string, JobProgress>>({});
   // Run arms the job key (kept in memory only: a loaded project does not start RCWA by itself); Stop disarms it and the
@@ -124,16 +124,14 @@ export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): Engine
     const wanted = new Map(evaluation.jobs.map((j) => [j.requester, j]));
     for (const [req, r] of run) {
       if (wanted.get(req)?.key === r.key) continue;
-      r.worker.terminate();
+      r.cancel();
       run.delete(req);
     }
+    // each job on the cores of the compute pool (cut into parts when it is large enough)
     for (const job of evaluation.jobs) {
       if (run.has(job.requester)) continue;
-      const worker = new Worker(new URL('./tmm.worker.ts', import.meta.url), { type: 'module' });
-      run.set(job.requester, { key: job.key, worker });
       const t0 = Date.now();
       const finish = () => {
-        worker.terminate();
         run.delete(job.requester);
         setProgress((p) => {
           const next = { ...p };
@@ -142,27 +140,26 @@ export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): Engine
         });
         setVersion((v) => v + 1);
       };
-      worker.onmessage = (e: MessageEvent<WorkerMsg>) => {
-        const m = e.data;
-        if (m.type === 'progress') setProgress((p) => ({ ...p, [job.requester]: { p: m.p, seconds: (Date.now() - t0) / 1000 } }));
-        else {
-          if (m.type === 'done') store(jobState, job, m.fields);
-          else jobState.failed.set(job.requester, { key: job.key, message: m.message });
+      const handle = runJob(
+        job.spec,
+        (p) => setProgress((q) => ({ ...q, [job.requester]: { p, seconds: (Date.now() - t0) / 1000 } })),
+        (fields) => {
+          store(jobState, job, fields, (Date.now() - t0) / 1000);
           finish();
-        }
-      };
-      worker.onerror = (e) => {
-        jobState.failed.set(job.requester, { key: job.key, message: e.message || 'worker error' });
-        finish();
-      };
-      worker.postMessage(job.spec);
+        },
+        (message) => {
+          jobState.failed.set(job.requester, { key: job.key, message });
+          finish();
+        },
+      );
+      run.set(job.requester, { key: job.key, cancel: handle.cancel });
     }
   }, [evaluation, jobState]);
 
   useEffect(() => {
     const run = running.current;
     return () => {
-      for (const r of run.values()) r.worker.terminate();
+      for (const r of run.values()) r.cancel();
       run.clear();
     };
   }, []);

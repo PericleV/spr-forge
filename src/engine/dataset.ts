@@ -7,6 +7,11 @@ export const TMM_META: FieldMeta[] = [
   { key: 'A', label: 'A — absorptance', short: 'A', unit: '', domain: [0, 1] },
   { key: 'phiR', label: 'φr — phase of r', short: 'φr', unit: '°', domain: [-180, 180] },
   { key: 'phiT', label: 'φt — phase of t', short: 'φt', unit: '°', domain: [-180, 180] },
+  // the complex amplitude coefficients (arg r = φr, arg t = φt; |r|² = R); in Custom data the complex r and t
+  { key: 'rRe', label: 'Re r — real part of the reflection coefficient', short: 'Re r', unit: '', cx: { name: 'r', part: 're' } },
+  { key: 'rIm', label: 'Im r — imaginary part of the reflection coefficient', short: 'Im r', unit: '', cx: { name: 'r', part: 'im' } },
+  { key: 'tRe', label: 'Re t — real part of the transmission coefficient', short: 'Re t', unit: '', cx: { name: 't', part: 're' } },
+  { key: 'tIm', label: 'Im t — imaginary part of the transmission coefficient', short: 'Im t', unit: '', cx: { name: 't', part: 'im' } },
 ];
 
 // Group delay and its dispersion of r and t (from the phase along λ; a computation with at least 3 wavelengths).

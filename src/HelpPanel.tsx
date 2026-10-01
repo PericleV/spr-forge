@@ -1,6 +1,6 @@
 // Help: getting started, the nodes by section, keyboard and mouse, the examples and the validation of the physics.
 import { GETTING_STARTED, NODE_HELP, SHORTCUTS, VALIDATION } from './help.ts';
-import { GROUP_COLORS, NODE_SECTION, NODE_TITLES } from './nodeColors.ts';
+import { GROUP_COLORS, HIDDEN_NODES, NODE_SECTION, NODE_TITLES } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
 export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => void; onWelcome: () => void; examples: { group: string; name: string }[] }) {
@@ -27,7 +27,7 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
           <summary style={{ color: GROUP_COLORS[s] }}>{s}</summary>
           <dl>
             {(Object.keys(NODE_SECTION) as AppNode['type'][])
-              .filter((t) => NODE_SECTION[t] === s)
+              .filter((t) => NODE_SECTION[t] === s && !HIDDEN_NODES.has(t))
               .map((t) => (
                 <div key={t}>
                   <dt>{NODE_TITLES[t]}</dt>

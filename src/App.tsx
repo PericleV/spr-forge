@@ -150,7 +150,8 @@ const ERROR_RED = '#e5484d';
 const MULTI_KEYS = ['Shift', 'Control', 'Meta'];
 const DELETE_KEYS = ['Delete', 'Backspace'];
 
-type Template = { type: AppNode['type']; label: string; data: AppNode['data'] };
+// hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects)
+type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean };
 
 const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
   {
@@ -207,7 +208,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'tolerance', label: 'Tolerance (Monte Carlo)', data: TOLERANCE_DEFAULTS },
       { type: 'rcwafield', label: 'RCWA field map', data: RCWAFIELD_DEFAULTS },
       { type: 'extract', label: 'Extract data', data: { name: '', fields: [], fixed: {} } },
-      { type: 'merge', label: 'Merge data', data: { name: '', labels: {} } },
+      { type: 'merge', label: 'Merge data', data: { name: '', labels: {} }, hidden: true }, // hidden (the user, 2026-09-30)
       { type: 'custom', label: 'Custom data', data: { name: '', rows: [{ name: '', expr: '' }], aliases: {} } },
     ],
   },
@@ -501,12 +502,12 @@ function Flow() {
   };
   const miniStroke = (n: Node) => (engine.results.get(n.id)?.errors.length ? ERROR_RED : nodeColor(n as AppNode));
 
-  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.map((i) => ({ type: i.type, label: i.label, group: g.name }))), []);
+  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ type: i.type, label: i.label, group: g.name }))), []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
   // the nodes panel (left): the sections of GROUPS with the colours of their nodes
   const paletteGroups: PaletteGroup[] = useMemo(
-    () => GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.map((t) => ({ type: t.type, label: t.label, help: NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
+    () => GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
     [],
   );
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -591,6 +592,9 @@ function Flow() {
         </button>
         <button className={panel === 'library' ? 'active' : ''} onClick={() => togglePanel('library')} title="Material library (built-in and your own materials)">
           Materials
+        </button>
+        <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
+          ⌕ Find node
         </button>
         <span className="undo-redo">
           <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>

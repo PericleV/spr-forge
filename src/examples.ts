@@ -2,6 +2,7 @@
 import type { Edge } from '@xyflow/react';
 import { newComponent } from './engine/fitmodels.ts';
 import { FILTER_DEFAULTS } from './engine/filters.ts';
+import { OIC_A_EXAMPLE, OIC_A_TARGET_CSV, OIC_B_EXAMPLE } from './data/oic2025.ts';
 import { MATERIAL_LETTERS, parseFormula } from './engine/design.ts';
 import { makeLibrary } from './physics/library.ts';
 import { refractiveIndex } from './physics/materials.ts';
@@ -679,6 +680,74 @@ export const conicalSprExample = (): Project =>
       edge('dip', 'plot', 'in'),
       edge('rc', 'conv', 'in'),
       edge('rc', 'fm', 'in'),
+    ],
+  );
+
+// Convergence of RCWA with the number of orders N (the gold grating of the grating-coupled SPR example): a Sweep on the
+// orders port computes every step at its own N. The dip (FWHM node) gives θ_res and the width for each N; Extract data
+// takes R at a chosen angle (interpolated) for each N; Custom data compares θ_res with the
+// shallow-grating condition sin θ = λ/Λ − n_sp, n_sp = Re √(ε/(ε + 1)) from the gold Material itself.
+export const CONV_N = [10, 15, 20, 30, 40];
+export const rcwaConvergenceExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -620, y: -380 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'RCWA convergence vs the orders N',
+          text: 'The gold grating of “SPR by grating coupling” (Λ = 500 nm, 40 nm deep, fill 0.5, 633 nm, TM). A Sweep (N = 10, 15, 20, 30, 40) on the orders port of Compute RCWA: every step is computed at its own N and the data get an axis “orders N”. FWHM: the dip angle and width for each N (plot vs N). Extract data: R at θ = 10.5° (interpolated between the computed angles) for each N. Custom data: the gold Material gives ε and n_sp = Re √(ε/(ε + 1)); the shallow-grating angle asin(λ/Λ − n_sp) = 12.8° against the computed dip (the 40 nm grating pulls it down by ≈ 2.2°). Metal gratings in TM converge slowly and not monotonically: here the dip angle settles within ±0.05° while R at the dip still moves between 0.04 and 0.08 up to N = 40 — take N from such a study, for the quantity you report.',
+          width: 380,
+          height: 300,
+        },
+      },
+      material('air', 'Air', -620, -40),
+      material('au', 'Au', -620, 170),
+      { id: 'gr', type: 'grating', position: { x: -300, y: -40 }, data: { ...GRATING_DEFAULTS, label: 'Au grating', period: 500, thickness: 40, fill: 0.5 } },
+      { id: 'stack', type: 'combine', position: { x: 60, y: 60 }, data: { name: 'Grating on gold', count: 1 } },
+      { id: 'wl', type: 'param', position: { x: 60, y: -200 }, data: param('lambda', 'constant', 633, 500, 900, 1) },
+      { id: 'th', type: 'param', position: { x: 60, y: 330 }, data: param('theta', 'range', 10, 8, 13, 0.02) },
+      { id: 'ns', type: 'sweep', position: { x: 60, y: 600 }, data: { name: 'orders N', kind: 'number', mode: 'list', min: 5, max: 40, step: 5, list: CONV_N.join(', ') } },
+      { id: 'rc', type: 'rcwa', position: { x: 440, y: 40 }, data: { ...RCWA_DEFAULTS, name: 'Au grating', orders: 20, show: 1 } },
+      { id: 'plotR', type: 'plot', position: { x: 900, y: -420 }, data: { ...PLOT_DEFAULTS, field: 'R' } },
+      { id: 'fwhm', type: 'fwhm', position: { x: 900, y: 160 }, data: { ...ANALYSIS_DEFAULTS.fwhm, along: 'theta' } },
+      { id: 'plotRes', type: 'plot', position: { x: 1360, y: 160 }, data: { ...PLOT_DEFAULTS, field: 'c0' } },
+      { id: 'xR', type: 'extract', position: { x: 900, y: 640 }, data: { name: 'R at 10.5° vs N', fields: ['R'], fixed: {}, at: { theta: 10.5 } } },
+      { id: 'plotD', type: 'plot', position: { x: 1360, y: 640 }, data: { ...PLOT_DEFAULTS, field: 'R' } },
+      {
+        id: 'cu',
+        type: 'custom',
+        position: { x: 1820, y: 160 },
+        data: {
+          name: 'dip vs the shallow-grating angle',
+          rows: [
+            { name: 'n_sp', expr: 'real(sqrt(b_eps / (b_eps + 1)))' },
+            { name: 'theta_shallow', expr: 'deg(asin(633 / 500 - real(sqrt(b_eps / (b_eps + 1)))))' },
+            { name: 'shift', expr: 'a_theta - deg(asin(633 / 500 - real(sqrt(b_eps / (b_eps + 1)))))' },
+          ],
+          aliases: { 'fwhm:metrics': 'a', 'au:out': 'b' },
+        },
+      },
+    ],
+    [
+      edge('air', 'gr', 'groove'),
+      edge('au', 'gr', 'ridge'),
+      edge('air', 'stack', 'incident'),
+      edge('gr', 'stack', 'item-0'),
+      edge('au', 'stack', 'exit'),
+      edge('stack', 'rc', 'stack'),
+      edge('wl', 'rc', 'lambda'),
+      edge('th', 'rc', 'theta'),
+      edge('ns', 'rc', 'orders'),
+      edge('rc', 'plotR', 'in'),
+      edge('rc', 'fwhm', 'in'),
+      edge('fwhm', 'plotRes', 'in', 'metrics'),
+      edge('rc', 'xR', 'in'),
+      edge('xR', 'plotD', 'in'),
+      edge('fwhm', 'cu', 'in', 'metrics'),
+      edge('au', 'cu', 'in'),
     ],
   );
 
@@ -1559,6 +1628,495 @@ export const pelesExample = (): Project =>
     ],
   );
 
+// ---- Grating-coupled SPR sensor with the −1st order, Al–Au bimetallic: C. Hu, Optik 122, 1881 (2011) — RCWA at 900 nm,
+// TM, light from the analyte onto a lamellar metal grating (Λ = 350 nm, metal fraction 0.9) on the same metal; Drude
+// metals ε = 1 − λ²λc / (λp²(λc + iλ)) (Au: λp 168.26 nm, λc 8934.2 nm; Al: 106.57, 24511 nm). Their Fig. 4(a) value
+// 53.37° must read 54.37°: only then do their own ratios (χ of Al “almost 273 %” of Au, the bimetallic 2.36×) follow.
+export const HU2011 = {
+  base350: { theta: [60.55, 51.87], S: 173.6 }, // Fig. 2(d): Au, depth 40 nm, n 1.32 → 1.37
+  au30: { theta: [63.02, 54.37], fwhm: 2.02 }, // Fig. 4(a) (54.37 printed 53.37)
+  al30: { theta: [68.21, 58.7], fwhm: 0.82 }, // Fig. 4(b)
+  alAu: { shift: 9.39, fwhm: 0.93, S: 187, chi: 201 }, // Fig. 4(c), Fig. 5: Al 27 nm + Au 3 nm
+};
+const eVof = (lamNm: number) => 1239.84193 / lamNm;
+const HU_MAT: Record<string, MaterialDef> = {
+  au: { id: 'user-au-hu2011', name: 'Au (Drude, Hu 2011)', color: '#d4af37', model: { type: 'drude-lorentz', epsInf: 1, wp: eVof(168.26), gamma: eVof(8934.2), osc: [] }, source: 'C. Hu, Optik 122, 1881 (2011), Eq. (7): λp = 168.26 nm, λc = 8934.2 nm' },
+  al: { id: 'user-al-hu2011', name: 'Al (Drude, Hu 2011)', color: '#b8bcc4', model: { type: 'drude-lorentz', epsInf: 1, wp: eVof(106.57), gamma: eVof(24511), osc: [] }, source: 'C. Hu, Optik 122, 1881 (2011): λp = 106.57 nm, λc = 24511 nm' },
+  an: { id: 'user-analyte-132', name: 'analyte (n = 1.32)', color: '#a8d4ef', model: { type: 'constant', n: 1.32, k: 0 }, source: 'C. Hu, Optik 122, 1881 (2011): analyte 1.32 … 1.37' },
+};
+// Al grating (27 nm) under a conformal 3 nm Au film, as a pixel map of 10 rows × 350 columns (3 nm × 1 nm cells): outer
+// ridge 0.9 Λ = 315 nm, Al core 309 nm; 0 = Al, 1 = analyte, 2 = Au
+export const huCoatedPixels = () => {
+  const nx = 350, px: number[] = [];
+  const c0 = (nx - 315) / 2;
+  for (let r = 0; r < 10; r++)
+    for (let i = 0; i < nx; i++) {
+      const outer = i >= c0 && i < c0 + 315, core = i >= c0 + 3 && i < c0 + 312;
+      px.push(r === 0 ? (outer ? 2 : 1) : r < 9 ? (core ? 0 : outer ? 2 : 1) : core ? 0 : 2);
+    }
+  return px;
+};
+export const HU_N = [1.32, 1.3325, 1.345, 1.3575, 1.37];
+export const huGratingExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -900, y: -640 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Grating SPR sensor, −1st order, Al–Au (Hu, Optik 2011)',
+          text:
+            'C. Hu, Optik 122, 1881 (2011). Light (TM, 900 nm) comes from the analyte onto an aluminium grating (Λ = 350 nm, 27 nm deep, metal fraction 0.9) coated by 3 nm of gold (drawn as a pixel map: the film also covers the side walls); Drude metals of the paper. The −1st order excites the plasmon: the dip moves to smaller angles when n grows. The analyte is one Material with an index sweep (1.32 … 1.37), so it fills the grooves too.\n\n' +
+            'Press Run on Compute RCWA (1505 points: about a minute on a multi-core computer). N = 20: the 3 nm side walls ask for more (the warning), but N = 20 and 30 give the same dip angles to 0.02° here. FWHM gives the dip angle and width for each n; Custom data (with the analyte Material connected: its n) computes S = Δθ/Δn against n = 1.32 and χ = S/FWHM.\n\n' +
+            'Paper: shift 9.39° for 1.32 → 1.37, FWHM 0.93°, S = 187 °/RIU (regression over five indices), χ = 201 RIU⁻¹. Here: shift ≈ 9.25°, FWHM ≈ 0.81°, S ≈ 185 °/RIU. Also checked (see the tests): the plain Au grating, 40 nm deep, 60.55° → 51.87° in the paper, 60.5–60.6° → 51.6–51.8° here as N goes from 10 to 50 — metal gratings in TM converge in oscillations, and the paper does not give its N; the gold grating 30 nm deep, 63.02° → 54.37° (printed 53.37°) — 63.1° → 54.4° here.',
+          width: 460,
+          height: 520,
+        },
+      },
+      userMaterial('an', HU_MAT.an, -900, 0),
+      userMaterial('al', HU_MAT.al, -900, 180),
+      userMaterial('au', HU_MAT.au, -900, 360),
+      { id: 'ns', type: 'sweep', position: { x: -900, y: 560 }, data: { name: 'analyte n', kind: 'number', mode: 'list', min: 1.32, max: 1.37, step: 0.0125, list: HU_N.join(', ') } },
+      {
+        id: 'gr',
+        type: 'grating',
+        position: { x: -420, y: 40 },
+        data: { ...GRATING_DEFAULTS, label: 'Al + 3 nm Au', profile: 'pixel', period: 350, thickness: 30, fill: 0.9, fillTop: 0.9, shift: 0, slices: 10, nx: 350, pixels: huCoatedPixels(), materials: 3 },
+      },
+      { id: 'stack', type: 'combine', position: { x: 0, y: 160 }, data: { name: 'Al–Au grating', count: 1 } },
+      { id: 'wl', type: 'param', position: { x: 380, y: -200 }, data: param('lambda', 'constant', 900, 500, 1000, 1) },
+      { id: 'th', type: 'param', position: { x: 380, y: 520 }, data: param('theta', 'range', 62, 55, 70, 0.05) },
+      { id: 'rc', type: 'rcwa', position: { x: 380, y: 60 }, data: { ...RCWA_DEFAULTS, name: 'Al–Au grating', orders: 20, show: 1 } },
+      { id: 'fwhm', type: 'fwhm', position: { x: 840, y: -300 }, data: { ...ANALYSIS_DEFAULTS.fwhm, along: 'theta' } },
+      { id: 'plot', type: 'plot', position: { x: 1300, y: -640 }, data: { ...PLOT_DEFAULTS, field: 'R' } },
+      { id: 'ref', type: 'extract', position: { x: 1300, y: 60 }, data: { name: 'n = 1.32 (reference)', fields: [], fixed: { 'sweep:ns': 0 } } },
+      {
+        id: 'sens',
+        type: 'custom',
+        position: { x: 1760, y: -200 },
+        data: {
+          name: 'S and χ',
+          rows: [
+            { name: 'shift', expr: 'b_theta - a_theta' },
+            { name: 'S', expr: '(b_theta - a_theta) / (c_n - 1.32)' },
+            { name: 'chi', expr: '(b_theta - a_theta) / (c_n - 1.32) / b_FWHM' },
+          ],
+          aliases: { 'fwhm:metrics': 'a', 'ref:out': 'b', 'an:out': 'c' },
+        },
+      },
+    ],
+    [
+      edge('ns', 'an', 'n'),
+      edge('al', 'gr', 'ridge'),
+      edge('an', 'gr', 'groove'),
+      edge('au', 'gr', 'm2'),
+      edge('an', 'stack', 'incident'),
+      edge('gr', 'stack', 'item-0'),
+      edge('al', 'stack', 'exit'),
+      edge('stack', 'rc', 'stack'),
+      edge('wl', 'rc', 'lambda'),
+      edge('th', 'rc', 'theta'),
+      edge('rc', 'fwhm', 'in'),
+      edge('fwhm', 'plot', 'in'),
+      edge('fwhm', 'ref', 'in', 'metrics'),
+      edge('fwhm', 'sens', 'in', 'metrics'),
+      edge('ref', 'sens', 'in'),
+      edge('an', 'sens', 'in'),
+    ],
+    Object.values(HU_MAT),
+  );
+
+// ---- Graphene SPR biosensor for malaria: T. Tene, F. Arias Arias, K. I. Paredes-Páliz et al., Front. Bioeng.
+// Biotechnol. 13, 1580344 (2025) — Kretschmann at 633 nm, the optimized Sys3 (Ag 45 nm | Si₃N₄ 5 nm | 2 graphene
+// layers) and Sys4 (Ag 40 | Si₃N₄ 6 | 2 graphene | ssDNA 5 nm); normal erythrocytes and the ring, trophozoite and schizont
+// stages. Their Table 2 gives graphene 3.0 + 1.462i, §3.6 3.0 + 1.1491i: the latter reproduces all their angles and dips.
+export const TENE2025 = {
+  n: { normal: 1.402, ring: 1.395, trophozoite: 1.381, schizont: 1.371 },
+  // Table 3: Δθ (°), S (°/RIU), DA, QF (RIU⁻¹); Table 4: FoM (RIU⁻¹), LoD (10⁻⁵ RIU), CSF — ring, trophozoite, schizont
+  sys3: { theta: [85.18, 82.71, 79.07, 77.02], dTheta: [2.472, 6.114, 8.161], S: [353.143, 291.143, 263.258], DA: [0.507, 1.447, 2.091], QF: [72.493, 68.906, 67.465], FoM: [70.163, 68.797, 67.464], LoD: [1.415, 1.717, 1.899], CSF: [63.846, 62.883, 61.764], FWHM: [5.41, 4.87, 4.23, 3.9], Rmin: [12.82, 3.21, 0.16, 0.002] },
+  sys4: { theta: [86.92, 84.71, 80.73, 78.59], dTheta: [2.21, 6.191, 8.328], S: [315.714, 294.81, 268.645], DA: [0.375, 1.153, 1.63], QF: [53.603, 54.907, 52.594], FoM: [53.199, 53.883, 50.565], LoD: [1.583, 1.696, 1.861], CSF: [46.936, 47.602, 44.675], FWHM: [6.43, 5.89, 5.37, 5.11], Rmin: [20.45, 0.75, 1.86, 3.86] },
+};
+const TENE_MAT: Record<string, MaterialDef> = {
+  bk7: { id: 'user-bk7-15151', name: 'BK7 (n = 1.5151)', color: '#9fc9e6', model: { type: 'constant', n: 1.5151, k: 0 }, source: 'Tene et al. (2025), Table 2 (BK-7 prism at 633 nm)' },
+  ag: { id: 'user-ag-tene', name: 'Ag (0.056253 + 4.2760i)', color: '#c0c0c8', model: { type: 'constant', n: 0.056253, k: 4.276 }, source: 'Tene et al. (2025), Table 2 (silver at 633 nm)' },
+  sin: { id: 'user-sin-20394', name: 'Si₃N₄ (n = 2.0394)', color: '#b9a37e', model: { type: 'constant', n: 2.0394, k: 0 }, source: 'Tene et al. (2025), Table 2' },
+  g: { id: 'user-graphene-1149', name: 'Graphene (3.0 + 1.1491i)', color: '#3d3d3d', model: { type: 'constant', n: 3.0, k: 1.1491 }, monolayer: 0.34, source: 'Tene et al. (2025), §3.6 (Table 2 prints 1.462i); 0.34 nm per layer' },
+  dna: { id: 'user-ssdna-1462', name: 'ssDNA (n = 1.462)', color: '#e8c3a0', model: { type: 'constant', n: 1.462, k: 0 }, source: 'Tene et al. (2025), §3.6 (thiol-tethered ssDNA)' },
+  normal: { id: 'user-rbc-normal', name: 'Erythrocytes, normal (n = 1.402)', color: '#e6a0a0', model: { type: 'constant', n: 1.402, k: 0 }, source: 'Tene et al. (2025), Table 2 (normal (I) stage)' },
+  ring: { id: 'user-rbc-ring', name: 'Ring stage (n = 1.395)', color: '#e08a8a', model: { type: 'constant', n: 1.395, k: 0 }, source: 'Tene et al. (2025), §3.6 (ring (II) stage)' },
+  troph: { id: 'user-rbc-troph', name: 'Trophozoite stage (n = 1.381)', color: '#d06f6f', model: { type: 'constant', n: 1.381, k: 0 }, source: 'Tene et al. (2025), §3.6 (trophozoite (III) stage)' },
+  schiz: { id: 'user-rbc-schiz', name: 'Schizont stage (n = 1.371)', color: '#b85454', model: { type: 'constant', n: 1.371, k: 0 }, source: 'Tene et al. (2025), §3.6 (schizont (IV) stage)' },
+};
+export const teneMalariaExample = (sys: 3 | 4): Project => {
+  const s4 = sys === 4;
+  const P = TENE2025[s4 ? 'sys4' : 'sys3'];
+  return project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -900, y: -620 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: `Graphene SPR biosensor for malaria, Sys${sys} (Tene et al. 2025)`,
+          text:
+            `T. Tene et al., Front. Bioeng. Biotechnol. 13, 1580344 (2025): BK7 1.5151 | Ag ${s4 ? 40 : 45} nm | Si₃N₄ ${s4 ? 6 : 5} nm | 2 graphene layers (3.0 + 1.1491i, 0.34 nm)${s4 ? ' | ssDNA 5 nm (1.462)' : ''} | erythrocytes; TM, 633 nm. The medium is a Material sweep: normal (1.402), ring (1.395), trophozoite (1.381), schizont (1.371).\n\n` +
+            'FWHM gives the dip angle, its width and R at the dip for every medium. Extract data takes the normal medium as the reference; Custom data (with the medium and the normal Material connected: their n) computes Δθ, Δn and S = Δθ/Δn, then DA = Δθ/FWHM, QF = S/FWHM, FoM = S(1 − Rmin)/FWHM, LoD = Δn/Δθ · 0.005°, CSF = S(Rmax − Rmin)/FWHM (Rmax before the dip: Min / max).\n\n' +
+            `Paper (Tables 3, 4): Δθ ${P.dTheta.join(' / ')}°, S ${P.S.join(' / ')} °/RIU — reproduced to the last digit, as the dip angles and depths. Their widths (${P.FWHM.join(' / ')}°) follow an undeclared definition: ours are the half-depth widths, so DA, QF, FoM and CSF differ by up to ~10 %; LoD depends only on Δθ and agrees.`,
+          width: 440,
+          height: 470,
+        },
+      },
+      userMaterial('bk7', TENE_MAT.bk7, -900, -60),
+      userMaterial('agm', TENE_MAT.ag, -900, 110),
+      userMaterial('sinm', TENE_MAT.sin, -900, 280),
+      userMaterial('gm', TENE_MAT.g, -900, 450),
+      ...(s4 ? [userMaterial('dnam', TENE_MAT.dna, -900, 620)] : []),
+      userMaterial('normal', TENE_MAT.normal, -900, 800),
+      userMaterial('ring', TENE_MAT.ring, -900, 970),
+      userMaterial('troph', TENE_MAT.troph, -900, 1140),
+      userMaterial('schiz', TENE_MAT.schiz, -900, 1310),
+      { id: 'media', type: 'matsweep', position: { x: -500, y: 960 }, data: { name: 'erythrocytes' } },
+      { id: 'ag', type: 'layer', position: { x: -500, y: 60 }, data: { label: 'Ag', thickness: s4 ? 40 : 45, layers2D: 1 } },
+      { id: 'sin', type: 'layer', position: { x: -500, y: 260 }, data: { label: 'Si₃N₄', thickness: s4 ? 6 : 5, layers2D: 1 } },
+      { id: 'g', type: 'layer', position: { x: -500, y: 460 }, data: { label: 'graphene', thickness: 0.68, layers2D: 2 } },
+      ...(s4 ? [{ id: 'dna', type: 'layer', position: { x: -500, y: 660 }, data: { label: 'ssDNA', thickness: 5, layers2D: 1 } } as AppNode] : []),
+      { id: 'stack', type: 'combine', position: { x: -120, y: 260 }, data: { name: `Sys${sys}`, count: s4 ? 4 : 3 } },
+      { id: 'wl', type: 'param', position: { x: 260, y: -160 }, data: param('lambda', 'constant', 633, 500, 900, 1) },
+      { id: 'th', type: 'param', position: { x: 260, y: 560 }, data: param('theta', 'range', 75, 60, 89.9, 0.005) },
+      { id: 'tmm', type: 'compute', position: { x: 260, y: 160 }, data: compute(`Sys${sys}`) },
+      { id: 'fwhm', type: 'fwhm', position: { x: 700, y: -300 }, data: { ...ANALYSIS_DEFAULTS.fwhm, along: 'theta' } },
+      { id: 'rmax', type: 'extremum', position: { x: 700, y: 500 }, data: { ...ANALYSIS_DEFAULTS.extremum, mode: 'max', field: 'R', along: 'theta', lo: 60, hi: 72 } },
+      { id: 'plot', type: 'plot', position: { x: 1160, y: -620 }, data: { ...PLOT_DEFAULTS, field: 'R' } },
+      { id: 'ref', type: 'extract', position: { x: 1160, y: 40 }, data: { name: 'normal (reference)', fields: [], fixed: { 'sweep:media': 0 } } },
+      {
+        id: 'sens',
+        type: 'custom',
+        position: { x: 1620, y: -200 },
+        data: {
+          name: 'shift and sensitivity',
+          rows: [
+            { name: 'dtheta', expr: 'b_theta - a_theta' },
+            { name: 'dn', expr: 'd_n - c_n' },
+            { name: 'S', expr: '(b_theta - a_theta) / (d_n - c_n)' },
+          ],
+          aliases: { 'fwhm:metrics': 'a', 'ref:out': 'b', 'media:out': 'c', 'normal:out': 'd' },
+        },
+      },
+      {
+        id: 'perf',
+        type: 'custom',
+        position: { x: 2080, y: -200 },
+        data: {
+          name: 'performance (Eqs. 9–13)',
+          rows: [
+            { name: 'DA', expr: 'a_dtheta / b_FWHM' },
+            { name: 'QF', expr: 'a_S / b_FWHM' },
+            { name: 'FoM', expr: 'a_S * (1 - b_R_dip) / b_FWHM' },
+            { name: 'LoD_1e-5', expr: 'a_dn / a_dtheta * 0.005 * 1e5' },
+            { name: 'CSF', expr: 'a_S * (c_max_R - b_R_dip) / b_FWHM' },
+          ],
+          aliases: { 'sens:out': 'a', 'fwhm:metrics': 'b', 'rmax:metrics': 'c' },
+        },
+      },
+    ],
+    [
+      edge('agm', 'ag', 'mat'),
+      edge('sinm', 'sin', 'mat'),
+      edge('gm', 'g', 'mat'),
+      ...(s4 ? [edge('dnam', 'dna', 'mat')] : []),
+      edge('normal', 'media', 'in'),
+      edge('ring', 'media', 'in'),
+      edge('troph', 'media', 'in'),
+      edge('schiz', 'media', 'in'),
+      edge('bk7', 'stack', 'incident'),
+      edge('ag', 'stack', 'item-0'),
+      edge('sin', 'stack', 'item-1'),
+      edge('g', 'stack', 'item-2'),
+      ...(s4 ? [edge('dna', 'stack', 'item-3')] : []),
+      edge('media', 'stack', 'exit'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('th', 'tmm', 'theta'),
+      edge('tmm', 'fwhm', 'in'),
+      edge('tmm', 'rmax', 'in'),
+      edge('fwhm', 'plot', 'in'),
+      edge('fwhm', 'ref', 'in', 'metrics'),
+      edge('fwhm', 'sens', 'in', 'metrics'),
+      edge('ref', 'sens', 'in'),
+      edge('media', 'sens', 'in'),
+      edge('normal', 'sens', 'in'),
+      edge('sens', 'perf', 'in'),
+      edge('fwhm', 'perf', 'in', 'metrics'),
+      edge('rmax', 'perf', 'in', 'metrics'),
+    ],
+    Object.values(TENE_MAT).filter((m) => s4 || m !== TENE_MAT.dna),
+  );
+};
+
+// ---- OIC 2025 design challenge, the committee's example designs (Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12
+// (2026); data files on figshare, CC BY 4.0) — the official merit functions computed with Extract data and Custom data ----
+const OIC_MAT: Record<string, MaterialDef> = {
+  H: { id: 'user-h-225', name: 'H (n = 2.25)', color: '#3f6fb5', model: { type: 'constant', n: 2.25, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  M: { id: 'user-m-138', name: 'M (n = 1.38)', color: '#cfe8d8', model: { type: 'constant', n: 1.38, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  A: { id: 'user-a-165', name: 'A (n = 1.65)', color: '#9cc3a0', model: { type: 'constant', n: 1.65, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  F: { id: 'user-f-200', name: 'F (n = 2.00)', color: '#6d8fc4', model: { type: 'constant', n: 2.0, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  L: { id: 'user-l-145', name: 'L (n = 1.45)', color: '#e3efe6', model: { type: 'constant', n: 1.45, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  T: { id: 'user-t-215', name: 'T (n = 2.15)', color: '#4c7cc0', model: { type: 'constant', n: 2.15, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  AG: { id: 'user-ag-oic', name: 'Ag (OIC 2025: 0.12 + 3.45i)', color: '#c0c0c8', model: { type: 'constant', n: 0.12, k: 3.45 }, source: 'OIC 2025 design contest, Table 3 (nominal, no dispersion)' },
+  AU: { id: 'user-au-oic', name: 'Au (OIC 2025: 0.306 + 2.88i)', color: '#d4af37', model: { type: 'constant', n: 0.306, k: 2.88 }, source: 'OIC 2025 design contest, Table 3 (nominal, no dispersion)' },
+  NI: { id: 'user-ni-oic', name: 'Ni (OIC 2025: 1.8 + 3.33i)', color: '#8a8f96', model: { type: 'constant', n: 1.8, k: 3.33 }, source: 'OIC 2025 design contest, Table 3 (nominal, no dispersion)' },
+  SUB: { id: 'user-sub-152', name: 'substrate (n = 1.52)', color: '#dfe7ee', model: { type: 'constant', n: 1.52, k: 0 }, source: 'OIC 2025 design contest, Table 2' },
+  CUBE: { id: 'user-sub-180', name: 'cube glass (n = 1.80)', color: '#d6e2ea', model: { type: 'constant', n: 1.8, k: 0 }, source: 'OIC 2025 design contest, Table 8 (Problem B)' },
+};
+// A design file (layers from the substrate outwards) → the Filter designer's layers (top = the incident side first),
+// the letters in the order of the designer's material ports.
+const oicDesign = (file: [string, number][], ports: string[]) => [...file].reverse().map(([m, d]) => ({ m: ports.indexOf(m), d }));
+
+// Problem A: the Neuschwanstein target (Data File 1) and the committee's 17-layer design with metal-like layers (Data File 2)
+export const oicCastleExample = (): Project => {
+  const ports = ['H', 'M', 'A', 'AG', 'AU', 'NI'];
+  return project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -900, y: -560 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'OIC 2025 Problem A: the Neuschwanstein castle',
+          text:
+            'Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026). The target (Data File 1: T in % from 300 to 1100 nm every 0.1 nm) follows the contour of the Neuschwanstein castle; normal incidence, air | coating | substrate 1.52 (no back side); materials without dispersion (Tables 2, 3). The Filter designer holds the committee’s 17-layer example design (Data File 2, with Ag, Au and Ni layers).\n\n' +
+            'MF = 100·√(mean (T − T̂)²) over the 8001 points, built from the nodes: Extract data takes T(λ) of the computation, Custom data the squared deviation from the target at every point, Extract data its mean over λ, Custom data 100·√(mean). Official value of this design: MF = 7.006763 — the nodes give the same to all 7 digits.\n\n' +
+            'For scale: the winning designs (H and M only, 100 layers, ≈ 11 µm) reach MF ≈ 0.72 before production. Press Start in the Filter designer (it replaces the example design) to try.',
+          width: 420,
+          height: 430,
+        },
+      },
+      { id: 'air', type: 'material', position: { x: -900, y: -60 }, data: materialData('Air') },
+      userMaterial('mh', OIC_MAT.H, -900, 110),
+      userMaterial('mm', OIC_MAT.M, -900, 280),
+      userMaterial('ma', OIC_MAT.A, -900, 450),
+      userMaterial('mag', OIC_MAT.AG, -900, 620),
+      userMaterial('mau', OIC_MAT.AU, -900, 790),
+      userMaterial('mni', OIC_MAT.NI, -900, 960),
+      userMaterial('sub', OIC_MAT.SUB, -900, 1130),
+      { id: 'castle', type: 'import', position: { x: -900, y: -1000 }, data: { ...IMPORT_DEFAULTS, name: 'Neuschwanstein target', fileName: 'Neuschwanstein_target.csv', text: OIC_A_TARGET_CSV, names: 'T', scale: 0.01, color: '#d44f9e' } },
+      { id: 'target', type: 'target', position: { x: -420, y: -1000 }, data: { ...TARGET_DEFAULTS, name: 'castle target', mode: 'data', field: 'T', min: NaN, max: NaN, quantity: 'T', tol: 0.01, kind: 'eq' } },
+      {
+        id: 'filter',
+        type: 'filter',
+        position: { x: -420, y: -60 },
+        data: {
+          ...FILTER_DEFAULTS,
+          name: 'OIC 2025 A — committee design',
+          preset: 'custom',
+          bands: [],
+          lmin: 300,
+          lmax: 1100,
+          step: 2,
+          targetQ: 'T',
+          pol: 's',
+          materials: ports.length,
+          minD: 2,
+          maxD: 2000,
+          maxLayers: 100,
+          maxTotal: 20000,
+          algorithm: 'deep',
+          candidates: 8,
+          iterations: 400,
+          needleStep: 10,
+          lambdaRef: 700,
+          start: 'current',
+          design: { front: oicDesign(OIC_A_EXAMPLE, ports), back: [] },
+        },
+      },
+      { id: 'wl', type: 'param', position: { x: 260, y: -300 }, data: param('lambda', 'range', 700, 300, 1100, 0.1) },
+      { id: 'th', type: 'param', position: { x: 260, y: 420 }, data: param('theta', 'constant', 0, 0, 80, 1) },
+      { id: 'tmm', type: 'compute', position: { x: 260, y: 40 }, data: { ...compute('Committee design'), polarization: 's' } },
+      { id: 'plot', type: 'plot', position: { x: 760, y: -560 }, data: { ...PLOT_DEFAULTS, field: 'T' } },
+      { id: 'xT', type: 'extract', position: { x: 760, y: 60 }, data: { name: 'T(λ)', fields: ['T'], fixed: { theta: 0 } } },
+      { id: 'dev', type: 'custom', position: { x: 1220, y: 60 }, data: { name: 'squared deviation', rows: [{ name: 'd2', expr: '(a_T - b_T)^2' }], aliases: { 'xT:out': 'a', 'castle:out': 'b' } } },
+      { id: 'avg', type: 'extract', position: { x: 1680, y: 60 }, data: { name: 'mean over λ', fields: ['c0'], fixed: {}, mean: ['lambda'] } },
+      { id: 'mf', type: 'custom', position: { x: 2140, y: 60 }, data: { name: 'MF (OIC 2025, Eq. 1)', rows: [{ name: 'MF', expr: '100 * sqrt(a_d2)' }], aliases: { 'avg:out': 'a' } } },
+    ],
+    [
+      edge('mh', 'filter', 'm0'),
+      edge('mm', 'filter', 'm1'),
+      edge('ma', 'filter', 'm2'),
+      edge('mag', 'filter', 'm3'),
+      edge('mau', 'filter', 'm4'),
+      edge('mni', 'filter', 'm5'),
+      edge('air', 'filter', 'incident'),
+      edge('sub', 'filter', 'sub'),
+      edge('castle', 'target', 'in'),
+      edge('target', 'filter', 'target'),
+      edge('filter', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('th', 'tmm', 'theta'),
+      edge('tmm', 'plot', 'in'),
+      edge('tmm', 'xT', 'in'),
+      edge('xT', 'dev', 'in'),
+      edge('castle', 'dev', 'in'),
+      edge('dev', 'avg', 'in'),
+      edge('avg', 'mf', 'in'),
+    ],
+    ports.map((k) => OIC_MAT[k]).concat(OIC_MAT.SUB),
+  );
+};
+
+// Problem B: the immersed three-line polarizing notch filter, the committee's 68-layer example (Data File 3)
+export const oicNotchExample = (): Project => {
+  const ports = ['F', 'A', 'M', 'L', 'T'];
+  const at = (id: string, lam: number, y: number): AppNode => ({ id, type: 'extract', position: { x: 1220, y }, data: { name: `at ${lam} nm`, fields: ['c0'], fixed: { theta: 0 }, at: { lambda: lam } } }) as AppNode;
+  return project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -900, y: -600 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'OIC 2025 Problem B: immersed three-line polarizing notch',
+          text:
+            'Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026). The coating sits on the diagonal of a cube (n = 1.80): light at 45° inside the glass; the three lines 450, 550 and 650 nm are reflected in s polarization, everything else goes through. Materials of Table 8 (no dispersion); at most 100 layers and 20 µm. The Filter designer holds the committee’s 68-layer example (Data File 3).\n\n' +
+            'MF = (500/3)·Σ Ts/Tp at 450, 550, 650 nm + #(Rs ≥ 99 %) / #(Ts ≥ 99 %) over 400–700 nm every 0.1 nm (Eq. 2), built from the nodes: two computations (s, p); Custom data per wavelength (Ts/Tp and the Heaviside steps step(Rs − 0.99), step(Ts − 0.99)); Extract data at 450, 550, 650 nm and the mean of the steps over λ (the fraction of the points); Custom data sums them. Official value: MF = 1.8540762059 — the nodes give it to 13 digits.\n\n' +
+            'Results of the challenge (Table 10): 0.265 (Lemarchand, 99 layers), 0.366, 0.576, 0.849, 8.14, 10.33.',
+          width: 440,
+          height: 470,
+        },
+      },
+      userMaterial('cube', OIC_MAT.CUBE, -900, -40),
+      userMaterial('mf', OIC_MAT.F, -900, 130),
+      userMaterial('ma', OIC_MAT.A, -900, 300),
+      userMaterial('mm', OIC_MAT.M, -900, 470),
+      userMaterial('ml', OIC_MAT.L, -900, 640),
+      userMaterial('mt', OIC_MAT.T, -900, 810),
+      // the specification of B.1 for the designer (its own merit; the official MF is computed after it), at 45° in the
+      // cube: s reflected in the three lines and transmitted elsewhere; p transmitted everywhere (two Target nodes: in one
+      // node, overlapping bands keep the last one)
+      {
+        id: 'specS',
+        type: 'target',
+        position: { x: -420, y: -1700 },
+        data: {
+          ...TARGET_DEFAULTS,
+          name: 'B.1 — s polarization',
+          mode: 'bands',
+          min: 400,
+          max: 700,
+          step: 0.5,
+          quantity: 'T',
+          pol: 's',
+          angle: 45,
+          tol: 0.01,
+          bands: [
+            ...[[400, 446], [454, 546], [554, 646], [654, 700]].map(([lo, hi]) => ({ lo, hi, value: 0.99, weight: 1, q: 'T', kind: 'ge' as const })),
+            ...[450, 550, 650].map((c) => ({ lo: c - 0.5, hi: c + 0.5, value: 1, weight: 5, q: 'R', kind: 'eq' as const })),
+          ],
+        },
+      },
+      {
+        id: 'specP',
+        type: 'target',
+        position: { x: -420, y: -1080 },
+        data: { ...TARGET_DEFAULTS, name: 'B.1 — p polarization', mode: 'bands', min: 400, max: 700, step: 0.5, quantity: 'T', pol: 'p', angle: 45, tol: 0.01, bands: [{ lo: 400, hi: 700, value: 0.99, weight: 1, kind: 'ge' as const }] },
+      },
+      {
+        id: 'filter',
+        type: 'filter',
+        position: { x: -420, y: -60 },
+        data: {
+          ...FILTER_DEFAULTS,
+          name: 'OIC 2025 B — committee design',
+          preset: 'custom',
+          bands: [],
+          lmin: 400,
+          lmax: 700,
+          step: 1,
+          targetQ: 'T',
+          angles: '45',
+          pol: 'both',
+          materials: ports.length,
+          minD: 5,
+          maxD: 2000,
+          maxLayers: 100,
+          maxTotal: 20000,
+          algorithm: 'deep',
+          start: 'current',
+          design: { front: oicDesign(OIC_B_EXAMPLE, ports), back: [] },
+        },
+      },
+      { id: 'wl', type: 'param', position: { x: 260, y: -360 }, data: param('lambda', 'range', 550, 400, 700, 0.1) },
+      { id: 'th', type: 'param', position: { x: 260, y: 700 }, data: param('theta', 'constant', 45, 0, 80, 1) },
+      { id: 'tmmS', type: 'compute', position: { x: 260, y: -60 }, data: { ...compute('s polarization'), polarization: 's' } },
+      { id: 'tmmP', type: 'compute', position: { x: 260, y: 330 }, data: { ...compute('p polarization'), polarization: 'p' } },
+      { id: 'plotS', type: 'plot', position: { x: 760, y: -620 }, data: { ...PLOT_DEFAULTS, field: 'T' } },
+      { id: 'plotP', type: 'plot', position: { x: 760, y: 820 }, data: { ...PLOT_DEFAULTS, field: 'T' } },
+      {
+        id: 'perL',
+        type: 'custom',
+        position: { x: 760, y: 60 },
+        data: {
+          name: 'per wavelength',
+          rows: [
+            { name: 'ratio', expr: 'a_T / b_T' },
+            { name: 'hR', expr: 'step(a_R - 0.99)' },
+            { name: 'hT', expr: 'step(a_T - 0.99)' },
+          ],
+          aliases: { 'tmmS:out': 'a', 'tmmP:out': 'b' },
+        },
+      },
+      at('x450', 450, -340),
+      at('x550', 550, -40),
+      at('x650', 650, 260),
+      { id: 'frac', type: 'extract', position: { x: 1220, y: 560 }, data: { name: 'fractions over λ', fields: ['c1', 'c2'], fixed: { theta: 0 }, mean: ['lambda'] } },
+      {
+        id: 'mfB',
+        type: 'custom',
+        position: { x: 1680, y: 60 },
+        data: {
+          name: 'MF (OIC 2025, Eq. 2)',
+          rows: [{ name: 'MF', expr: '500/3 * (c_ratio + d_ratio + e_ratio) + f_hR / f_hT' }],
+          aliases: { 'x450:out': 'c', 'x550:out': 'd', 'x650:out': 'e', 'frac:out': 'f' },
+        },
+      },
+    ],
+    [
+      edge('mf', 'filter', 'm0'),
+      edge('ma', 'filter', 'm1'),
+      edge('mm', 'filter', 'm2'),
+      edge('ml', 'filter', 'm3'),
+      edge('mt', 'filter', 'm4'),
+      edge('cube', 'filter', 'incident'),
+      edge('cube', 'filter', 'sub'),
+      edge('specS', 'filter', 'target'),
+      edge('specP', 'filter', 'target'),
+      edge('filter', 'tmmS', 'stack'),
+      edge('filter', 'tmmP', 'stack'),
+      edge('wl', 'tmmS', 'lambda'),
+      edge('wl', 'tmmP', 'lambda'),
+      edge('th', 'tmmS', 'theta'),
+      edge('th', 'tmmP', 'theta'),
+      edge('tmmS', 'plotS', 'in'),
+      edge('tmmP', 'plotP', 'in'),
+      edge('tmmS', 'perL', 'in'),
+      edge('tmmP', 'perL', 'in'),
+      edge('perL', 'x450', 'in'),
+      edge('perL', 'x550', 'in'),
+      edge('perL', 'x650', 'in'),
+      edge('perL', 'frac', 'in'),
+      edge('x450', 'mfB', 'in'),
+      edge('x550', 'mfB', 'in'),
+      edge('x650', 'mfB', 'in'),
+      edge('frac', 'mfB', 'in'),
+    ],
+    ports.map((k) => OIC_MAT[k]).concat(OIC_MAT.CUBE),
+  );
+};
+
 // ---- SPR sensors by a genetic algorithm: M. Sebek, N. T. K. Thanh, X. Su, J. Teng, ACS Omega 8, 20792 (2023) ----
 // The published sensors (resonance angles read from their Fig. 2B / 4B / 5B), the sensitivities they report and the
 // structures (the 785 nm one as in their Fig. 5A: 13 hBN layers around the top MoS₂, the text says 7).
@@ -2156,8 +2714,12 @@ export const EXAMPLES: ExampleEntry[] = [
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
   { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys3 (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(3), desc: 'Ag / Si₃N₄ / graphene on BK7: the resonance shift and sensitivity for three malaria stages, and the performance metrics from Custom data.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys4 with ssDNA (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(4), desc: 'The same sensor with a thiol-tethered ssDNA layer.' },
   { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling (RCWA)', make: gratingSprExample, desc: 'Plasmons excited by a metal grating (RCWA): diffraction efficiencies and the field map.' },
   { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling under conical incidence (azimuth φ, RCWA)', make: conicalSprExample, desc: 'The same grating lit out of its plane (azimuth φ): conical RCWA, TE / TM parts.' },
+  { group: EXAMPLE_GROUPS[1], name: 'Grating SPR sensor with the −1st order, Al–Au (Hu, Optik 2011, benchmark)', make: huGratingExample, desc: 'An aluminium grating coated with 3 nm of gold, 900 nm: the dip shift, S and χ = S/FWHM for five analyte indices (RCWA).' },
+  { group: EXAMPLE_GROUPS[1], name: 'RCWA convergence vs the orders N (grating SPR)', make: rcwaConvergenceExample, desc: 'A Sweep on the orders N of Compute RCWA: the dip and R at an angle for each N; n_sp of gold in Custom data.' },
   { group: EXAMPLE_GROUPS[1], name: 'Guided-mode resonance filter (RCWA, optimization)', make: gmrExample, desc: 'A guided-mode resonance filter optimized with RCWA.' },
   { group: EXAMPLE_GROUPS[2], name: 'DBR microcavity', make: dbrExample, desc: 'Bragg mirrors around a cavity: the stop band and the cavity mode at two angles.' },
   { group: EXAMPLE_GROUPS[2], name: 'Strong coupling (polaritons)', make: strongCouplingExample, desc: 'An excitonic layer in a microcavity: the polariton anticrossing vs the cavity thickness and its fit.' },
@@ -2171,6 +2733,8 @@ export const EXAMPLES: ExampleEntry[] = [
   { group: EXAMPLE_GROUPS[3], name: 'Narrow band-pass filter, three cavities (filter design benchmark)', make: bandpassExample, desc: 'A narrow three-cavity band-pass filter designed from its specification.' },
   { group: EXAMPLE_GROUPS[3], name: 'AR coating on both faces, four materials (filter design benchmark)', make: arBothSidesExample, desc: 'Anti-reflection on both faces of a plate with four coating materials.' },
   { group: EXAMPLE_GROUPS[3], name: 'Castle filter: the contour of Peleș as T(λ) (in the spirit of OIC 2025)', make: pelesExample, desc: 'A transmission spectrum shaped like the contour of Peleș castle, in the spirit of the OIC 2025 contest.' },
+  { group: EXAMPLE_GROUPS[3], name: 'OIC 2025 Problem A: the Neuschwanstein target, committee design (MF from nodes)', make: oicCastleExample, desc: 'The real target of the design challenge and the committee’s example design; the official merit function built with Extract data and Custom data (7.006763).' },
+  { group: EXAMPLE_GROUPS[3], name: 'OIC 2025 Problem B: immersed polarizing notch, committee design (MF from nodes)', make: oicNotchExample, desc: 'Three-line polarizing notch in a cube at 45°: the committee’s design and the official merit function from the nodes (1.8540762059).' },
   { group: EXAMPLE_GROUPS[4], name: 'Liquid-crystal microcavity tuned by the director tilt (Berreman 4×4)', make: lcCavityExample, desc: 'A liquid-crystal layer in a microcavity: the modes move with the director tilt (Berreman 4×4).' },
   { group: EXAMPLE_GROUPS[4], name: 'Bound state in the continuum, anisotropic defect in a photonic crystal (Pankin et al. 2022, Berreman 4×4)', make: anisoBicExample, desc: 'A bound state in the continuum on an anisotropic defect in a photonic crystal, after Pankin et al. 2022.' },
   { group: EXAMPLE_GROUPS[4], name: 'BICs in an asymmetric photonic crystal + anisotropic layer (Liu et al. 2023, Berreman 4×4)', make: liuBicExample, desc: 'Symmetry-protected and Friedrich–Wintgen BICs of a photonic crystal with an anisotropic layer, after Liu et al. 2023.' },

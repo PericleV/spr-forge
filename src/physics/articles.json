@@ -52,6 +52,167 @@
   "group": "From articles (examples)"
  },
  {
+  "id": "user-bk7-15151",
+  "name": "BK7 (n = 1.5151) · Tene 2025",
+  "color": "#9fc9e6",
+  "model": {
+   "type": "constant",
+   "n": 1.5151,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), Table 2 (BK-7 prism at 633 nm)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ag-tene",
+  "name": "Ag (0.056253 + 4.2760i) · Tene 2025",
+  "color": "#c0c0c8",
+  "model": {
+   "type": "constant",
+   "n": 0.056253,
+   "k": 4.276
+  },
+  "source": "Tene et al. (2025), Table 2 (silver at 633 nm)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sin-20394",
+  "name": "Si₃N₄ (n = 2.0394) · Tene 2025",
+  "color": "#b9a37e",
+  "model": {
+   "type": "constant",
+   "n": 2.0394,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-graphene-1149",
+  "name": "Graphene (3.0 + 1.1491i) · Tene 2025",
+  "color": "#3d3d3d",
+  "model": {
+   "type": "constant",
+   "n": 3,
+   "k": 1.1491
+  },
+  "monolayer": 0.34,
+  "source": "Tene et al. (2025), §3.6 (Table 2 prints 1.462i); 0.34 nm per layer",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-rbc-normal",
+  "name": "Erythrocytes, normal (n = 1.402) · Tene 2025",
+  "color": "#e6a0a0",
+  "model": {
+   "type": "constant",
+   "n": 1.402,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), Table 2 (normal (I) stage)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-rbc-ring",
+  "name": "Ring stage (n = 1.395) · Tene 2025",
+  "color": "#e08a8a",
+  "model": {
+   "type": "constant",
+   "n": 1.395,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), §3.6 (ring (II) stage)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-rbc-troph",
+  "name": "Trophozoite stage (n = 1.381) · Tene 2025",
+  "color": "#d06f6f",
+  "model": {
+   "type": "constant",
+   "n": 1.381,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), §3.6 (trophozoite (III) stage)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-rbc-schiz",
+  "name": "Schizont stage (n = 1.371) · Tene 2025",
+  "color": "#b85454",
+  "model": {
+   "type": "constant",
+   "n": 1.371,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), §3.6 (schizont (IV) stage)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ssdna-1462",
+  "name": "ssDNA (n = 1.462) · Tene 2025",
+  "color": "#e8c3a0",
+  "model": {
+   "type": "constant",
+   "n": 1.462,
+   "k": 0
+  },
+  "source": "Tene et al. (2025), §3.6 (thiol-tethered ssDNA)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-au-hu2011",
+  "name": "Au (Drude, Hu 2011)",
+  "color": "#d4af37",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 1,
+   "wp": 7.368607690479021,
+   "gamma": 0.13877481251818852,
+   "osc": []
+  },
+  "source": "C. Hu, Optik 122, 1881 (2011), Eq. (7): λp = 168.26 nm, λc = 8934.2 nm",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-al-hu2011",
+  "name": "Al (Drude, Hu 2011)",
+  "color": "#b8bcc4",
+  "model": {
+   "type": "drude-lorentz",
+   "epsInf": 1,
+   "wp": 11.634061461949893,
+   "gamma": 0.05058308228958427,
+   "osc": []
+  },
+  "source": "C. Hu, Optik 122, 1881 (2011): λp = 106.57 nm, λc = 24511 nm",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-analyte-132",
+  "name": "analyte (n = 1.32)",
+  "color": "#a8d4ef",
+  "model": {
+   "type": "constant",
+   "n": 1.32,
+   "k": 0
+  },
+  "source": "C. Hu, Optik 122, 1881 (2011): analyte 1.32 … 1.37",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
   "id": "user-exciton",
   "name": "Exciton layer (Lorentz)",
   "color": "#c24fbd",
@@ -258,6 +419,110 @@
    "k": 0
   },
   "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-a-165",
+  "name": "A (n = 1.65) · OIC 2025",
+  "color": "#9cc3a0",
+  "model": {
+   "type": "constant",
+   "n": 1.65,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ag-oic",
+  "name": "Ag (OIC 2025: 0.12 + 3.45i)",
+  "color": "#c0c0c8",
+  "model": {
+   "type": "constant",
+   "n": 0.12,
+   "k": 3.45
+  },
+  "source": "OIC 2025 design contest, Table 3 (nominal, no dispersion)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-au-oic",
+  "name": "Au (OIC 2025: 0.306 + 2.88i)",
+  "color": "#d4af37",
+  "model": {
+   "type": "constant",
+   "n": 0.306,
+   "k": 2.88
+  },
+  "source": "OIC 2025 design contest, Table 3 (nominal, no dispersion)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-ni-oic",
+  "name": "Ni (OIC 2025: 1.8 + 3.33i)",
+  "color": "#8a8f96",
+  "model": {
+   "type": "constant",
+   "n": 1.8,
+   "k": 3.33
+  },
+  "source": "OIC 2025 design contest, Table 3 (nominal, no dispersion)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-f-200",
+  "name": "F (n = 2.00) · OIC 2025",
+  "color": "#6d8fc4",
+  "model": {
+   "type": "constant",
+   "n": 2,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-l-145",
+  "name": "L (n = 1.45) · OIC 2025",
+  "color": "#e3efe6",
+  "model": {
+   "type": "constant",
+   "n": 1.45,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-t-215",
+  "name": "T (n = 2.15) · OIC 2025",
+  "color": "#4c7cc0",
+  "model": {
+   "type": "constant",
+   "n": 2.15,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 2",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-sub-180",
+  "name": "cube glass (n = 1.80) · OIC 2025",
+  "color": "#d6e2ea",
+  "model": {
+   "type": "constant",
+   "n": 1.8,
+   "k": 0
+  },
+  "source": "OIC 2025 design contest, Table 8 (Problem B)",
   "builtin": true,
   "group": "From articles (examples)"
  },

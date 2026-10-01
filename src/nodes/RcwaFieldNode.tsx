@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { FIELD_COMPONENTS, type RcwaFieldInfo } from '../engine/evaluate.ts';
@@ -10,6 +11,34 @@ import { MapViewControls, Messages, NumInput, OutPort, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
 const fmt = (v: number, digits = 4) => (Number.isFinite(v) ? `${+v.toFixed(digits)}` : '—');
+
+// The two ends of a window axis, edited as a pair: typed values stay in the fields and reach the node (and its checks)
+// only when the focus leaves the pair or Enter is pressed — the node does not re-lay itself out while typing.
+function WindowPair({ label, lo, hi, phLo, phHi, title, onCommit }: { label: string; lo?: number; hi?: number; phLo: string; phHi: string; title: string; onCommit: (lo: number, hi: number) => void }) {
+  const [draft, setDraft] = useState<[string, string] | null>(null);
+  const txt = (v?: number) => (v !== undefined && Number.isFinite(v) ? `${v}` : '');
+  const shown = draft ?? [txt(lo), txt(hi)];
+  const commit = () => {
+    if (!draft) return;
+    const n = (t: string) => (t.trim() === '' ? NaN : Number(t));
+    onCommit(n(draft[0]), n(draft[1]));
+    setDraft(null);
+  };
+  const edit = (i: 0 | 1, v: string) => setDraft(i === 0 ? [v, shown[1]] : [shown[0], v]);
+  const key = (e: React.KeyboardEvent) => e.key === 'Enter' && commit();
+  return (
+    <span
+      className="interval"
+      title={title}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commit();
+      }}
+    >
+      {label} <input className="nodrag short" type="number" value={shown[0]} placeholder={phLo} onChange={(e) => edit(0, e.target.value)} onKeyDown={key} />–
+      <input className="nodrag short" type="number" value={shown[1]} placeholder={phHi} onChange={(e) => edit(1, e.target.value)} onKeyDown={key} /> nm
+    </span>
+  );
+}
 
 const RES_TITLES = { R: 'the minimum of R', T: 'the maximum of T', A: 'the maximum of A' } as const;
 // Which resonance λ / θ start at (and go back to with “res”): the minimum of R, or the maximum of T or A.
@@ -157,26 +186,35 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
           </select>
         </label>
       </div>
-      {!winZ && (
-        <div className="row wrap">
-          <label className="radio">show <NumInput className="tiny" value={data.zIn} min={0} step={50} onChange={(zIn) => set({ zIn })} /> nm above</label>
-          <label className="radio"><NumInput className="tiny" value={data.zOut} min={0} step={50} onChange={(zOut) => set({ zOut })} /> nm below</label>
-        </div>
-      )}
+      {/* kept in place (disabled) under a z window: the fields below do not move */}
+      <div className="row wrap" title={winZ ? 'A z window is set: it decides the depths shown' : undefined}>
+        <label className="radio">show <NumInput className="tiny" value={data.zIn} min={0} step={50} disabled={winZ} onChange={(zIn) => set({ zIn })} /> nm above</label>
+        <label className="radio"><NumInput className="tiny" value={data.zOut} min={0} step={50} disabled={winZ} onChange={(zOut) => set({ zOut })} /> nm below</label>
+      </div>
       <div className="section" title="Compute the map only in a part of the structure: all Nx × Nz points go into it (finer detail at the same cost). Empty = the whole map.">
         Window
       </div>
       <div className="row wrap">
-        <span className="interval" title="Across, nm (x = 0 at the start of a period)">
-          x <NumInput className="short" value={data.x0 ?? NaN} placeholder="0" onChange={(x0) => set({ x0 })} />–
-          <NumInput className="short" value={data.x1 ?? NaN} placeholder={info?.periodNm ? `${+(data.periods * info.periodNm).toFixed(1)}` : 'end'} onChange={(x1) => set({ x1 })} /> nm
-        </span>
+        <WindowPair
+          label="x"
+          lo={data.x0}
+          hi={data.x1}
+          phLo="0"
+          phHi={info?.periodNm ? `${+(data.periods * info.periodNm).toFixed(1)}` : 'end'}
+          title="Across, nm (x = 0 at the start of a period)"
+          onCommit={(x0, x1) => set({ x0, x1 })}
+        />
       </div>
       <div className="row wrap">
-        <span className="interval" title="Depth, nm: 0 = top of the first layer, growing into the structure (negative = the incident medium)">
-          z <NumInput className="short" value={data.z0 ?? NaN} placeholder={`${-data.zIn}`} onChange={(z0) => set({ z0 })} />–
-          <NumInput className="short" value={data.z1 ?? NaN} placeholder="end" onChange={(z1) => set({ z1 })} /> nm
-        </span>
+        <WindowPair
+          label="z"
+          lo={data.z0}
+          hi={data.z1}
+          phLo={`${-data.zIn}`}
+          phHi="end"
+          title="Depth, nm: 0 = top of the first layer, growing into the structure (negative = the incident medium)"
+          onCommit={(z0, z1) => set({ z0, z1 })}
+        />
         {info?.layers.length ? (
           <select
             className="nodrag"
