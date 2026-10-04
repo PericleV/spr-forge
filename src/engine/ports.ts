@@ -79,6 +79,8 @@ export function sourcePort(node: AppNode, handle?: string | null): PortType | nu
     case 'extract':
     case 'merge':
     case 'custom':
+    case 'kinetics':
+    case 'sensorgram':
       return 'data';
     case 'compare':
       return null;
@@ -152,6 +154,10 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return handle === 'in' || handle === 'target' || handle === 'criteria' ? ['data'] : [];
     case 'notes':
       return handle.startsWith('item-') ? ['note'] : [];
+    case 'kinetics':
+      return handle === 'sweep' ? ['sweep-number'] : [];
+    case 'sensorgram':
+      return handle === 'in' || handle === 'kinetics' ? ['data'] : handle === 'seed' ? ['sweep-number'] : [];
     default:
       return [];
   }

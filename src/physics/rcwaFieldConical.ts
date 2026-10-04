@@ -7,9 +7,9 @@
 import * as X from './complex.ts';
 import type { C } from './complex.ts';
 import { add, eye, inv, mul, mulVec, type CMat } from './cmat.ts';
-import { star, type RcwaLayer, type SMat } from './rcwa.ts';
+import { segEps, star, type RcwaLayer, type SMat } from './rcwa.ts';
 import type { ConicalSolved } from './rcwaConical.ts';
-import { mapGrid, sigmaFactors, type FieldMap, type FieldMapOpts, type FieldPart } from './rcwaField.ts';
+import { mapGrid, mapOutlines, sigmaFactors, type FieldMap, type FieldMapOpts, type FieldPart } from './rcwaField.ts';
 import type { Polarization } from './tmm.ts';
 
 type Vec = [Float64Array, Float64Array];
@@ -122,7 +122,7 @@ export function conicalFieldsAt(sol: ConicalSolved, layers: RcwaLayer[], period:
   const epsAt = (x: number): C => {
     const f = (((x / period) % 1) + 1) % 1;
     const s = L.segs!.find((g) => f >= g.from && f < g.to) ?? L.segs![L.segs!.length - 1];
-    return X.mul(s.n, s.n);
+    return segEps(s, 0); // Ex = Dx / εxx
   };
   return xs.map((x) => {
     const sums = [ex, ey, ez, hx, hy, hz, ...(dx ? [dx] : [])].map(() => [0, 0]);
@@ -152,10 +152,7 @@ export function conicalFieldMap(
   const { xs, zs } = mapGrid(opts, period, total);
   const bounds: number[] = [0];
   for (const L of layers.slice(1, -1)) bounds.push(bounds[bounds.length - 1] + L.d);
-  const outlines: FieldMap['outlines'] = [];
-  layers.slice(1, -1).forEach((L, j) => {
-    if (L.segs) outlines.push({ z0: bounds[j], z1: bounds[j + 1], xs: L.segs.map((s) => s.from * period).filter((x) => x > 0) });
-  });
+  const outlines = mapOutlines(layers, bounds, period);
   void pol;
   const [e0n, h0n] = [sol.inc.E2, sol.inc.H2];
   const comp = (w: C, p: FieldPart) => (p === 'abs' ? Math.hypot(w.re, w.im) : p === 're' ? w.re : p === 'im' ? w.im : (Math.atan2(w.im, w.re) * 180) / Math.PI);

@@ -10,7 +10,7 @@ import { tmmPoint } from './physics/tmm.ts';
 import type { MaterialDef } from './physics/materials.ts';
 import type { Project } from './project.ts';
 import type { AppNode, ComputeData, FilterData, ParamData, TargetData } from './types.ts';
-import { ROUGH_DEFAULTS, LAYER_GA_DEFAULTS, PLOT_DEFAULTS, COMPARE_DEFAULTS, DRAW_DEFAULTS, FIELD_DEFAULTS, ZONES_DEFAULTS, IMPORT_DEFAULTS, TARGET_DEFAULTS, MATCH_DEFAULTS, TOLERANCE_DEFAULTS, GRATING_DEFAULTS, RCWA_DEFAULTS, DRAWGRATING_DEFAULTS, RCWAFIELD_DEFAULTS, INFO_DEFAULTS, OPTIMIZER_DEFAULTS, fitDefaults, ANALYSIS_DEFAULTS, ANISO_DEFAULTS, materialData } from './defaults.ts';
+import { ROUGH_DEFAULTS, LAYER_GA_DEFAULTS, PLOT_DEFAULTS, COMPARE_DEFAULTS, DRAW_DEFAULTS, FIELD_DEFAULTS, ZONES_DEFAULTS, IMPORT_DEFAULTS, TARGET_DEFAULTS, MATCH_DEFAULTS, TOLERANCE_DEFAULTS, GRATING_DEFAULTS, RCWA_DEFAULTS, DRAWGRATING_DEFAULTS, RCWAFIELD_DEFAULTS, INFO_DEFAULTS, OPTIMIZER_DEFAULTS, fitDefaults, ANALYSIS_DEFAULTS, ANISO_DEFAULTS, materialData, KINETICS_DEFAULTS, SENSORGRAM_DEFAULTS } from './defaults.ts';
 export * from './defaults.ts';
 
 const lib = makeLibrary([]);
@@ -2705,17 +2705,290 @@ export const roughSprExample = (): Project =>
     ],
   );
 
+// The fields of a rough gold film (after Treebupachatsakul, Shinnakerdchoke & Pechprasarn, Sensors 23, 3377 (2023),
+// Fig. 15c: BK7 / Au 50 nm with a rough top of peak-to-peak h = 9 nm, cl = 8 nm / water, 633 nm, TM): the same profile as
+// staircase slices (as the article and RETICOLO) and as its smooth profile (FFF). The staircase puts a sharp gold corner
+// at every step; their fields are the hot spots of its map.
+export const ROUGH_FFF_THETA = { min: 70, max: 76, step: 0.1 };
+export const roughFieldsExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -660, y: -420 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Rough gold SPR fields: staircase vs smooth profile (FFF)',
+          text:
+            'After Treebupachatsakul, Shinnakerdchoke & Pechprasarn, Sensors 23, 3377 (2023), Fig. 15c: BK7 / gold 50 nm whose top is rough (peak-to-peak h = 9 nm, correlation length 8 nm, 500 nm cell) / water, 633 nm, TM. The article computes the profile as a staircase of 1 nm rows (RCWA, 151 orders) and finds hot spots of |E|² at the sharp edges of the rough surface.\n\n' +
+            'The same realization here twice: Compute RCWA with “profiles: staircase slices” (9 slices) and with “profiles: smooth (FFF)” — the differential method with the normal-vector factorization (Popov & Nevière), which integrates the true profile without steps. Press Run on both, then on the two field maps (at the dip of each). The staircase puts a gold corner at every step; compare the maps, and the dips (Compare) with the flat film.\n\n' +
+            'Check the orders N on both: the smooth profile converges at a few tens of orders, the staircase slowly (its corners).',
+          width: 400,
+          height: 330,
+        },
+      },
+      material('glass', 'user-glass152', -300, -40),
+      { id: 'aum', type: 'material', position: { x: -660, y: 200 }, data: { ...materialData('user-au-treebu'), color: '#d4af37' } },
+      material('water', 'user-n133', -300, 460),
+      { id: 'au', type: 'layer', position: { x: -300, y: 200 }, data: { label: 'Au film', thickness: 45.5, layers2D: 1 } },
+      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', kind: 'pp', size: 9, cl: 8, cell: 500, px: 500, seed: 1, slices: 9 } },
+      { id: 'stack', type: 'combine', position: { x: 420, y: 120 }, data: { name: 'Rough Kretschmann', count: 1 } },
+      { id: 'flat', type: 'combine', position: { x: 60, y: -260 }, data: { name: 'Flat film', count: 1 } },
+      { id: 'tmmF', type: 'compute', position: { x: 780, y: -420 }, data: compute('Flat film (reference)') },
+      { id: 'wl', type: 'param', position: { x: 420, y: -160 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'th', type: 'param', position: { x: 420, y: 420 }, data: param('theta', 'range', 70, ROUGH_FFF_THETA.min, ROUGH_FFF_THETA.max, ROUGH_FFF_THETA.step) },
+      { id: 'rcS', type: 'rcwa', position: { x: 780, y: -40 }, data: { ...RCWA_DEFAULTS, name: 'RCWA, staircase', orders: 40, show: 0, profiles: 'staircase' } },
+      { id: 'rcF', type: 'rcwa', position: { x: 780, y: 420 }, data: { ...RCWA_DEFAULTS, name: 'RCWA, smooth profile (FFF)', orders: 40, show: 0, profiles: 'fff' } },
+      { id: 'cmp', type: 'compare', position: { x: 1200, y: -420 }, data: COMPARE_DEFAULTS },
+      { id: 'fmS', type: 'rcwafield', position: { x: 1200, y: 40 }, data: { ...RCWAFIELD_DEFAULTS, periods: 1, nx: 200, nz: 120, x0: 0, x1: 500, z0: 30, z1: 70, mapView: { zLog: true } } },
+      { id: 'fmF', type: 'rcwafield', position: { x: 1200, y: 760 }, data: { ...RCWAFIELD_DEFAULTS, periods: 1, nx: 200, nz: 120, x0: 0, x1: 500, z0: 30, z1: 70, mapView: { zLog: true } } },
+      { id: 'dg', type: 'drawgrating', position: { x: 60, y: 760 }, data: { ...DRAWGRATING_DEFAULTS, periods: 1 } },
+    ],
+    [
+      edge('aum', 'au', 'mat'),
+      edge('au', 'rough', 'in'),
+      edge('glass', 'stack', 'incident'),
+      edge('rough', 'stack', 'item-0'),
+      edge('water', 'stack', 'exit'),
+      edge('glass', 'flat', 'incident'),
+      edge('au', 'flat', 'item-0'),
+      edge('water', 'flat', 'exit'),
+      edge('flat', 'tmmF', 'stack'),
+      edge('wl', 'tmmF', 'lambda'),
+      edge('th', 'tmmF', 'theta'),
+      edge('stack', 'rcS', 'stack'),
+      edge('wl', 'rcS', 'lambda'),
+      edge('th', 'rcS', 'theta'),
+      edge('stack', 'rcF', 'stack'),
+      edge('wl', 'rcF', 'lambda'),
+      edge('th', 'rcF', 'theta'),
+      edge('tmmF', 'cmp', 'in'),
+      edge('rcS', 'cmp', 'in'),
+      edge('rcF', 'cmp', 'in'),
+      edge('rcS', 'fmS', 'in'),
+      edge('rcF', 'fmF', 'in'),
+      edge('stack', 'dg', 'in'),
+    ],
+    [
+      { id: 'user-glass152', name: 'glass (n = 1.52)', color: '#dfe7ee', model: { type: 'constant', n: 1.52, k: 0 }, source: 'assumed (glass substrate)' },
+      { id: 'user-au-treebu', name: 'Au (0.18344 + 3.4332i)', color: '#d4af37', model: { type: 'constant', n: 0.18344, k: 3.4332 }, source: `${TREEBU}, gold at 633 nm` },
+      { id: 'user-n133', name: 'water (n = 1.33)', color: '#6fb3e0', model: { type: 'constant', n: 1.33, k: 0 }, source: `${TREEBU}, sensing medium` },
+    ],
+  );
+
+// ---- Sensorgrams: binding kinetics turned into the SPR signal ----
+
+// The common part: BK7 / Au 50 nm / buffer (water), 633 nm, an angular scan around the dip; Binding kinetics →
+// Sensorgram → Plot of the sensorgram.
+const sensorgramBase = (kin: Partial<AppNode['data']>, sg: Partial<AppNode['data']>, note: { title: string; text: string }, extra: { nodes?: AppNode[]; edges?: Edge[]; layers?: AppNode[]; theta?: [number, number, number] } = {}) => {
+  const [t0, t1, dt] = extra.theta ?? [66, 74, 0.05];
+  const layers = extra.layers ?? [];
+  return project(
+    [
+      { id: 'note', type: 'info', position: { x: -330, y: -330 }, data: { ...INFO_DEFAULTS, title: note.title, text: note.text, width: 520, height: 230 } },
+      material('bk7', 'BK7', -330, 0),
+      material('aum', 'Au', -330, 180),
+      { id: 'au', type: 'layer', position: { x: 0, y: 180 }, data: { label: 'Au', thickness: 50, layers2D: 1 } },
+      material('water', 'Water', -330, 360),
+      ...layers,
+      { id: 'stack', type: 'combine', position: { x: 300, y: 120 }, data: { name: 'SPR chip', count: 1 + (layers.length ? 1 : 0) } },
+      { id: 'wl', type: 'param', position: { x: 300, y: -160 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'ang', type: 'param', position: { x: 300, y: 420 }, data: param('theta', 'range', 70, t0, t1, dt) },
+      { id: 'tmm', type: 'compute', position: { x: 640, y: 60 }, data: compute('SPR chip') },
+      { id: 'kin', type: 'kinetics', position: { x: 640, y: 420 }, data: { ...KINETICS_DEFAULTS, ...kin } as AppNode['data'] },
+      { id: 'sg', type: 'sensorgram', position: { x: 1100, y: 60 }, data: { ...SENSORGRAM_DEFAULTS, ...sg } as AppNode['data'] },
+      { id: 'plot', type: 'plot', position: { x: 1600, y: 60 }, data: { ...PLOT_DEFAULTS, field: 'shift', x: 'time' } },
+      ...(extra.nodes ?? []),
+    ] as AppNode[],
+    [
+      edge('aum', 'au', 'mat'),
+      edge('bk7', 'stack', 'incident'),
+      edge('au', 'stack', 'item-0'),
+      ...(layers.length ? [edge(layers[0].id, 'stack', 'item-1')] : []),
+      edge('water', 'stack', 'exit'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('ang', 'tmm', 'theta'),
+      edge('tmm', 'sg', 'in'),
+      edge('kin', 'sg', 'kinetics'),
+      edge('sg', 'plot', 'in', 'sensorgram'),
+      ...(extra.edges ?? []),
+    ],
+    layers.length ? HYDROGEL : [],
+  );
+};
+const HYDROGEL: MaterialDef[] = [{ id: 'user-hydrogel', name: 'hydrogel, collapsed (n = 1.50)', color: '#7fb3a8', model: { type: 'constant', n: 1.5, k: 0 }, source: 'typical polymer (pNIPAAm-like) value' }];
+
+// An antibody captured by its antigen on gold: a series of injections (12.5 … 200 nM), 1:1 Langmuir.
+export const sensorgramAntibodyExample = (): Project =>
+  sensorgramBase(
+    { name: 'IgG binding', model: 'langmuir', ka: 2e5, kd: 5e-4, rmax: 2500, analyte: 'igg', orient: 'end', steps: [{ label: 'baseline', t: 60, c: 0 }, { label: 'association', t: 400, c: 100 }, { label: 'dissociation', t: 900, c: 0 }], dt: 5, sweepOf: 'c' },
+    { name: 'IgG sensorgram', thick: 'auto', mixing: 'linear', bulk: true, readout: 'dip', track: true },
+    {
+      title: 'Sensorgram: antibody binding (1:1)',
+      text: 'An IgG antibody binds to its antigen on a gold chip (BK7 / Au 50 nm / buffer, 633 nm): Binding kinetics (1:1, ka = 2·10⁵ M⁻¹s⁻¹, kd = 5·10⁻⁴ s⁻¹, Rmax = 2500 RU) along baseline → association → dissociation, for five concentrations (the Sweep).\n\nCaught by its antigen, the antibody stands on the surface (end-on: 14.2 nm high, a 5.7 nm footprint). Binding kinetics gives the capacity of a random end-on monolayer, 5.4 ng/mm²: Rmax is 47 % of it. Sensorgram puts the bound mass (1000 RU = 1 ng/mm²) into a monolayer as high as the molecule (de Feijter) plus the bulk index of the flowing solution, recomputes the reflectance at every time and follows the dip exactly.\n\nPlots: Δθ of the dip vs time, and the fraction of the gold covered by the antibodies (coverage). The R(t, θ) output shows the reflectance curves at any time.',
+    },
+    {
+      nodes: [
+        { id: 'cs', type: 'sweep', position: { x: 300, y: 620 }, data: { name: 'c [nM]', kind: 'number', mode: 'list', min: 0, max: 0, step: 1, list: '12.5, 25, 50, 100, 200' } } as AppNode,
+        { id: 'plotC', type: 'plot', position: { x: 1600, y: 640 }, data: { ...PLOT_DEFAULTS, field: 'cover', x: 'time' } } as AppNode,
+      ],
+      edges: [edge('cs', 'kin', 'sweep'), edge('sg', 'plotC', 'in', 'sensorgram')],
+    },
+  );
+
+// A hydrogel layer on gold that swells (e.g. a pH or temperature step) and collapses again: the target is the layer.
+export const sensorgramSwellingExample = (): Project =>
+  sensorgramBase(
+    { name: 'hydrogel swelling', model: 'swelling', tau: 40, steps: [{ label: 'buffer', t: 60, c: 0, swell: 0 }, { label: 'swelling (pH 7)', t: 400, c: 0, swell: 1.5 }, { label: 'collapse (pH 4)', t: 400, c: 0, swell: 0 }], dt: 2 },
+    { name: 'swelling sensorgram', target: 'layer:2', mixing: 'bruggeman', bulk: false, readout: 'dip', track: true },
+    {
+      title: 'Sensorgram: a swelling hydrogel',
+      text: 'A 40 nm hydrogel (collapsed n = 1.50) on BK7 / Au 50 nm in water swells to 2.5× its thickness and collapses again (Binding kinetics, polymer swelling, τ = 40 s). Sensorgram takes the hydrogel layer as the target: its thickness grows as d₀(1 + s) and water fills the added volume (Bruggeman).\n\nThe layer gets thicker but its index drops toward that of water: here the dilution wins and the dip moves to smaller angles, by several degrees — far from the linear RU picture of a binding experiment.',
+    },
+    { layers: [{ id: 'gel', type: 'layer', position: { x: 0, y: 540 }, data: { label: 'hydrogel', thickness: 40, layers2D: 1 } } as AppNode], nodes: [{ id: 'gelm', type: 'material', position: { x: -330, y: 540 }, data: { ...materialData('user-hydrogel'), color: '#7fb3a8' } } as AppNode], edges: [edge('gelm', 'gel', 'mat')], theta: [66, 89, 0.05] },
+  );
+
+// A small molecule with fast kinetics (as in the carbonic anhydrase II – sulfonamide benchmark studies of Myszka et al.):
+// a few RU of signal, the detector noise and the dip located by its centroid.
+export const sensorgramSmallMoleculeExample = (): Project =>
+  sensorgramBase(
+    { name: 'small molecule', model: 'langmuir', ka: 5e4, kd: 0.05, rmax: 40, analyte: 'small', steps: [{ label: 'baseline', t: 30, c: 0 }, { label: 'injection', t: 90, c: 5000 }, { label: 'dissociation', t: 120, c: 0 }], dt: 1 },
+    { name: 'small-molecule sensorgram', thick: 'auto', mixing: 'linear', bulk: true, readout: 'dip', track: false, locate: 'centroid', locLevel: 0.5, noise: true, noiseAdd: 0.0005, noiseShot: 1e5, noiseAvg: 4, maxTimes: 300 },
+    {
+      title: 'Sensorgram: a small molecule, measured',
+      text: 'A 200 Da molecule binds with fast kinetics (ka = 5·10⁴ M⁻¹s⁻¹, kd = 0.05 s⁻¹, KD = 1 µM) at 5 µM: only ~35 RU, while the bulk index of the injected solution gives a jump of its own.\n\nThe instrument adds detector noise (thermal / read-out and shot noise, 4 scans averaged); the dip is located on every noisy scan by its centroid, not the 3-point parabola. A Sweep of the seed gives five runs of the same experiment with their own noise. The second Plot zooms on the dip of the measured reflectance at one time: five noisy scans (R; its Y menu also has R exact, the curve without the instrument).\n\nTurn the noise off to see the exact sensorgram, or try the parabola to see why the centroid is used.',
+    },
+    {
+      nodes: [
+        { id: 'seeds', type: 'sweep', position: { x: 760, y: 900 }, data: { name: 'noise seeds', kind: 'number', mode: 'list', min: 0, max: 0, step: 1, list: '1, 2, 3, 4, 5' } } as AppNode,
+        { id: 'plotR', type: 'plot', position: { x: 1600, y: 640 }, data: { ...PLOT_DEFAULTS, field: 'R', x: 'theta', series: 'seed', fixed: { time: 100 }, xLim: [71.3, 73], yLim: [0, 0.03] } } as AppNode,
+      ],
+      edges: [edge('seeds', 'sg', 'seed'), edge('sg', 'plotR', 'in')],
+    },
+  );
+
+// Protein adsorption on a free surface: random sequential adsorption, the double layer and the maximum coverage,
+// against Wasilewska et al., Int. J. Environ. Res. Public Health 18, 4944 (2021) (myoglobin on silica, pH 3.5).
+export const myoglobinRsaExample = (): Project => {
+  const kin = (name: string, ionic: number, zeta: number): AppNode['data'] =>
+    ({
+      ...KINETICS_DEFAULTS,
+      name,
+      model: 'transport',
+      ka: 1e7,
+      kd: 0,
+      kt: 1.5e7,
+      analyte: 'myoglobin',
+      orient: 'side',
+      surface: 'rsa',
+      ionic,
+      zeta,
+      steps: [
+        { label: 'buffer', t: 60, c: 0 },
+        { label: 'myoglobin 5 mg/L', t: 1800, c: 281 },
+        { label: 'rinse', t: 1200, c: 0 },
+      ],
+      dt: 10,
+      sweepOf: 'c',
+    }) as AppNode['data'];
+  const sg = (name: string): AppNode['data'] => ({ ...SENSORGRAM_DEFAULTS, name, thick: 'auto', mixing: 'linear', bulk: true, readout: 'dip', track: true, maxTimes: 160 }) as AppNode['data'];
+  const curve = (id: string, src: string, field: string, color: string, label: string) => ({ id, src, field, fixed: {}, color, dash: 'solid' as const, label, visible: true });
+  return project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -330, y: -380 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Protein adsorption: random packing and the double layer (Wasilewska et al. 2021, benchmark)',
+          text: 'Myoglobin (17.8 kDa, 4.5 × 3.5 × 2.5 nm, lying) adsorbs from a 5 mg/L solution (281 nM) on silica at pH 3.5 (M. Wasilewska et al., Int. J. Environ. Res. Public Health 18, 4944 (2021), QCM and OWLS). Binding kinetics: a free surface — the molecules land at random places and cannot overlap (random sequential adsorption), transport-limited (kt), irreversible (kd = 0).\n\nTwo buffers, with the ζ potential the paper measured: 10 mM NaCl (ζ = 38 mV, Debye length 3.0 nm) and 150 mM (ζ = 15 mV, 0.8 nm). At low salt the molecules repel each other across the double layer and pack as larger discs (effective hard particle, 1 kT).\n\nPredicted maximum coverage: 0.595 and 1.31 mg/m² (= ng/mm²). Measured (QCM, the irreversibly bound fraction): 0.60 ± 0.1 and 1.3 ± 0.1; OWLS 0.7 and 1.5. Nothing is fitted: the dimensions are those of the crystal structure, ζ from the paper. kt only sets the time scale (a linear, transport-limited start, a few minutes to the plateau as in their runs).\n\nThe silica here is a 10 nm SiO₂ film on an SPR chip (BK7 / Au 50 nm, 633 nm): the Sensorgrams show what an SPR instrument would see.',
+          width: 560,
+          height: 300,
+        },
+      },
+      material('bk7', 'BK7', -330, 0),
+      material('aum', 'Au', -330, 180),
+      material('sio2', 'SiO2', -330, 360),
+      material('water', 'Water', -330, 540),
+      { id: 'au', type: 'layer', position: { x: 0, y: 180 }, data: { label: 'Au', thickness: 50, layers2D: 1 } },
+      { id: 'si', type: 'layer', position: { x: 0, y: 360 }, data: { label: 'silica', thickness: 10, layers2D: 1 } },
+      { id: 'stack', type: 'combine', position: { x: 300, y: 120 }, data: { name: 'SPR chip with silica', count: 2 } },
+      { id: 'wl', type: 'param', position: { x: 300, y: -160 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'ang', type: 'param', position: { x: 300, y: 420 }, data: param('theta', 'range', 72, 66, 80, 0.05) },
+      { id: 'tmm', type: 'compute', position: { x: 640, y: 60 }, data: compute('SPR chip with silica') },
+      { id: 'k10', type: 'kinetics', position: { x: 640, y: 420 }, data: kin('myoglobin, 10 mM NaCl', 10, 38) },
+      { id: 'k150', type: 'kinetics', position: { x: 640, y: 1220 }, data: kin('myoglobin, 150 mM NaCl', 150, 15) },
+      { id: 'sg10', type: 'sensorgram', position: { x: 1100, y: 60 }, data: sg('10 mM NaCl') },
+      { id: 'sg150', type: 'sensorgram', position: { x: 1100, y: 900 }, data: sg('150 mM NaCl') },
+      { id: 'cmpG', type: 'compare', position: { x: 1600, y: 60 }, data: { ...COMPARE_DEFAULTS, x: 'time', curves: [curve('g10', 'k10', 'Gamma', '#e15759', '10 mM NaCl'), curve('g150', 'k150', 'Gamma', '#2e86c1', '150 mM NaCl')], seen: ['k10', 'k150'] } },
+      { id: 'cmpS', type: 'compare', position: { x: 1600, y: 620 }, data: { ...COMPARE_DEFAULTS, x: 'time', curves: [curve('s10', 'sg10', 'shift', '#e15759', '10 mM NaCl'), curve('s150', 'sg150', 'shift', '#2e86c1', '150 mM NaCl')], seen: ['sg10', 'sg150'] } },
+    ] as AppNode[],
+    [
+      edge('aum', 'au', 'mat'),
+      edge('sio2', 'si', 'mat'),
+      edge('bk7', 'stack', 'incident'),
+      edge('au', 'stack', 'item-0'),
+      edge('si', 'stack', 'item-1'),
+      edge('water', 'stack', 'exit'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('ang', 'tmm', 'theta'),
+      edge('tmm', 'sg10', 'in'),
+      edge('tmm', 'sg150', 'in'),
+      edge('k10', 'sg10', 'kinetics'),
+      edge('k150', 'sg150', 'kinetics'),
+      edge('k10', 'cmpG', 'in'),
+      edge('k150', 'cmpG', 'in'),
+      edge('sg10', 'cmpS', 'in', 'sensorgram'),
+      edge('sg150', 'cmpS', 'in', 'sensorgram'),
+    ],
+  );
+};
+
+// For newcomers: the smallest complete binding experiment, a numbered note next to every step, no theory needed.
+export const startHereExample = (): Project => {
+  const note = (id: string, x: number, y: number, title: string, text: string, height = 210): AppNode => ({ id, type: 'info', position: { x, y }, data: { ...INFO_DEFAULTS, title, text, width: 400, height } }) as AppNode;
+  return sensorgramBase(
+    { name: 'antibody binding', model: 'langmuir', ka: 2e5, kd: 1e-3, rmax: 1000, analyte: 'igg', orient: 'side', surface: 'ligand', steps: [{ label: 'baseline', t: 60, c: 0 }, { label: 'association', t: 300, c: 50 }, { label: 'dissociation', t: 600, c: 0 }], dt: 5 },
+    { name: 'my first sensorgram', thick: 'auto', mixing: 'linear', bulk: true, readout: 'dip', track: true, maxTimes: 200 },
+    {
+      title: 'Start here: your first SPR binding experiment',
+      text: 'A complete, minimal SPR biosensor experiment. Read the numbered notes next to the nodes, 1 to 5; whatever you change is recomputed at once.\n\nLight (633 nm) goes through a glass prism onto a 50 nm gold film. At one angle it excites a surface plasmon — a wave of the electrons of the gold, bound to its surface on the water side — and the reflected light drops: the dip. Molecules that bind to the gold change what the plasmon feels, so the dip moves to a larger angle. Following the dip in time is the sensorgram.\n\nA word you do not know: Help → Glossary.',
+    },
+    {
+      nodes: [
+        note('n1', -760, 0, '1 · The chip', 'Material nodes give the optical constants: BK7 glass (the prism), gold, water (the buffer). A Layer gives the gold its thickness, 50 nm. Combine stack puts them in order: the incident medium (prism), the layers, the exit medium (the buffer, where the molecules are).\n\nTry: gold 40 or 60 nm instead of 50 — the dip gets shallower.'),
+        note('n2', 300, -560, '2 · The light and the calculation', 'Wavelength: 633 nm (a red He-Ne laser). Angle of incidence: a scan from 66 to 74°. Compute TMM calculates the reflectance R at every angle (transfer matrices), for TM (p-polarized) light: only TM excites the plasmon.\n\nTry: switch the polarization to TE — the dip disappears.'),
+        note('n3', 640, 1200, '3 · The binding', 'Binding kinetics describes the experiment: an antibody (IgG) binds one-to-one to sites on the chip, with an association rate ka and a dissociation rate kd. The protocol: buffer (baseline), the antibody at 50 nM (association), buffer again (dissociation). Its chart is the bound amount in RU (1000 RU = 1 ng/mm²).\n\nTry: a higher concentration, a smaller kd (it stays bound), a longer association.', 240),
+        note('n4', 1100, 820, '4 · The SPR signal', 'Sensorgram puts the bound antibodies as a thin layer on the gold, recomputes the reflectance at every time and follows the dip. Its text gives the result: the largest shift, how much of the gold is covered, the calibration (degrees per ng/mm²). Bulk effect: the injected solution itself has a slightly higher index (a small step when the injection starts and ends).\n\nTry: tick “detector noise” under Instrument — a measured-looking curve, and the detection limit.', 260),
+        note('n5', 2100, 60, '5 · The plots', 'A Plot draws any output: here the shift of the dip vs time (the sensorgram) and the fraction of the gold covered by antibodies. Change Y in a Plot to see other quantities (the layer, the bound mass, molecules per µm²). Connect the R(t, θ) output of Sensorgram to a new Plot to see the dip itself move.\n\nNext: the other Sensorgram examples (a concentration series, a small molecule with noise, protein adsorption).', 250),
+        { id: 'plotC', type: 'plot', position: { x: 1600, y: 640 }, data: { ...PLOT_DEFAULTS, field: 'cover', x: 'time' } } as AppNode,
+      ],
+      edges: [edge('sg', 'plotC', 'in', 'sensorgram')],
+    },
+  );
+};
+
 export const EXAMPLE_GROUPS = ['Surface plasmons (SPR)', 'Gratings (RCWA)', 'Microcavities, Tamm states and strong coupling', 'Thin-film filters and coatings', 'Anisotropic media, liquid crystals and BICs', 'Absorbers, emitters and metrology'] as const;
 export type ExampleEntry = { group: (typeof EXAMPLE_GROUPS)[number]; name: string; make: () => Project; desc: string };
 // (the first one opens at the first start)
 export const EXAMPLES: ExampleEntry[] = [
+  { group: EXAMPLE_GROUPS[0], name: 'Start here: your first SPR binding experiment', make: startHereExample, desc: 'A minimal SPR biosensor experiment with a note at every step: the chip, the light, an antibody binding, the moving dip — no theory needed.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR (Kretschmann)', make: sprExample, desc: 'Surface plasmon resonance of a silver film on a prism: the reflectance dip vs angle and its analysis.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor design (custom objective)', make: sprDesignExample, desc: 'Thicknesses of an SPR sensor optimized for a custom objective (sensitivity and dip quality).' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
   { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR fields: staircase vs smooth profile (FFF) (after Treebupachatsakul et al. 2023)', make: roughFieldsExample, desc: 'The same rough gold surface computed as staircase slices and as its smooth profile (differential method, FFF): dips and field maps.' },
   { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys3 (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(3), desc: 'Ag / Si₃N₄ / graphene on BK7: the resonance shift and sensitivity for three malaria stages, and the performance metrics from Custom data.' },
   { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys4 with ssDNA (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(4), desc: 'The same sensor with a thiol-tethered ssDNA layer.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Sensorgram: antibody binding, concentration series (1:1)', make: sensorgramAntibodyExample, desc: 'Binding kinetics of an IgG for five concentrations turned into the SPR signal: the binding layer and the bulk index recomputed at every time, the dip followed exactly.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Sensorgram: a swelling hydrogel', make: sensorgramSwellingExample, desc: 'A hydrogel layer on gold swells and collapses: thickness and index change together, and the signal is not proportional to the swelling.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Sensorgram: a small molecule with detector noise (centroid)', make: sensorgramSmallMoleculeExample, desc: 'A few RU of a fast small-molecule binding, the bulk jump and the detector noise; the dip located by its centroid on every scan, five noise seeds.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Protein adsorption: random packing and ionic strength (Wasilewska et al. 2021, benchmark)', make: myoglobinRsaExample, desc: 'Myoglobin on silica: random sequential adsorption with the double-layer repulsion predicts the maximum coverage at 10 and 150 mM NaCl (0.60 and 1.3 mg/m² measured).' },
   { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling (RCWA)', make: gratingSprExample, desc: 'Plasmons excited by a metal grating (RCWA): diffraction efficiencies and the field map.' },
   { group: EXAMPLE_GROUPS[1], name: 'SPR by grating coupling under conical incidence (azimuth φ, RCWA)', make: conicalSprExample, desc: 'The same grating lit out of its plane (azimuth φ): conical RCWA, TE / TM parts.' },
   { group: EXAMPLE_GROUPS[1], name: 'Grating SPR sensor with the −1st order, Al–Au (Hu, Optik 2011, benchmark)', make: huGratingExample, desc: 'An aluminium grating coated with 3 nm of gold, 900 nm: the dip shift, S and χ = S/FWHM for five analyte indices (RCWA).' },

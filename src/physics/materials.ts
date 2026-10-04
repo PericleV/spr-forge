@@ -5,7 +5,8 @@ import { c, type C } from './complex.ts';
 export const HC_EV_NM = 1239.84193;
 
 export type Table = { lambda: number[]; n: number[]; k: number[] }; // λ in µm, ascending
-export type EmaMethod = 'bruggeman' | 'maxwell-garnett' | 'looyenga';
+// linear: the index mixed linearly, n = p n₁ + (1 − p) n₂ (de Feijter's adsorbed layer; Sensorgram)
+export type EmaMethod = 'bruggeman' | 'maxwell-garnett' | 'looyenga' | 'linear';
 
 export type MaterialModel =
   | { type: 'constant'; n: number; k: number }
@@ -148,6 +149,10 @@ export function emaEps(method: EmaMethod, e1: C, e2: C, p: number): C {
     const num = X.add(X.add(e1, X.mul(c(2), e2)), X.mul(c(2 * p), d));
     const den = X.sub(X.add(e1, X.mul(c(2), e2)), X.mul(c(p), d));
     return X.mul(e2, X.div(num, den));
+  }
+  if (method === 'linear') {
+    const n = X.add(X.mul(c(p), X.sqrt(e1)), X.mul(c(1 - p), X.sqrt(e2)));
+    return X.mul(n, n);
   }
   if (method === 'looyenga') {
     const s = X.add(X.mul(c(p), cbrt(e1)), X.mul(c(1 - p), cbrt(e2)));

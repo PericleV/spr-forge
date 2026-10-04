@@ -12,7 +12,7 @@ export type Overlay =
   | { kind: 'vline'; key: string; x: number; color: string }
   | { kind: 'area'; key: string; x: ArrayLike<number>; lo: ArrayLike<number>; hi: ArrayLike<number>; color: string }; // e.g. a p5–p95 range
 
-export type Trace = { key: string; x: number[]; y: number[]; color: string };
+export type Trace = { key: string; x: number[]; y: number[]; color: string }; // a NaN point breaks the line
 
 const num = (v: number, unit: string) => `${+v.toFixed(4)}${unit === '°' ? '°' : unit ? ` ${unit}` : ''}`;
 

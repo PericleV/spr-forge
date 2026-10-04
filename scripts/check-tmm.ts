@@ -1,7 +1,7 @@
 // Sanity checks for the TMM solver, material models and the sweep grid. Run: npm run check:tmm
 import { makeLibrary } from '../src/physics/library.ts';
 import { carrierDrude, emaEps, refractiveIndex, type Models } from '../src/physics/materials.ts';
-import { c } from '../src/physics/complex.ts';
+import { c, type C } from '../src/physics/complex.ts';
 import { interfaceCoeffs as interfaceCoeffsTmm, nCos as nCosTmm, tmmPoint, type Layer } from '../src/physics/tmm.ts';
 import * as CX from '../src/physics/complex.ts';
 import { fieldProfile, layerOfZ, profileGrid } from '../src/physics/field.ts';
@@ -9,12 +9,14 @@ import { incoherentPoint, layersAt, metaOfSpec, runSpec, runTmm } from '../src/e
 import { joinParts, partsFor, splitRange } from '../src/engine/computePool.ts';
 import { evaluateGraph, rangeValues, type FitInfo, type JobState, type FormulaInfo, type MatchInfo, type OptimizerInfo, type TargetInfo } from '../src/engine/evaluate.ts';
 import { line, strides, TMM_META } from '../src/engine/dataset.ts';
-import { extremum, halfWidth, zoneAt } from '../src/engine/metrics.ts';
+import { extremum, halfWidth, locate, zoneAt } from '../src/engine/metrics.ts';
+import { degrade } from '../src/engine/instrument.ts';
 import { branches, COMPONENTS, crossingOf, guessDispersion, guessSpectrum, mode2At, modelAt, type ComponentType, type FitComponent, type ModelCtx } from '../src/engine/fitmodels.ts';
 import { fitDispersion, fitSpectrum } from '../src/engine/fitrun.ts';
 import { rng as rngOpt, adam, DEFAULT_PARAMS, differentialEvolution, fromScalar, genetic, levenbergMarquardtBatch, mergeParams, nelderMead, nsga2, particleSwarm, simulatedAnnealing, Tracker, type Box, type Control, type Crossover, type Evaluate } from '../src/engine/optimize.ts';
 import { evaluateHeadless, meritOf } from '../src/engine/headless.ts';
 import { OIC_A_MF, OIC_B_MF } from '../src/data/oic2025.ts';
+import { myoglobinRsaExample, sensorgramAntibodyExample, sensorgramSmallMoleculeExample, sensorgramSwellingExample, startHereExample } from '../src/examples.ts';
 import { huGratingExample, HU2011, HU_N, roughSprExample, teneMalariaExample, TENE2025, oicCastleExample, oicNotchExample, CONV_N, rcwaConvergenceExample, absorberExample, anisoBicExample, lcCavityExample, liuBicExample, LIU2023, PANKIN2022, conicalSprExample, toleranceExample, ANALYSIS_DEFAULTS, dbrExample, filterExample, materialData, TOLERANCE_DEFAULTS, FIELD_DEFAULTS, gratingSprExample, gmrExample, metrologyExample, sprExample, METROLOGY_TRUTH, sprDesignExample, strongCouplingExample, strongCouplingAngleExample, tammExample, TAMM_LU2019, rabiJenaExample, RABI_JENA, TARGET_DEFAULTS, notchExample, NOTCH_SPEC, bandpassExample, arBothSidesExample, thermalEmitterSaExample, PAN2024, heTammExample, he2021TargetCsv, pelesExample, SEBEK2023, sprGaExample, sprDualModeExample } from '../src/examples.ts';
 import { countsBreak, crossover, evaluateSensor, geneD, mergedGenes, mutate, randomStructure, runSprGa, sprClassOf, sprScan, withMaterial, type SprGene, type SprMaterial, type SprOk, type SprProblem, type SprStructure } from '../src/engine/sprDesign.ts';
 import { compile, compileComplex } from '../src/engine/expr.ts';
@@ -22,15 +24,18 @@ import { customData } from '../src/engine/dataOps.ts';
 import { interp, parseSpectrum } from '../src/engine/match.ts';
 import { pMerit, sliceLines, type MeritPoint } from '../src/engine/spec.ts';
 import { formulaStat } from '../src/engine/objectives.ts';
-import type { AppNode, FilterData, FitData, FwhmData, ToleranceData } from '../src/types.ts';
+import type { AppNode, FilterData, FitData, FwhmData, KineticsData, SensorgramData, ToleranceData } from '../src/types.ts';
 import { binsOf, histStats } from '../src/plot/histStats.ts';
 import { bilinear, capValues, fracIndex, gaussianBlur, gridFromPoints, logTicks } from '../src/plot/mapGrid.ts';
 import { attenuation, coherent, plate, type Film } from '../src/physics/admittance.ts';
-import { evaluateDesign, parseFormula, refineCandidate, runDesign, spectrum, type Design, type DesignProblem, type DesignSettings, type RefinePool, type Sample } from '../src/engine/design.ts';
+import { evaluateDesign, layerSensitivity, parseFormula, refineCandidate, runDesign, spectrum, type Design, type DesignProblem, type DesignSettings, type RefinePool, type Sample } from '../src/engine/design.ts';
+import { bandWeights, photopicWeight, PHOTOPIC_TABLES } from '../src/engine/photopic.ts';
+import { coneRays } from '../src/engine/cone.ts';
+import { ANALYTES, blocking, surfaceOf, simulate, THETA_JAM, type KineticParams } from '../src/engine/kinetics.ts';
 import { PRESETS, startDesign } from '../src/engine/filters.ts';
-import type { ComputeInfo, FilterInfo, LayerGaInfo, ToleranceInfo } from '../src/engine/evaluate.ts';
+import type { ComputeInfo, FilterInfo, LayerGaInfo, SensorgramInfo, ToleranceInfo } from '../src/engine/evaluate.ts';
 import { decodeProject, encodeProject, parseProject, stringifyProject, type Project } from '../src/project.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { RETICOLO_CASES, RETICOLO_FIELD_CASES } from './reticolo-cases.ts';
 import { layerList, layerListCsv, layerListTsv } from '../src/engine/layerList.ts';
 import type { Dataset, StackValue } from '../src/engine/types.ts';
@@ -43,11 +48,11 @@ import { conicalFieldMap, conicalFieldsAt, conicalRegions } from '../src/physics
 import { fieldMapOfJob } from '../src/engine/rcwaFieldCompute.ts';
 import { fieldMap, sigmaFactors, type FieldQuantity } from '../src/physics/rcwaField.ts';
 import { add as cadd, sub as csub, mul as cmulC, div as cdiv, abs2 as cabs2, sqrt as csqrt } from '../src/physics/complex.ts';
-import { defaultPixels, gratingSlices } from '../src/engine/grating.ts';
+import { defaultPixels, gratingFff, gratingSlices, type GratingParams } from '../src/engine/grating.ts';
 import { convergenceOrders, convergencePoints, rcwaConvergence, rcwaLayersAt, runRcwa } from '../src/engine/runRcwa.ts';
 import { convDeviation } from '../src/engine/rcwaConvRun.ts';
 import { rcwaThickConical, rcwaThickPoint } from '../src/physics/rcwaThick.ts';
-import { RCWA_DEFAULTS, ROUGH_DEFAULTS } from '../src/defaults.ts';
+import { KINETICS_DEFAULTS, RCWA_DEFAULTS, ROUGH_DEFAULTS, SENSORGRAM_DEFAULTS } from '../src/defaults.ts';
 import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type Plan, type RoughSpec } from '../src/engine/rough.ts';
 import { fieldResults } from '../src/engine/rcwaFieldRun.ts';
 import type { CustomInfo, DrawGratingInfo, FieldInfo, RcwaFieldInfo } from '../src/engine/evaluate.ts';
@@ -57,6 +62,7 @@ import type { CustomInfo, DrawGratingInfo, FieldInfo, RcwaFieldInfo } from '../s
 // global optimizers; ~1 min instead of ~12). The full run before every commit and whenever asked.
 const QUICK = process.argv.includes('--quick');
 const skipped: string[] = [];
+const PUBLISHED_HEAVY: string[] = []; // project files of the published version with RCWA / Berreman jobs (robustness block)
 const full = (what: string) => (QUICK ? (skipped.push(what), false) : true);
 
 const lib = makeLibrary([]);
@@ -2057,7 +2063,7 @@ if (full('Sebek 2023 genetic algorithm (17 s)')) {
   let worstId = '';
   let orders = 0;
   for (const rc of RETICOLO_CASES) {
-    const L: RcwaLayer[] = [{ n: cz(rc.top), d: 0 }, ...rc.layers.map((q) => (q.segs ? { d: q.d, segs: q.segs.map((g) => ({ from: g.from, to: g.to, n: cz(g.n) })) } : q.eps ? { d: q.d, eps: q.eps.map(cz) } : { d: q.d, n: cz(q.n!) })), { n: cz(rc.bottom), d: 0 }];
+    const L: RcwaLayer[] = [{ n: cz(rc.top), d: 0 }, ...rc.layers.map((q) => (q.segs ? { d: q.d, segs: q.segs.map((g) => ({ from: g.from, to: g.to, n: g.eps ? csqrt(cz(g.eps[0])) : cz(g.n), ...(g.eps ? { eps: g.eps.map(cz) as [C, C, C] } : {}) })) } : q.eps ? { d: q.d, eps: q.eps.map(cz) } : { d: q.d, n: cz(q.n!) })), { n: cz(rc.bottom), d: 0 }];
     const got = ref.results[rc.id];
     if (!got) throw new Error(`no Reticolo reference for ${rc.id} (run npm run bench:reticolo)`);
     if (rc.phi !== undefined) continue; // conical: below
@@ -4121,6 +4127,117 @@ if (full('RCWA map orders, Lanczos (12 s)')) {
   console.log(`RCWA map cut along x at z = ${map.zs[iz].toFixed(1)} nm = the map row (exact), ${inf.bands.length} material bands, ${inf.boundaries.length} walls; along z = the map column (exact)`);
 }
 
+// Tolerance: layers and materials left out or with their own σ; the instrument (blur and detector noise, engine/
+// instrument.ts) and the dip position by a polynomial fit or the centroid (engine/metrics.ts locate)
+{
+  // (a) per layer / material: layer 2 without thickness errors, layer 3 without Δn, layer 1 with its own σ(Δn),
+  // SiO₂ without a systematic thickness error, TiO₂ with its own systematic σ(Δn)
+  const p = toleranceExample();
+  const lib2 = makeLibrary(p.materials);
+  const tolOf = (patch: Partial<ToleranceData>, more: AppNode[] = [], moreEdges: typeof p.edges = []) => {
+    const nodes = [...p.nodes.map((m) => (m.id === 'tol' ? ({ ...m, data: { ...m.data, ...patch } } as AppNode) : m)), ...more];
+    const r = evaluateHeadless(nodes, [...p.edges, ...moreEdges], lib2).results.get('tol')!;
+    if (r.errors.length) throw new Error(`tolerance: ${r.errors}`);
+    return r;
+  };
+  const mats = (tolOf({ samples: 2 }).info as ToleranceInfo).materials;
+  const sio2 = mats.find((m) => m.name.startsWith('SiO'))!.key;
+  const tio2 = mats.find((m) => m.name.startsWith('TiO'))!.key;
+  const N = 400;
+  const r = tolOf({ samples: N, dSigma: 2, dSys: 1, dSkip: [1], index: true, nSigma: 0.01, nSys: 0.004, nSkip: [2], nOverride: { '0': 0.03 }, sysSkipD: [sio2], nSysOverride: { [tio2]: 0.02 } });
+  const er = (r.outs.errors as { dataset: Dataset }).dataset;
+  const sd = (k: string) => {
+    const v = Array.from(er.fields[k]);
+    const m = v.reduce((a, b) => a + b, 0) / v.length;
+    return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
+  };
+  const keys = er.meta.map((m) => m.key);
+  const sysKeys = er.meta.filter((m) => m.key.startsWith('sd')).map((m) => m.label);
+  const nSysT = er.meta.find((m) => m.label.startsWith('Δn TiO') && m.label.includes('systematic'))!.key;
+  const okSkip = !keys.includes('d1') && keys.includes('d0') && keys.includes('d2') && !keys.includes('n2') && keys.includes('n1') && sysKeys.length === 1 && sysKeys[0].includes('TiO');
+  const okSig = Math.abs(sd('n0') / 0.03 - 1) < 0.12 && Math.abs(sd('n1') / 0.01 - 1) < 0.12 && Math.abs(sd(nSysT) / 0.02 - 1) < 0.12;
+  if (!(okSkip && okSig)) throw new Error(`tolerance per layer / material: skip ${okSkip} (${keys.join(',')}), σ n0 ${sd('n0')}, n1 ${sd('n1')}, sys TiO₂ ${sd(nSysT)}`);
+
+  // (b) the convolution: Gaussian σ on y = x² adds σ² (kernel cut at ±4σ), uniform ± a adds a²/3; a line is unchanged
+  const xs = Array.from({ length: 2001 }, (_, i) => -10 + i * 0.01);
+  const synth = (f: (x: number) => number, id: string): Dataset => ({ key: 'syn', axes: [{ id, label: id, unit: '', values: xs }], fields: { R: Float64Array.from(xs, f), T: new Float64Array(xs.length), A: Float64Array.from(xs, (x) => 1 - f(x)) }, meta: [], size: xs.length });
+  const inst0 = { along: 'theta', spread: 0, shape: 'gauss' as const, band: 0, add: 0, shot: 0, source: 0, avg: 1, bits: 0, seed: 1 };
+  const gq = degrade(synth((x) => x * x, 'theta'), { ...inst0, spread: 0.5 }, 0, false).fields.R[1000];
+  const uq = degrade(synth((x) => x * x, 'theta'), { ...inst0, spread: 0.6, shape: 'uniform' }, 0, false).fields.R[1000];
+  const bq = degrade(synth((x) => x * x, 'lambda'), { ...inst0, along: 'lambda', band: 2.3548 }, 0, false).fields.R[1000]; // FWHM 2.3548 nm = σ 1
+  const lin = degrade(synth((x) => 0.3 + 0.01 * x, 'theta'), { ...inst0, spread: 0.5 }, 0, false).fields.R;
+  const eLin = Math.max(...Array.from(lin.subarray(300, 1700), (v, i) => Math.abs(v - (0.3 + 0.01 * xs[i + 300]))));
+  if (!(Math.abs(gq / 0.25 - 1) < 3e-3 && Math.abs(uq / 0.12 - 1) < 2e-3 && Math.abs(bq - 1) < 3e-3 && eLin < 1e-12)) throw new Error(`instrument blur: Gaussian ${gq} (0.25), uniform ${uq} (0.12), bandwidth ${bq} (1), line ${eLin}`);
+
+  // (c) detector noise (no fabrication errors: the nominal repeated): additive σ, shot √(R/N), K scans, ADC steps
+  const noiseStd = (patch: Partial<ToleranceData>) => {
+    const rr = tolOf({ samples: N, thickness: false, noise: true, noiseAdd: 0, ...patch });
+    const smp = (rr.outs.samples as { dataset: Dataset }).dataset;
+    const st = (rr.outs.out as { dataset: Dataset }).dataset;
+    const L = smp.size / N;
+    let s2 = 0;
+    let pred = 0;
+    for (let i = 0; i < L; i++) {
+      const R0 = st.fields.R[i];
+      for (let s = 0; s < N; s++) s2 += (smp.fields.R[s * L + i] - R0) ** 2;
+      pred += patch.noiseShot ? R0 / patch.noiseShot : 0;
+    }
+    return { std: Math.sqrt(s2 / (N * L)), shot: Math.sqrt(pred / L), smp };
+  };
+  const nAdd = noiseStd({ noiseAdd: 0.002 }).std;
+  const nAvg = noiseStd({ noiseAdd: 0.002, noiseAvg: 4 }).std;
+  const shot = noiseStd({ noiseShot: 1e4 });
+  const q = noiseStd({ noiseBits: 8 }).smp.fields.R;
+  const qOk = Array.from(q).every((v) => Math.abs(v * 256 - Math.round(v * 256)) < 1e-9);
+  if (!(Math.abs(nAdd / 0.002 - 1) < 0.03 && Math.abs(nAvg / 0.001 - 1) < 0.03 && Math.abs(shot.std / shot.shot - 1) < 0.05 && qOk))
+    throw new Error(`detector noise: additive ${nAdd} (0.002), 4 scans ${nAvg} (0.001), shot ${shot.std} vs ${shot.shot}, ADC steps ${qOk}`);
+
+  // (d) the dip of a noisy Lorentzian: the polynomial fit and the centroid scatter far less than the 3-point parabola
+  const xl = Array.from({ length: 401 }, (_, i) => 60 + i * 0.05);
+  const clean = xl.map((x) => 1 - 0.9 / (1 + ((x - 70.123) / 0.6) ** 2));
+  const rnd = rngOpt(5);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  const pos: Record<string, number[]> = { parabola: [], poly: [], centroid: [] };
+  for (let t = 0; t < 200; t++) {
+    const ys = clean.map((y) => y + 0.002 * gauss());
+    for (const m of ['parabola', 'poly', 'centroid'] as const) pos[m].push(locate(xl, ys, 0, 400, 'min', { method: m, level: 0.5, deg: 2 }).x);
+  }
+  const msd = (v: number[]) => {
+    const m = v.reduce((a, b) => a + b, 0) / v.length;
+    return [m - 70.123, Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length)];
+  };
+  const sP = msd(pos.parabola)[1];
+  const [bF, sF] = msd(pos.poly);
+  const [bC, sC] = msd(pos.centroid);
+  if (!(sF < sP / 5 && sC < sP / 5 && Math.abs(bF) < 1e-3 && Math.abs(bC) < 1e-3)) throw new Error(`dip position with noise: parabola σ ${sP}, poly σ ${sF} (bias ${bF}), centroid σ ${sC} (bias ${bC})`);
+
+  // (e) SPR: Sensitivity as a criterion of noisy samples (centroid): its n + Δn curves get the same instrument, so the
+  // samples' S scatter around the S of the blurred nominal, without a bias; blur only: every sample's S is that S
+  const sp = sprExample();
+  const slib = makeLibrary(sp.materials);
+  const sens = (patch: Partial<ToleranceData>) => {
+    const nodes = sp.nodes.map((m) => (m.id === 'sens' ? ({ ...m, data: { ...m.data, locate: 'centroid', locLevel: 0.5 } } as AppNode) : m));
+    const tol: AppNode = { id: 'tol', type: 'tolerance', position: { x: 0, y: 0 }, data: { ...TOLERANCE_DEFAULTS, samples: 60, thickness: false, spreadOn: true, spread: 0.1, criteria: [{ source: 'sens', field: 'S', min: NaN, max: NaN }], ...patch } };
+    const edges = [...sp.edges, { id: 'e1', source: 'tmm', sourceHandle: 'out', target: 'tol', targetHandle: 'in' }, { id: 'e2', source: 'sens', sourceHandle: 'metrics', target: 'tol', targetHandle: 'criteria' }];
+    const rr = evaluateHeadless([...nodes, tol], edges, slib).results.get('tol')!;
+    if (rr.errors.length) throw new Error(`SPR tolerance: ${rr.errors}`);
+    return (rr.info as ToleranceInfo).criteria![0].rows[0];
+  };
+  const blurOnly = sens({});
+  const noisyS = sens({ noise: true, noiseAdd: 0.003 });
+  const okBlur = blurOnly.std < 1e-9 * Math.abs(blurOnly.mean);
+  const okNoise = noisyS.std > 0 && Math.abs(noisyS.mean - blurOnly.mean) < 4 * (noisyS.std / Math.sqrt(60)) + 1e-6 * Math.abs(blurOnly.mean);
+  if (!(okBlur && okNoise)) throw new Error(`SPR sensitivity with the instrument: blur only ${blurOnly.mean} ± ${blurOnly.std}, noisy ${noisyS.mean} ± ${noisyS.std}`);
+
+  console.log(
+    [
+      `tolerance per layer / material: layers without d or Δn errors get none, own σ(Δn) ${sd('n0').toFixed(4)} (0.03), SiO₂ without systematic d, TiO₂ systematic σ(Δn) ${sd(nSysT).toFixed(4)} (0.02)`,
+      `instrument blur: Gaussian σ 0.5 on x² → +${gq.toFixed(4)} (σ² = 0.25), uniform ±0.6 → +${uq.toFixed(4)} (a²/3 = 0.12), bandwidth FWHM 2.355 nm → +${bq.toFixed(4)} (1), a line unchanged; noise: additive ${nAdd.toFixed(5)} (0.002), 4 scans ${nAvg.toFixed(5)} (0.001), shot ${shot.std.toFixed(5)} vs √(R/N) ${shot.shot.toFixed(5)}, 8-bit ADC steps`,
+      `dip of a noisy Lorentzian (σ 0.002): position σ parabola ${sP.toExponential(1)}, polynomial ${sF.toExponential(1)}, centroid ${sC.toExponential(1)}; SPR sensitivity (centroid) on noisy samples ${noisyS.mean.toFixed(2)} ± ${noisyS.std.toFixed(2)} vs blurred nominal ${blurOnly.mean.toFixed(2)} °/RIU`,
+    ].join('\n'),
+  );
+}
+
 // Tolerance with λ and θ both ranges: the λ limits follow λ (before: θ, the limits tested nothing, yield 100 %); a sample
 // passes only when all of its angles do; limits along θ are reported as testing nothing
 {
@@ -4621,6 +4738,466 @@ if (full('Hu 2011 grating SPR (9 s)')) {
   if (bad.length || !(nT > 100 && Math.abs(shift - HU2011.alAu.shift) < 0.25))
     throw new Error(`Hu 2011: ${bad.map(([n, v, r]) => `${n} ${v.toFixed(2)} vs ${r}`).join('; ')}; coated shift ${shift}`);
   console.log(`Hu 2011 (grating SPR, −1st order, N = 20): ${got.map(([n, v, r]) => `${n} ${v.toFixed(2)}° (${r})`).join(', ')}; Al + 3 nm Au shift ${shift.toFixed(2)}° (${HU2011.alAu.shift})`);
+}
+
+// Robustness: a job larger than MAX_JOB_BYTES is refused with a message (never sent to the workers); project files — a
+// newer format is refused with its own message, a damaged file opens with a note of what was left out (the note is not
+// saved); the project files of the published version (commit 107bcf8, every example saved by it) open with nothing left
+// out and evaluate without an error (those with RCWA / Berreman jobs in the slow block below)
+{
+  const cp = conicalSprExample();
+  const big = cp.nodes.map((n) =>
+    n.id === 'phi' ? ({ ...n, data: { ...n.data, list: Array.from({ length: 99 }, (_, i) => i * 0.5).join(', ') } } as AppNode) : n.type === 'param' && (n.data as { quantity: string }).quantity === 'theta' ? ({ ...n, data: { ...n.data, mode: 'range', min: 0, max: 80, step: 0.004 } } as AppNode) : n,
+  );
+  const evBig = evaluateGraph(big, cp.edges, { cache: new Map(), lastDone: new Map(), failed: new Map() }, makeLibrary(cp.materials));
+  const rcErr = evBig.results.get('rc')!.errors.join(' ');
+  const memOk = /memory/.test(rcErr) && !evBig.jobs.some((j) => j.requester === 'rc');
+  // project files
+  const base = stringifyProject(sprExample());
+  const newer = parseProject(base.replace('"version":3', '"version":4'));
+  const older = parseProject(base.replace('"version":3', '"version":2'));
+  const raw = JSON.parse(base);
+  raw.nodes.push({ id: 'zz', type: 'hologram', position: { x: 0, y: 0 }, data: {} });
+  raw.edges.push({ id: 'ez', source: 'zz', target: 'tmm', targetHandle: 'stack' });
+  const repaired = parseProject(JSON.stringify(raw));
+  const noteSaved = typeof repaired !== 'string' && stringifyProject(repaired).includes('repaired');
+  const filesOk =
+    typeof newer === 'string' && /newer version/.test(newer) && typeof older === 'string' && /older version/.test(older) && typeof repaired !== 'string' && /1 node left out \(unknown type: hologram\), 1 connection left out/.test(repaired.repaired ?? '') && !noteSaved;
+  // the published version's files: all open intact; the TMM-only ones evaluate fully here
+  const dir = 'scripts/fixtures/projects-107bcf8/';
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+  let intact = 0;
+  const heavy: string[] = [];
+  const failed: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(dir + f, 'utf8');
+    const p = parseProject(text);
+    if (typeof p === 'string' || p.repaired) {
+      failed.push(`${f}: ${typeof p === 'string' ? p : p.repaired}`);
+      continue;
+    }
+    intact++;
+    const jobs = evaluateGraph(p.nodes, p.edges, { cache: new Map(), lastDone: new Map(), failed: new Map() }, makeLibrary(p.materials)).jobs;
+    if (jobs.some((j) => j.spec.rcwa || j.spec.b4)) {
+      heavy.push(f);
+      continue;
+    }
+    const ev = evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials));
+    for (const [id, r] of ev.results) if (r.errors.length) failed.push(`${f} ${id}: ${r.errors[0]}`);
+  }
+  PUBLISHED_HEAVY.push(...heavy);
+  if (!(memOk && filesOk && files.length >= 27 && intact === files.length && !failed.length))
+    throw new Error(`robustness: memory ${memOk} (${rcErr}), files ${filesOk}, published ${intact} / ${files.length}: ${failed.join('; ')}`);
+  console.log(`robustness: conical RCWA of ${(99 * 20001).toLocaleString('en')} points refused for its memory (“${rcErr.slice(0, 80)}…”), not sent to the workers; newer / older formats refused with their messages; a damaged file opens with “${(repaired as Project).repaired}” (not saved); the ${files.length} project files of the published version (107bcf8) open intact, ${files.length - heavy.length} TMM ones evaluated without an error (${heavy.length} with RCWA / Berreman in the slow block)`);
+}
+if (full('published project files with RCWA / Berreman (2 min)')) {
+  const failed: string[] = [];
+  for (const f of PUBLISHED_HEAVY) {
+    const p = parseProject(readFileSync(`scripts/fixtures/projects-107bcf8/${f}`, 'utf8')) as Project;
+    const ev = evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials));
+    for (const [id, r] of ev.results) if (r.errors.length) failed.push(`${f} ${id}: ${r.errors[0]}`);
+  }
+  if (failed.length) throw new Error(`published project files: ${failed.join('; ')}`);
+  console.log(`published project files with RCWA / Berreman jobs (${PUBLISHED_HEAVY.join(', ')}): evaluated without an error`);
+}
+
+// Anisotropic grating segments: a segment given as a diagonal ε equal on its three axes = the isotropic segment (TE, TM;
+// Li and Laurent); the anisotropic segments themselves are checked against RETICOLO (aniso-seg, aniso-mix above)
+{
+  const au = n('Au'), wat = n('Water');
+  const segs = (aniso: boolean) => [
+    { from: 0, to: 0.35, n: au, ...(aniso ? { eps: [CX.mul(au, au), CX.mul(au, au), CX.mul(au, au)] as [C, C, C] } : {}) },
+    { from: 0.35, to: 1, n: wat },
+  ];
+  let eIso = 0;
+  for (const pol of ['s', 'p'] as const)
+    for (const fact of ['li', 'laurent'] as const) {
+      const run = (aniso: boolean) => rcwaPoint([{ n: n('BK7'), d: 0 }, { d: 30, segs: segs(aniso) }, { n: wat, d: 0 }], 500, 633, 60, pol, 15, fact);
+      const [a, b] = [run(false), run(true)];
+      for (let m = 0; m < a.R.length; m++) eIso = Math.max(eIso, Math.abs(a.R[m] - b.R[m]), Math.abs(a.T[m] - b.T[m]));
+    }
+  if (!(eIso < 1e-12)) throw new Error(`anisotropic segments: isotropic ε segments ${eIso}`);
+  console.log(`anisotropic grating segments: ε equal on x, y, z = isotropic (${eIso.toExponential(1)}, TE / TM, Li / Laurent)`);
+}
+
+// Smooth profiles, differential method with fast Fourier factorization (physics/rcwaFff.ts): (a) a lamellar layer
+// integrated through z (N = x̂) → the eigenmodes of rcwa.ts, second order in the step; (b) a film → TMM; (c) a lossless
+// dielectric sinus: R + T = 1; (d) TE (no factorization issue): FFF = a fine staircase; (e) through the graph: Compute
+// RCWA "profiles: smooth (FFF)" makes the sinus one FFF layer, absent = the staircase (saved projects unchanged)
+{
+  const P = 500;
+  const gp = (profile: GratingParams<number>['profile'], extra: Partial<GratingParams<number>> = {}): GratingParams<number> => ({ profile, period: P, fill: 0.5, fillTop: 0.5, shift: 0.5, slices: 1, nx: 32, pixels: [], mats: [0, 1], ...extra });
+  const au = n('Au'), glass = c(1.5), air = c(1);
+  const lam: RcwaLayer = { d: 100, segs: gratingSlices(gp('lamellar')).flatMap((s) => s.segs).map((q) => ({ from: q.from, to: q.to, n: [au, air][q.m] })) };
+  const lamF = (steps: number): RcwaLayer => ({ d: 100, fff: { segsAt: () => lam.segs!, normals: [{ from: 0, to: 1, nx: 1, nz: 0 }], steps, key: 'lamellar-test' } });
+  const errLam = (pol: 'p' | 's', steps: number) => {
+    const [e, f] = [rcwaPoint([{ n: air, d: 0 }, lam, { n: au, d: 0 }], P, 633, 20, pol, 15), rcwaPoint([{ n: air, d: 0 }, lamF(steps), { n: au, d: 0 }], P, 633, 20, pol, 15)];
+    return Math.max(...Array.from(e.R, (r, m) => Math.abs(r - f.R[m])));
+  };
+  const lamTM = [errLam('p', 64), errLam('p', 128), errLam('p', 256)];
+  const lamTE = errLam('s', 256);
+  const order = Math.log2(lamTM[1] / lamTM[2]);
+  // a film (one material across the period) → TMM
+  const filmF: RcwaLayer = { d: 120, fff: { segsAt: () => [{ from: 0, to: 1, n: glass }], normals: [{ from: 0, to: 1, nx: 0.6, nz: 0.8 }], steps: 256, key: 'film-test' } };
+  let eFilm = 0;
+  for (const pol of ['s', 'p'] as const) {
+    const f = rcwaPoint([{ n: air, d: 0 }, filmF, { n: c(1.33), d: 0 }], P, 633, 35, pol, 6);
+    eFilm = Math.max(eFilm, Math.abs(f.R[6] - tmmPoint([{ n: air, d: 0 }, { n: glass, d: 120 }, { n: c(1.33), d: 0 }], 633, 35, pol).R));
+  }
+  // a lossless dielectric sinus (glass in air, 300 nm deep): energy
+  const sinG = gratingFff(gp('sinus'), 300, (m) => [glass, air][m]);
+  let eE = 0;
+  for (const pol of ['s', 'p'] as const) {
+    const f = rcwaPoint([{ n: air, d: 0 }, { d: 300, fff: { ...sinG, steps: 400 } }, { n: glass, d: 0 }], P, 633, 25, pol, 15);
+    eE = Math.max(eE, Math.abs(f.Rtot + f.Ttot - 1));
+  }
+  // TE gold sinus: FFF vs 400 staircase slices
+  const sinAu = gratingFff(gp('sinus'), 60, (m) => [au, air][m]);
+  const te = rcwaPoint([{ n: air, d: 0 }, { d: 60, fff: { ...sinAu, steps: 300 } }, { n: au, d: 0 }], P, 633, 10, 's', 15);
+  const teStair = rcwaPoint([{ n: air, d: 0 }, ...gratingSlices(gp('sinus', { slices: 400 })).map((s) => ({ d: s.h * 60, segs: s.segs.map((q) => ({ from: q.from, to: q.to, n: [au, air][q.m] })) })), { n: au, d: 0 }], P, 633, 10, 's', 15);
+  const eTE = Math.max(...Array.from(te.R, (r, m) => Math.abs(r - teStair.R[m])));
+  // through the graph
+  const gx = gratingSprExample();
+  const set = (id: string, patch: object) => (gx.nodes as AppNode[]).forEach((nd) => nd.id === id && Object.assign(nd.data, patch));
+  set('gr', { profile: 'sinus', slices: 12 });
+  const specOf = () => evaluateGraph(gx.nodes, gx.edges, { cache: new Map(), lastDone: new Map(), failed: new Map() }, makeLibrary(gx.materials)).jobs.find((j) => j.spec.rcwa)!.spec;
+  const stair = rcwaLayersAt(specOf(), [0], 633).layers;
+  set('rc', { profiles: 'fff' });
+  const smooth = rcwaLayersAt(specOf(), [0], 633).layers;
+  const graphOk = stair.length === 14 && !stair.some((L) => L.fff) && smooth.length === 3 && !!smooth[1].fff && smooth[1].d === 40;
+  const ok = lamTM[2] < 2e-5 && order > 1.7 && order < 2.3 && lamTE < 2e-5 && eFilm < 2e-5 && eE < 1e-4 && eTE < 2e-4 && graphOk;
+  if (!ok) throw new Error(`FFF: lamellar TM ${lamTM.map((e) => e.toExponential(1))} (order ${order.toFixed(2)}), TE ${lamTE}, film ${eFilm}, energy ${eE}, TE vs staircase ${eTE}, graph ${graphOk} (${stair.length} / ${smooth.length})`);
+  console.log(`smooth profiles (FFF): lamellar integrated = eigenmodes (TM |ΔR| ${lamTM.map((e) => e.toExponential(1)).join(' → ')} at 64 / 128 / 256 steps, order ${order.toFixed(2)}; TE ${lamTE.toExponential(1)}), film = TMM (${eFilm.toExponential(1)}), lossless sinus R + T = 1 (${eE.toExponential(1)}), TE gold sinus = 400 staircase slices (${eTE.toExponential(1)}), Compute RCWA "smooth (FFF)" → one FFF layer (staircase: ${stair.length - 2} slices)`);
+}
+
+// Popov's benchmark (Gratings: Theory and Numeric Applications, 2nd ed., 2014, ch. 7, Figs. 7.20, 7.24): sinusoidal
+// aluminium grating, Λ 500 nm, 200 nm deep, n = 1.3 + 7.6i, 632.8 nm, −1 order Littrow, TM: η₋₁ = 0.878 (N = 20, the
+// differential method converged); the staircase (20 slices) needs N ≳ 50 — here 0.742 at N = 20, 0.858 at N = 60
+if (full('FFF: Popov aluminium sinus, gold trapezoid and blazed (80 s)')) {
+  const P = 500, lam = 632.8;
+  const al = c(1.3, 7.6), air = c(1);
+  const g: GratingParams<number> = { profile: 'sinus', period: P, fill: 0.5, fillTop: 0.5, shift: 0.5, slices: 20, nx: 32, pixels: [], mats: [0, 1] };
+  const th = (Math.asin(lam / (2 * P)) * 180) / Math.PI;
+  const ffF = (N: number, steps: number) => rcwaPoint([{ n: air, d: 0 }, { d: 200, fff: { ...gratingFff(g, 200, (m) => [al, air][m]), steps } }, { n: al, d: 0 }], P, lam, th, 'p', N).R[N - 1];
+  const stair = (N: number) => rcwaPoint([{ n: air, d: 0 }, ...gratingSlices(g).map((s) => ({ d: s.h * 200, segs: s.segs.map((q) => ({ from: q.from, to: q.to, n: [al, air][q.m] })) })), { n: al, d: 0 }], P, lam, th, 'p', N).R[N - 1];
+  const f = [ffF(10, 400), ffF(20, 400), ffF(25, 400)];
+  const s20 = stair(20);
+  const ok = Math.abs(f[1] - 0.8781) < 0.0015 && Math.abs(f[2] - f[1]) < 0.0015 && Math.abs(f[0] - f[1]) < 0.02 && s20 < 0.8;
+  if (!ok) throw new Error(`FFF Popov benchmark: η−1 N 10 / 20 / 25 = ${f.map((v) => v.toFixed(4)).join(' / ')}, staircase N 20 ${s20.toFixed(4)}`);
+  console.log(`FFF, Popov 2014 Al sinus (Λ 500, 200 nm, Littrow −1, TM): η−1 = ${f.map((v) => v.toFixed(4)).join(' / ')} at N = 10 / 20 / 25 (book 0.878); staircase 20 slices at N = 20: ${s20.toFixed(4)}`);
+  // trapezoid and blazed gold gratings (Λ 600 nm, fill 0.7 → 0.2, 80 / 60 nm, 633 nm, 20°, TM): FFF steady with N, the
+  // staircase (200 slices) still climbing towards it
+  const au = c(0.18344, 3.4332);
+  const rows: string[] = [];
+  for (const [profile, D] of [['trapezoid', 80], ['blazed', 60]] as const) {
+    const gg: GratingParams<number> = { profile, period: 600, fill: 0.7, fillTop: 0.2, shift: 0.5, slices: 200, nx: 32, pixels: [], mats: [0, 1] };
+    const R0 = (N: number) => rcwaPoint([{ n: air, d: 0 }, { d: D, fff: { ...gratingFff(gg, D, (m) => [au, air][m]), steps: 300 } }, { n: au, d: 0 }], 600, 633, 20, 'p', N).R[N];
+    const st = rcwaPoint([{ n: air, d: 0 }, ...gratingSlices(gg).map((s) => ({ d: s.h * D, segs: s.segs.map((q) => ({ from: q.from, to: q.to, n: [au, air][q.m] })) })), { n: au, d: 0 }], 600, 633, 20, 'p', 30).R[30];
+    const [a, b] = [R0(30), R0(45)];
+    if (!(Math.abs(a - b) < 0.003 && Math.abs(st - b) > 2 * Math.abs(a - b))) throw new Error(`FFF ${profile}: R0 N 30 / 45 ${a} / ${b}, staircase N 30 ${st}`);
+    rows.push(`${profile} R0 ${a.toFixed(4)} / ${b.toFixed(4)} at N = 30 / 45 (staircase N 30: ${st.toFixed(4)})`);
+  }
+  console.log(`FFF, gold TM: ${rows.join('; ')}`);
+}
+
+// Filter designer, TFCalc-like additions: band means (flat and photopic, CIE V(λ)·D65), a cone of light (designer and
+// Compute TMM), locked / tied layers and per-material limits, the layer sensitivity
+{
+  const flib = makeLibrary([]);
+  const fm = Object.fromEntries([...flib].map(([id, dd]) => [id, dd.model]));
+  const lams = [420, 470, 520, 570, 620, 670];
+  const nx = (id: string) => lams.map((l) => refractiveIndex(id, fm, l));
+  const base: DesignProblem = { lambdas: lams, angles: [0, 30, 33, 37], mats: [nx('TiO2'), nx('SiO2')], names: ['H', 'L'], n0: nx('Air'), nS: nx('BK7'), nOut: nx('Air'), thick: null, sides: ['front'], samples: [], minD: 0, maxD: 1000, maxLayers: 50, maxTotal: 1e6 };
+  const des: Design = { front: [{ m: 0, d: 25 }, { m: 1, d: 40 }, { m: 0, d: 95 }, { m: 1, d: 88 }], back: [] };
+  // (a) an averaged sample = the weighted mean of its points; its Jacobian and needle values vs finite differences
+  const wts = [0.1, 0.25, 0.3, 0.2, 0.15];
+  const avg = lams.slice(0, 5).map((_, li) => ({ li, ai: li % 2 ? 1 : 3, w: wts[li] }));
+  const prob: DesignProblem = { ...base, samples: [{ li: 0, ai: 0, pol: 'avg', q: 'R', target: 0.01, w: 1, avg }, { li: 5, ai: 2, pol: 's', q: 'T', target: 0.97, w: 1, kind: 'ge', avg: [{ li: 5, ai: 2, w: 0.5 }, { li: 4, ai: 1, w: 0.5 }] }] };
+  const single = (li: number, ai: number) => evaluateDesign({ ...base, samples: [{ li, ai, pol: 'avg', q: 'R', target: 0, w: 1 }] }, des).X[0];
+  const meanMan = avg.reduce((a2, e) => a2 + e.w * single(e.li, e.ai), 0);
+  const ev = evaluateDesign(prob, des, { grad: true });
+  const eMean = Math.abs(ev.X[0] - meanMan);
+  let jErr = 0;
+  des.front.forEach((_, j) => {
+    const h = 1e-5;
+    const at = (dd: number) => evaluateDesign(prob, { ...des, front: des.front.map((L, k) => (k === j ? { ...L, d: L.d + dd } : L)) }).residuals;
+    const [up, dn] = [at(h), at(-h)];
+    prob.samples.forEach((_, k) => (jErr = Math.max(jErr, Math.abs((up[k] - dn[k]) / (2 * h) - ev.J![k][j]) / Math.max(1e-3, Math.abs(ev.J![k][j])))));
+  });
+  const evN = evaluateDesign(prob, des, { needle: { side: 'front', step: 25 } });
+  let nErr = 0;
+  for (const nd of evN.needle!.filter((_, i) => i % 3 === 0)) {
+    const ins = (t: number): Design => {
+      const f = des.front.map((x) => ({ ...x }));
+      if (nd.layer >= f.length) f.push({ m: nd.m, d: t });
+      else if (nd.z <= 1e-9) f.splice(nd.layer, 0, { m: nd.m, d: t });
+      else f.splice(nd.layer, 1, { m: f[nd.layer].m, d: nd.z }, { m: nd.m, d: t }, { m: f[nd.layer].m, d: f[nd.layer].d - nd.z });
+      return { front: f, back: [] };
+    };
+    const fd = (evaluateDesign(prob, ins(1e-4)).merit - evaluateDesign(prob, ins(0)).merit) / 1e-4;
+    nErr = Math.max(nErr, Math.abs(fd - nd.value) / Math.max(1e-2, Math.abs(nd.value)));
+  }
+  if (!(eMean < 1e-15 && jErr < 1e-5 && nErr < 2e-3)) throw new Error(`averaged design samples: mean ${eMean}, Jacobian ${jErr}, needle ${nErr}`);
+
+  // (b) photopic weights: Σ V·D65 (10 nm) = 1056.8 (the D65 normalization), the weights sum to 1, V(555) = 1 within the table
+  const sVD = PHOTOPIC_TABLES.V.reduce((a2, v, i) => a2 + v * PHOTOPIC_TABLES.D65[i], 0);
+  const bw = bandWeights(Array.from({ length: 401 }, (_, i) => 380 + i), true)!;
+  const okPh = Math.abs(sVD - 1056.8) < 0.5 && Math.abs(bw.reduce((a2, b) => a2 + b, 0) - 1) < 1e-12 && Math.abs(photopicWeight(555) / photopicWeight(560) - 1) < 0.05 && bandWeights([200, 300], true) === null;
+
+  // (c) the cone: its few angles reproduce a dense ray average (TiO2/SiO2 stack, unpolarized, 0° and 35°, ±12°)
+  const L5 = (lam: number) => [{ n: refractiveIndex('Air', fm, lam), d: 0 }, ...des.front.map((L) => ({ n: refractiveIndex(L.m ? 'SiO2' : 'TiO2', fm, lam), d: L.d })), { n: refractiveIndex('BK7', fm, lam), d: 0 }];
+  const Ru = (lam: number, th: number) => (tmmPoint(L5(lam), lam, th, 's').R + tmmPoint(L5(lam), lam, th, 'p').R) / 2;
+  let eCone = 0;
+  for (const th0 of [0, 35]) {
+    const half = 12;
+    const [c0, s0] = [Math.cos((th0 * Math.PI) / 180), Math.sin((th0 * Math.PI) / 180)];
+    let dense = 0;
+    const NR = 200, NP = 200;
+    for (let i = 0; i < NR; i++) {
+      const sa = Math.sqrt(((i + 0.5) / NR) * Math.sin((half * Math.PI) / 180) ** 2);
+      for (let k = 0; k < NP; k++) dense += Ru(550, (Math.acos(c0 * Math.sqrt(1 - sa * sa) + s0 * sa * Math.cos((Math.PI * (k + 0.5)) / NP)) * 180) / Math.PI);
+    }
+    dense /= NR * NP;
+    const q = coneRays(th0, half).reduce((a2, r) => a2 + r.w * Ru(550, r.theta), 0);
+    eCone = Math.max(eCone, Math.abs(q - dense));
+  }
+  // through the graph: Compute TMM with a cone = the mean over the same rays; the designer's spectrum with a cone too
+  const cp = toleranceExample();
+  const cnodes = (cone: boolean) => cp.nodes.map((m) => (m.id === 'tmm' || m.type === 'compute' ? ({ ...m, data: { ...m.data, cone, coneHalf: 15 } } as AppNode) : m));
+  const run2 = (cone: boolean) => {
+    const r = evaluateHeadless(cnodes(cone), cp.edges, makeLibrary(cp.materials));
+    const id = cp.nodes.find((m) => m.type === 'compute')!.id;
+    return (r.results.get(id)!.outs.out as { dataset: Dataset }).dataset;
+  };
+  const [off, on] = [run2(false), run2(true)];
+  const cspec = off.spec!;
+  const thA = cspec.theta[0];
+  const lamA = cspec.lambda;
+  const manual = lamA.map((l, li) => coneRays(thA, 15).reduce((a2, r) => a2 + r.w * (runSpec({ ...cspec, lambda: [l], theta: [r.theta] }) as unknown as Record<string, Float64Array>).R[0], 0) - on.fields.R[li]);
+  const eGraph = Math.max(...manual.map(Math.abs));
+  const okGraph = eGraph < 1e-12 && on.fields.R.some((v, i) => Math.abs(v - off.fields.R[i]) > 1e-4) && Number.isNaN(on.fields.phiR[0]);
+  if (!(okPh && eCone < 2e-4 && okGraph)) throw new Error(`photopic ${okPh} (Σ ${sVD}), cone vs dense rays ${eCone}, Compute TMM cone ${eGraph} (${okGraph})`);
+
+  // (d) constraints: refinement keeps a locked layer, gives tied layers one thickness, keeps a material's maximum;
+  // a needle run keeps the locked layer and its thickness, cleanup keeps a thin locked layer
+  const tgt: DesignProblem = { ...base, angles: [0], samples: lams.map((_, li) => ({ li, ai: 0, pol: 's' as const, q: 'R' as const, target: 0, w: 1 })), matMax: [NaN, 70] };
+  const start: Design = { front: [{ m: 0, d: 12, fix: true }, { m: 1, d: 60, tie: 'a' }, { m: 0, d: 30 }, { m: 1, d: 45, tie: 'a' }], back: [] };
+  const rf = await refineCandidate(tgt, start, 60, null);
+  const f2 = rf.design.front;
+  const okRef = f2[0].d === 12 && f2[0].fix && Math.abs(f2[1].d - f2[3].d) < 1e-12 && f2[1].d <= 70 + 1e-12 && rf.merit < evaluateDesign(tgt, start).merit;
+  const nd2 = await runDesign({ ...tgt, minD: 15 }, start, { algorithm: 'needle', iterations: 3, needleStep: 10, lambdaRef: 550 }, () => {});
+  const lockKept = nd2.design.front.filter((L) => L.fix);
+  const okNeedle = lockKept.length === 1 && lockKept[0].d === 12 && nd2.design.front.every((L) => L.m !== 1 || L.d <= 70 + 1e-9);
+  if (!(okRef && okNeedle)) throw new Error(`design constraints: refine ${okRef} (${JSON.stringify(f2)}), needle ${okNeedle} (${JSON.stringify(nd2.design.front)})`);
+
+  // (e) layer sensitivity: ΔMF ≥ 0 at the refined design, and = ½ Σ (∂r/∂d)² δ² · … to second order (compared with a
+  // finite second difference)
+  const sv = layerSensitivity(tgt, rf.design, 0.5, false);
+  const mfOf = (d2: Design) => evaluateDesign(tgt, d2).mf;
+  const j = 2;
+  const sec = (mfOf({ ...rf.design, front: rf.design.front.map((L, k) => (k === j ? { ...L, d: L.d + 0.5 } : L)) }) + mfOf({ ...rf.design, front: rf.design.front.map((L, k) => (k === j ? { ...L, d: L.d - 0.5 } : L)) })) / 2 - sv.mf0;
+  const okSens = sv.rows.length === 4 && sv.rows.every((r) => Number.isFinite(r.dmf)) && Math.abs(sv.rows[j].dmf - sec) < 1e-15;
+  if (!okSens) throw new Error(`layer sensitivity: ${JSON.stringify(sv.rows)}`);
+  console.log(
+    [
+      `designer band means: averaged sample = weighted mean of its points (${eMean.toExponential(1)}), Jacobian vs FD ${jErr.toExponential(1)}, needle vs FD ${nErr.toExponential(1)}; photopic Σ V·D65 = ${sVD.toFixed(1)} (1056.8)`,
+      `cone of light: 8 angles vs 40 000 rays ${eCone.toExponential(1)} (0° and 35°, ±12°); Compute TMM with a cone = the ray mean (${eGraph.toExponential(1)}), phases NaN`,
+      `constraints: refined with a locked layer (kept at 12 nm), two tied layers (${f2[1].d.toFixed(2)} = ${f2[3].d.toFixed(2)} nm, SiO₂ max 70), needle run keeps the lock; layer sensitivity = ΔMF of ±δ`,
+    ].join('\n'),
+  );
+}
+
+// Binding kinetics and Sensorgram: the rate equations against their analytic solutions; the sensorgram against direct
+// transfer-matrix computations; benchmarks: Jung et al., Langmuir 14, 5636 (1998) (the response to an adlayer
+// R = m Δn [1 − exp(−2d/l_d)], l_d = 368 nm for Cr 1 nm / Au 50 nm at 825 nm, m = 107°/RIU) and the Biacore calibration
+// (1000 RU ≈ 1 ng/mm² of protein, Stenberg et al. 1991; 1 RU = 10⁻⁴°)
+{
+  const P0: KineticParams = { model: 'langmuir', ka: 1e5, kd: 1e-3, rmax: 1000, kt: 1e9, ka2: 0, kd2: 0, rmax2: 0, tau: 10, drift: 0 };
+  const C = 50e-9;
+  const prot = [{ label: 'a', t: 300, c: C }, { label: 'd', t: 600, c: 0 }];
+  // (a) 1:1: association Req (1 − e^(−kobs t)), dissociation e^(−kd t)
+  const r1 = simulate(P0, prot, 1);
+  const kobs = P0.ka * C + P0.kd;
+  const Req = (P0.ka * C * P0.rmax) / kobs;
+  const ana = r1.t.map((t) => (t <= 300 ? Req * (1 - Math.exp(-kobs * t)) : Req * (1 - Math.exp(-kobs * 300)) * Math.exp(-P0.kd * (t - 300))));
+  const eL = Math.max(...r1.R.map((v, i) => Math.abs(v - ana[i]))) / Req;
+  // (b) mass transport: kt → ∞ is 1:1; transport-limited start: dR/dt = kt C
+  const rT = simulate({ ...P0, model: 'transport', kt: 1e16 }, prot, 1);
+  const eT = Math.max(...rT.R.map((v, i) => Math.abs(v - r1.R[i]))) / Req;
+  const lim = simulate({ ...P0, model: 'transport', ka: 1e9, kd: 0, rmax: 1e6, kt: 1e8 }, [{ label: 'a', t: 10, c: 1e-8 }], 1);
+  const eLim = Math.abs(lim.R[lim.R.length - 1] / 10 - 1); // kt·C = 1 RU/s
+  // (c) heterogeneous = two 1:1 sites; two-state without the change and bivalent without the second step = 1:1 (2·ka for
+  // the two sites of a bivalent analyte); regeneration empties the surface; swelling s∞(1 − e^(−t/τ))
+  const h = simulate({ ...P0, model: 'hetero', ka2: 3e4, kd2: 5e-3, rmax2: 400 }, prot, 1);
+  const s1 = simulate(P0, prot, 1).R;
+  const s2 = simulate({ ...P0, ka: 3e4, kd: 5e-3, rmax: 400 }, prot, 1).R;
+  const eH = Math.max(...h.R.map((v, i) => Math.abs(v - s1[i] - s2[i])));
+  const eTS = Math.max(...simulate({ ...P0, model: 'twostate' }, prot, 1).R.map((v, i) => Math.abs(v - r1.R[i])));
+  const biv = simulate({ ...P0, model: 'bivalent' }, prot, 1).R;
+  const eB = Math.max(...simulate({ ...P0, ka: 2e5 }, prot, 1).R.map((v, i) => Math.abs(v - biv[i])));
+  const rg = simulate(P0, [{ label: 'a', t: 100, c: C }, { label: 'r', t: 50, c: 0, regen: true }], 1);
+  const okRegen = rg.R[99] > 100 && rg.R[100] === 0; // the regeneration step starts with an empty surface
+  const sw = simulate({ ...P0, model: 'swelling', tau: 20 }, [{ label: 's', t: 100, c: 0, swell: 0.8 }], 1);
+  const eS = Math.max(...sw.s.map((v, i) => Math.abs(v - 0.8 * (1 - Math.exp(-sw.t[i] / 20)))));
+  if (!(eL < 1e-8 && eT < 1e-6 && eLim < 0.01 && eH < 1e-9 && eTS < 1e-9 && eB < 1e-9 && okRegen && eS < 1e-7))
+    throw new Error(`kinetics: 1:1 ${eL}, kt→∞ ${eT}, transport-limited ${eLim}, hetero ${eH}, two-state ${eTS}, bivalent ${eB}, regen ${okRegen}, swelling ${eS}`);
+
+  // the graph: BK7 / (Cr) / Au / water, a Binding kinetics → Sensorgram
+  const sgGraph = (o: { lam: number; th: [number, number, number]; cr?: boolean; kin: Partial<KineticsData>; sg: Partial<SensorgramData>; seeds?: string }) => {
+    const mat = (id: string, m: string): AppNode => ({ id, type: 'material', position: { x: 0, y: 0 }, data: materialData(m) });
+    const lay = (id: string, d: number): AppNode => ({ id, type: 'layer', position: { x: 0, y: 0 }, data: { label: id, thickness: d, layers2D: 1 } });
+    const E2 = (s2: string, t: string, hh: string, sh = 'out') => ({ id: `${s2}-${sh}-${t}-${hh}`, source: s2, sourceHandle: sh, target: t, targetHandle: hh });
+    const nodes: AppNode[] = [
+      mat('bk7', 'BK7'), mat('aum', 'Au'), mat('crm', 'Cr'), mat('water', 'Water'), lay('au', 50), lay('cr', 1),
+      { id: 'st', type: 'combine', position: { x: 0, y: 0 }, data: { name: '', count: o.cr ? 2 : 1 } },
+      { id: 'wl', type: 'param', position: { x: 0, y: 0 }, data: { quantity: 'lambda', mode: 'constant', value: o.lam, min: 400, max: 900, step: 1 } },
+      { id: 'th', type: 'param', position: { x: 0, y: 0 }, data: { quantity: 'theta', mode: 'range', value: 70, min: o.th[0], max: o.th[1], step: o.th[2] } },
+      { id: 'tm', type: 'compute', position: { x: 0, y: 0 }, data: { name: 'chip', polarization: 'p' } },
+      { id: 'kin', type: 'kinetics', position: { x: 0, y: 0 }, data: { ...KINETICS_DEFAULTS, ...o.kin } },
+      { id: 'sg', type: 'sensorgram', position: { x: 0, y: 0 }, data: { ...SENSORGRAM_DEFAULTS, ...o.sg } },
+      ...(o.seeds ? [{ id: 'seeds', type: 'sweep', position: { x: 0, y: 0 }, data: { name: 'seed', kind: 'number', mode: 'list', min: 0, max: 0, step: 1, list: o.seeds } } as AppNode] : []),
+    ];
+    const edges = [
+      E2('aum', 'au', 'mat'), E2('crm', 'cr', 'mat'), E2('bk7', 'st', 'incident'), ...(o.cr ? [E2('cr', 'st', 'item-0'), E2('au', 'st', 'item-1')] : [E2('au', 'st', 'item-0')]),
+      E2('water', 'st', 'exit'), E2('st', 'tm', 'stack'), E2('wl', 'tm', 'lambda'), E2('th', 'tm', 'theta'), E2('tm', 'sg', 'in'), E2('kin', 'sg', 'kinetics'),
+      ...(o.seeds ? [E2('seeds', 'sg', 'seed')] : []),
+    ];
+    const r = evaluateHeadless(nodes, edges, makeLibrary([]));
+    const res = r.results.get('sg')!;
+    if (res.errors.length) throw new Error(`sensorgram: ${res.errors}`);
+    const tmS = (r.results.get('tm')!.outs.out as { dataset: Dataset }).dataset.spec!;
+    return { sens: (res.outs.sensorgram as { dataset: Dataset }).dataset, out: (res.outs.out as { dataset: Dataset }).dataset, info: res.info as SensorgramInfo, spec: tmS, warnings: res.warnings, kin: r.results.get('kin')! };
+  };
+  const goldenDip = (ls: (lam: number) => { n: ReturnType<typeof c>; d: number }[], lam: number, a: number, b: number) => {
+    const g = (Math.sqrt(5) - 1) / 2;
+    const f = (t: number) => tmmPoint(ls(lam), lam, t, 'p').R;
+    for (let it = 0; it < 80; it++) {
+      const [x1, x2] = [b - g * (b - a), a + g * (b - a)];
+      if (f(x1) < f(x2)) b = x2;
+      else a = x1;
+    }
+    return (a + b) / 2;
+  };
+  // (d) Γ = 0: the exact dip of the bare chip; bulk only (no binding): the dip of water + Δn, computed directly
+  const mw = 150000;
+  const cB = 2000; // nM
+  const bulkRun = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 0, steps: [{ label: 'buffer', t: 10, c: 0 }, { label: 'injection', t: 10, c: cB }], dt: 1, analyte: 'custom', mw, dndc: 0.188, rho: 1.35, dims: [5, 5, 5] }, sg: { bulk: true } });
+  const wl = (lam: number, dn: number) => [{ n: refractiveIndex('BK7', models, lam), d: 0 }, { n: refractiveIndex('Au', models, lam), d: 50 }, { n: c(refractiveIndex('Water', models, lam).re + dn, refractiveIndex('Water', models, lam).im), d: 0 }];
+  const dn = (0.188 * cB * 1e-9 * mw) / 1000;
+  const th0 = goldenDip(() => wl(633, 0), 633, 68, 76);
+  const th1 = goldenDip(() => wl(633, dn), 633, 68, 76);
+  const pos = bulkRun.sens.fields.pos;
+  const eBase = Math.abs(pos[0] - th0);
+  const eBulk = Math.abs(pos[pos.length - 1] - th1);
+  // (e) de Feijter: the binding layer index = n_buffer + dn/dc · Γ / d (fixed 5 nm, no bulk)
+  const fe = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 1e6, kd: 0, rmax: 1500, steps: [{ label: 'inj', t: 60, c: 100 }], dt: 2, analyte: 'custom', mw, dndc: 0.188, rho: 1.35, dims: [5, 5, 5] }, sg: { bulk: false, thick: 'auto', mixing: 'linear' } });
+  const nb = refractiveIndex('Water', models, 633).re;
+  const eFe = Math.max(...Array.from(fe.sens.fields.nL, (v, i) => Math.abs(v - (nb + (0.188 * fe.sens.fields.Gamma[i]) / 5))));
+  // the exact dip at the end vs a dense grid (step 0.0005°) around it with a parabola
+  const nEnd = fe.sens.fields.nL[fe.sens.fields.nL.length - 1];
+  const lsEnd = (lam: number) => [wl(lam, 0)[0], wl(lam, 0)[1], { n: c(nEnd, 0), d: 5 }, wl(lam, 0)[2]];
+  const pEnd = fe.sens.fields.pos[fe.sens.fields.pos.length - 1];
+  const xsD = Array.from({ length: 401 }, (_, i) => pEnd - 0.1 + i * 0.0005);
+  const ysD = xsD.map((t) => tmmPoint(lsEnd(633), 633, t, 'p').R);
+  const eTrack = Math.abs(extremum(xsD, ysD, 0, 400, 'min').x - pEnd);
+
+  // (f) Jung et al. 1998: a compact layer of index n_water + 0.01 growing to ~200 nm on Cr 1 nm / Au 50 nm, 825 nm:
+  // R(d) = A [1 − exp(−2d/l_d)] fitted (A, l_d); the bulk sensitivity m = A / 0.01
+  const jg = sgGraph({ lam: 825, cr: true, th: [62, 72, 0.05], kin: { ka: 1e5, kd: 0, rmax: 220000, steps: [{ label: 'grow', t: 400, c: 100 }], dt: 4, analyte: 'custom', mw: 1, dndc: 0.01, rho: 1, dims: [1, 1, 1] }, sg: { bulk: false, thick: 'compact', mixing: 'linear', maxTimes: 101 } });
+  const dJ = Array.from(jg.sens.fields.dL);
+  const rJ = Array.from(jg.sens.fields.shift);
+  let best = { ld: NaN, A: NaN, res: Infinity };
+  for (let ld = 150; ld <= 700; ld += 0.5) {
+    const g = dJ.map((d) => 1 - Math.exp((-2 * d) / ld));
+    const A = g.reduce((a, v, i) => a + v * rJ[i], 0) / g.reduce((a, v) => a + v * v, 0);
+    const res = Math.sqrt(g.reduce((a, v, i) => a + (A * v - rJ[i]) ** 2, 0) / g.length);
+    if (res < best.res) best = { ld, A, res };
+  }
+  const mJ = best.A / 0.01;
+  const thJ0 = goldenDip((lam) => [{ n: refractiveIndex('BK7', models, lam), d: 0 }, { n: refractiveIndex('Cr', models, lam), d: 1 }, { n: refractiveIndex('Au', models, lam), d: 50 }, { n: refractiveIndex('Water', models, lam), d: 0 }], 825, 62, 72);
+  const thJ1 = goldenDip((lam) => [{ n: refractiveIndex('BK7', models, lam), d: 0 }, { n: refractiveIndex('Cr', models, lam), d: 1 }, { n: refractiveIndex('Au', models, lam), d: 50 }, { n: c(refractiveIndex('Water', models, lam).re + 0.001, 0), d: 0 }], 825, 62, 72);
+  const mBulk = (thJ1 - thJ0) / 0.001;
+  const okJung = best.ld > 290 && best.ld < 420 && best.res < 0.02 * Math.abs(best.A) && Math.abs(mJ / mBulk - 1) < 0.1 && Math.max(...dJ) > 150;
+  // (g) Biacore calibration: 1000 RU of protein (de Feijter, 5 nm) at 760 nm ≈ 0.1°
+  const bc = sgGraph({ lam: 760, th: [62, 72, 0.05], kin: { ka: 1e7, kd: 0, rmax: 1000, steps: [{ label: 'inj', t: 60, c: 1000 }], dt: 2, analyte: 'custom', mw, dndc: 0.188, rho: 1.35, dims: [5, 5, 5] }, sg: { bulk: false, thick: 'auto' } });
+  const dB = bc.sens.fields.shift[bc.sens.fields.shift.length - 1];
+  const G1 = bc.sens.fields.Gamma[bc.sens.fields.Gamma.length - 1];
+  const perNg = dB / G1;
+  const okBia = perNg > 0.07 && perNg < 0.15 && G1 > 0.99;
+  // (h) the examples run (the noisy one too)
+  const exs = [sensorgramAntibodyExample(), sensorgramSwellingExample(), sensorgramSmallMoleculeExample(), startHereExample(), myoglobinRsaExample()].flatMap((p) => [...evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials)).results].filter(([id]) => id.startsWith('sg')).map(([, r]) => r));
+  const okEx = exs.every((r) => !r.errors.length && Array.from((r.outs.sensorgram as { dataset: Dataset }).dataset.fields.shift).every(Number.isFinite));
+  if (!(eBase < 1e-7 && eBulk < 1e-7 && eFe < 1e-12 && eTrack < 2e-5 && okJung && okBia && okEx))
+    throw new Error(`sensorgram: base ${eBase}, bulk ${eBulk}, de Feijter ${eFe}, tracking ${eTrack}, Jung l_d ${best.ld} res ${best.res / best.A} m ${mJ} vs ${mBulk}, Biacore ${perNg}°/(ng/mm²), examples ${okEx}`);
+  console.log(
+    [
+      `binding kinetics: 1:1 vs analytic ${eL.toExponential(1)}, kt → ∞ = 1:1 (${eT.toExponential(1)}), transport-limited start kt·C (${(100 * eLim).toFixed(2)} %), heterogeneous = two sites, two-state / bivalent limits = 1:1, regeneration, swelling vs analytic ${eS.toExponential(1)}`,
+      `sensorgram: bare chip = exact dip (${eBase.toExponential(1)}°), bulk Δn ${dn.toExponential(2)} = water + Δn (${eBulk.toExponential(1)}°), de Feijter n = n_b + (dn/dc)Γ/d (${eFe.toExponential(1)}), exact tracking vs a 0.0005° grid ${eTrack.toExponential(1)}°`,
+      `Jung et al. 1998 (Cr 1 / Au 50 nm, 825 nm): R(d) = A[1 − exp(−2d/l_d)] fits with l_d = ${best.ld} nm (paper 368, 320–370) to ${((100 * best.res) / Math.abs(best.A)).toFixed(2)} %, m = ${mJ.toFixed(1)}°/RIU (bulk ${mBulk.toFixed(1)}; paper 107 with its glass); Biacore: 1 ng/mm² at 760 nm → ${dB.toFixed(4)}° (1000 RU = 0.1°)`,
+    ].join('\n'),
+  );
+
+  // (i) the surface: RSA blocking = 1 − 4θ at low coverage; Feder's law near jamming (θ∞ − θ ∝ t^(−1/2): 4× longer
+  // halves the gap); the jamming capacity of myoglobin on silica against Wasilewska et al., IJERPH 18, 4944 (2021):
+  // 0.60 ± 0.1 mg/m² at 0.01 M NaCl (ζ = 38 mV) and 1.3 ± 0.1 at 0.15 M (ζ = 15 mV), pH 3.5
+  const eBlock = Math.abs(blocking(0.001 / THETA_JAM) - (1 - 4 * 0.001)) / 0.001;
+  const Pr: KineticParams = { ...P0, ka: 1e6, kd: 0, rmax: 1000, rsa: true };
+  const rr = simulate(Pr, [{ label: 'a', t: 40000, c: 1e-6 }], 100);
+  const gap = (t: number) => 1000 - rr.R[Math.round(t / 100)];
+  const feder = gap(8000) / gap(32000);
+  const r0 = simulate(Pr, [{ label: 'a', t: 0.01, c: 1e-9 }], 0.01);
+  const rate0 = r0.R[1] / 0.01; // ka C Rmax at the start = 1 RU/s
+  const my10 = surfaceOf(ANALYTES.myoglobin, 'side', 10, 38).capacity;
+  const my150 = surfaceOf(ANALYTES.myoglobin, 'side', 150, 15).capacity;
+  const okMyo = Math.abs(my10 - 0.6) < 0.1 && Math.abs(my150 - 1.3) < 0.1 && surfaceOf(ANALYTES.myoglobin, 'side', 150, 15).gap === 0;
+  // albumin, lying, 0.15 M: 1.4 ± 0.05 mg/m² (QCM) and 1.3 (OWLS), Wasilewska et al., Langmuir (2019), "Human serum albumin adsorption kinetics on silica"
+  const hsa = surfaceOf(ANALYTES.bsa, 'side', 150, 10).capacity;
+  // (j) the binding layer (auto): as high as the molecule below the capacity, h·Γ/Γ∞ above; the coverage fields agree
+  const iggEnd = surfaceOf(ANALYTES.igg, 'end', 150, -10);
+  const mono = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 1e6, kd: 0, rmax: 8000, analyte: 'igg', orient: 'end', steps: [{ label: 'inj', t: 300, c: 100 }], dt: 5 }, sg: { bulk: false, thick: 'auto', maxTimes: 61 } });
+  const mf = mono.sens.fields;
+  let eAuto = 0;
+  let eCov = 0;
+  for (let i = 0; i < mf.dL.length; i++) {
+    const G = mf.Gamma[i];
+    eAuto = Math.max(eAuto, Math.abs(mf.dL[i] - (G > iggEnd.capacity ? (iggEnd.height * G) / iggEnd.capacity : iggEnd.height)));
+    eCov = Math.max(eCov, Math.abs(mf.cover[i] - mf.jam[i] * iggEnd.thetaMax), Math.abs(mf.num[i] / ((G * 1e-15) / iggEnd.mass) - 1) || 0);
+  }
+  const okWarn = mono.kin.warnings.some((w) => w.includes('monolayer'));
+  // (k) drift: nothing bound, the buffer index grows by drift·t: the end = the dip of water + Δn
+  const dr = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 0, steps: [{ label: 'buffer', t: 600, c: 0 }], dt: 10 }, sg: { bulk: false, drift: 5 } });
+  const dnD = (5e-6 * 600) / 60;
+  const eDrift = Math.abs(dr.sens.fields.pos[dr.sens.fields.pos.length - 1] - goldenDip(() => wl(633, dnD), 633, 68, 76));
+  // (l) a swept seed: one noisy series per seed (the first axis), different noise, R exact = the noiseless curves
+  const sd = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 1e6, kd: 0, rmax: 500, steps: [{ label: 'buffer', t: 100, c: 0 }, { label: 'inj', t: 100, c: 100 }], dt: 10 }, sg: { bulk: false, track: false, noise: true, noiseAdd: 0.001 }, seeds: '1, 2, 3' });
+  const okSeedAx = sd.sens.axes[0].id === 'seed' && sd.sens.axes[0].values.length === 3 && sd.out.axes[0].id === 'seed';
+  const half = sd.out.size / 3;
+  const dR = Math.max(...Array.from({ length: half }, (_, i) => Math.abs(sd.out.fields.R[i] - sd.out.fields.R[half + i])));
+  const exactSame = Array.from({ length: half }, (_, i) => sd.out.fields.Rexact[i] === sd.out.fields.Rexact[2 * half + i]).every(Boolean);
+  const nNoise = Math.sqrt(Array.from({ length: half }, (_, i) => (sd.out.fields.R[i] - sd.out.fields.Rexact[i]) ** 2).reduce((a, v) => a + v, 0) / half);
+  const okSeed = okSeedAx && dR > 1e-4 && exactSame && Math.abs(nNoise / 0.001 - 1) < 0.1;
+  // (m) calibration: per RIU = the exact dip of water + Δn; per ng/mm² ≈ the Biacore run (1 ng/mm²: slightly nonlinear);
+  // the detection limit = 3σ / (per ng/mm²) with σ of the analyte-free start
+  const calB = bc.info.cal!;
+  const perNx = (goldenDip(() => wl(633, 1e-5), 633, 68, 76) - th0) / 1e-5;
+  const calA = bulkRun.info.cal!;
+  const eCalN = Math.abs(calA.perN / perNx - 1);
+  const eCalG = Math.abs(calB.perG! / perNg - 1);
+  const cs = sd.info.cal!;
+  const okLod = cs.sigma! > 1e-4 && Math.abs(cs.lodG! - (3 * cs.sigma!) / Math.abs(cs.perG!)) < 1e-12;
+  // (n) steady state: single-cycle injections long enough to reach equilibrium give back KD and Rmax
+  const ssr = sgGraph({ lam: 633, th: [68, 76, 0.1], kin: { ka: 1e6, kd: 1e-3, rmax: 800, steps: [1, 3, 10, 30, 100].map((cc) => ({ label: 'inj', t: 4000, c: cc })), dt: 20 }, sg: { bulk: false, maxTimes: 20 } }).kin;
+  const ssd = (ssr.outs.steady as { dataset: Dataset }).dataset;
+  const ssRows = (ssr.info as { steady?: string[] }).steady ?? [];
+  const kdFit = Number(/KD ([\d.]+) nM/.exec(ssRows[0] ?? '')?.[1]);
+  const okSteady = ssd.size === 5 && Math.abs(kdFit - 1) < 0.01 && Array.from(ssd.fields.reached).every((v) => v > 0.995) && Array.from(ssd.fields.fit).every((v, i) => Math.abs(v - ssd.fields.Req[i]) < 1);
+  if (!(eCalN < 1e-4 && eCalG < 0.03 && okLod && okSteady)) throw new Error(`calibration ${eCalN} ${eCalG} (${calB.perG} vs ${perNg}), LOD ${okLod}, steady state ${okSteady} ${ssRows}`);
+  console.log(`calibration: per RIU = exact (${eCalN.toExponential(1)}), ${calB.perG!.toFixed(4)}°/(ng/mm²) at 760 nm vs the 1 ng/mm² run ${perNg.toFixed(4)}; detection limit 3σ/S; steady state KD ${kdFit} nM (1), all injections at equilibrium`);
+  if (!(eBlock < 0.01 && Math.abs(feder - 2) < 0.15 && Math.abs(rate0 - 1) < 1e-3 && okMyo && hsa > 1.25 && hsa < 1.45 && eAuto < 1e-9 && eCov < 1e-9 && okWarn && eDrift < 1e-7 && okSeed))
+    throw new Error(`surface: blocking ${eBlock}, Feder ${feder}, rate ${rate0}, myoglobin ${my10} / ${my150}, albumin ${hsa}, auto layer ${eAuto}, coverage ${eCov}, warning ${okWarn}, drift ${eDrift}, seeds ${okSeedAx} ${dR} ${exactSame} ${nNoise}`);
+  console.log(
+    `surface: RSA blocking 1 − 4θ, Feder t^(−1/2) (gap ratio ${feder.toFixed(3)}), myoglobin on silica Γ∞ ${my10.toFixed(3)} / ${my150.toFixed(3)} mg/m² at 10 / 150 mM (Wasilewska et al. 2021: 0.60 ± 0.1 / 1.3 ± 0.1), albumin ${hsa.toFixed(2)} at 150 mM (2019: 1.3–1.4); auto layer = molecule height, then h·Γ/Γ∞; drift = water + Δn (${eDrift.toExponential(1)}°); swept seed: 3 noisy series, σ ${nNoise.toFixed(5)} (0.001)`,
+  );
 }
 
 if (QUICK) console.log(`quick run: ${skipped.length} slow blocks skipped — ${skipped.join('; ')}. The full run: npm run check:tmm`);

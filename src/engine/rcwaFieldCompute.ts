@@ -7,7 +7,7 @@ import type { FieldJob } from './rcwaFieldRun.ts';
 import { rcwaLayersAt } from './runRcwa.ts';
 
 export function fieldMapOfJob(j: FieldJob, grid?: { nx: number; nz: number }): { map: FieldMap; period: number } {
-  const st = rcwaLayersAt(j.spec, j.idx, j.lam);
+  const st = rcwaLayersAt(j.spec, j.idx, j.lam, undefined, true);
   const N = st.hasGrating ? (j.orders ?? j.spec.rcwa!.orders) : 0;
   const fact = j.spec.rcwa!.fact ?? 'li';
   const opts = { quantity: j.quantity, part: j.part, periods: j.periods, nx: grid?.nx ?? j.nx, nz: grid?.nz ?? j.nz, zIn: j.zIn, zOut: j.zOut, x0: j.x0, x1: j.x1, z0: j.z0, z1: j.z1, sigma: j.sigma };

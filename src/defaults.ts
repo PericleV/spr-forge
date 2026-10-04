@@ -28,7 +28,7 @@ import type {
   DrawGratingData,
   RcwaFieldData,
   LayerGaData,
-  AnisoData, NotesData } from './types.ts';
+  AnisoData, NotesData, KineticsData, SensorgramData } from './types.ts';
 
 export const PLOT_DEFAULTS: PlotData = {
   field: 'R',
@@ -109,6 +109,48 @@ export const TARGET_DEFAULTS: TargetData = {
 };
 export const MATCH_DEFAULTS: MatchData = { name: '', field: 'R', metric: 'rms', weight: 1, lo: NaN, hi: NaN };
 export const FORMULA_DEFAULTS: FormulaData = { name: '', terms: [], expr: 'a', goal: 'min', weight: 1 };
+export const KINETICS_DEFAULTS: KineticsData = {
+  name: '',
+  model: 'langmuir',
+  ka: 1e5,
+  kd: 1e-3,
+  rmax: 1000,
+  kt: 1e9,
+  ka2: 1e-3,
+  kd2: 1e-3,
+  rmax2: 500,
+  tau: 60,
+  analyte: 'igg',
+  mw: 150000,
+  dndc: 0.188,
+  rho: 1.35,
+  dims: [10, 10, 10],
+  orient: 'side',
+  surface: 'ligand',
+  ionic: 150,
+  zeta: -10,
+  steps: [
+    { label: 'baseline', t: 60, c: 0 },
+    { label: 'association', t: 300, c: 50 },
+    { label: 'dissociation', t: 600, c: 0 },
+  ],
+  dt: 2,
+  sweepOf: 'c',
+};
+export const SENSORGRAM_DEFAULTS: SensorgramData = {
+  name: '',
+  target: '',
+  thick: 'auto',
+  drift: 0,
+  mixing: 'linear',
+  bulk: true,
+  along: '',
+  readout: 'dip',
+  at: NaN,
+  track: true,
+  maxTimes: 400,
+  seed: 1,
+};
 export const TOLERANCE_DEFAULTS: ToleranceData = {
   name: '',
   samples: 200,

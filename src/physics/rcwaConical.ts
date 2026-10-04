@@ -4,6 +4,7 @@
 //   e′ = i P h,  h′ = i Q e  (′ = d/d(k₀z)),  kz² = eig(P Q)
 //   P = [[Kx ε⁻¹ ky, I − Kx ε⁻¹ Kx], [ky ε⁻¹ ky − I, −ky ε⁻¹ Kx]]   (ε⁻¹ = [[ε]]⁻¹: Ez, tangential to the x-interfaces)
 //   Q = [[−ky Kx, Kx² − [[ε]]], [[[1/ε]]⁻¹ − ky², ky Kx]]           (Li's inverse rule for Ex, normal to them; Laurent for Ey)
+// Diagonal anisotropic segments (sub-pixel averaging): ε⁻¹ = [[εzz]]⁻¹ (Ez), [[ε]] = [[εyy]] (Ey), [[1/εxx]]⁻¹ (Ex).
 // Moharam, Grann, Pommet & Gaylord, JOSA A 12, 1077 (1995); L. Li, JOSA A 13, 1870 (1996) and JOSA A 14, 2758 (1997).
 // Scattering matrices through a zero-thickness gap medium (kz = 1 in every order), as the planar solver (rcwa.ts).
 // Conventions as rcwa.ts / tmm.ts: fields ∝ exp(i(kx x + ky y + kz z − ωt)), lengths normalized by k₀, the incident
@@ -13,7 +14,7 @@
 import type { C } from './complex.ts';
 import * as X from './complex.ts';
 import { add, cmat, diagMulLeft, diagMulRight, eig, eye, inv, mul, mulVec, scale, type CMat } from './cmat.ts';
-import { fourier, ordersOf, RCWA_FAST, star, toeplitz, type Factorization, type RcwaLayer, type SMat } from './rcwa.ts';
+import { fourier, ordersOf, RCWA_FAST, segEps, star, toeplitz, type Factorization, type RcwaLayer, type SMat } from './rcwa.ts';
 import { blockApply, blockLayerS, blockRegionS, starBB, toDense, type B2, type BlockS } from './rcwaBlocks.ts';
 import { anisoExitFlux, anisoLayerBlock, anisoRegionBlock, rotateZ } from './berreman.ts';
 import { nCos, type Polarization } from './tmm.ts';
@@ -108,16 +109,20 @@ const CACHE_MAX = 200;
 
 // Modes of a grating layer (Li's factorization, or the Laurent rule for every product).
 function gratingModes(L: RcwaLayer, kx: Float64Array, ky: number, fact: Factorization): Modes {
-  const key = `${fact}|${ky.toPrecision(15)}|${Array.from(kx, (v) => v.toPrecision(15)).join(',')}|${L.segs!.map((s) => `${s.from},${s.to},${s.n.re},${s.n.im}`).join(';')}`;
+  const key = `${fact}|${ky.toPrecision(15)}|${Array.from(kx, (v) => v.toPrecision(15)).join(',')}|${L.segs!.map((s) => `${s.from},${s.to},${s.n.re},${s.n.im}${s.eps ? `,${s.eps.map((e) => `${e.re},${e.im}`).join(',')}` : ''}`).join(';')}`;
   const hit = modeCache.get(key);
   if (hit) return hit;
   const M = kx.length;
   const I = eye(M);
   const zero = new Float64Array(M);
-  const segsEps = L.segs!.map((s) => ({ from: s.from, to: s.to, v: X.mul(s.n, s.n) }));
-  const E = toeplitz(fourier(segsEps, M - 1), M);
-  const Ei = inv(E);
-  const Ainv = fact === 'li' ? inv(toeplitz(fourier(segsEps.map((s) => ({ ...s, v: X.div(X.c(1), s.v) })), M - 1), M)) : E; // [[1/ε]]⁻¹
+  // ε along x, y, z of every segment (one value for isotropic segments)
+  const aniso = L.segs!.some((s) => s.eps);
+  const epsAlong = (axis: 0 | 1 | 2) => L.segs!.map((s) => ({ from: s.from, to: s.to, v: segEps(s, axis) }));
+  const segsEps = epsAlong(0);
+  const E = toeplitz(fourier(aniso ? epsAlong(1) : segsEps, M - 1), M); // [[εyy]]
+  const Ei = inv(aniso ? toeplitz(fourier(epsAlong(2), M - 1), M) : E); // [[εzz]]⁻¹
+  // [[1/εxx]]⁻¹ (Laurent: [[εxx]])
+  const Ainv = fact === 'li' ? inv(toeplitz(fourier(segsEps.map((s) => ({ ...s, v: X.div(X.c(1), s.v) })), M - 1), M)) : aniso ? toeplitz(fourier(segsEps, M - 1), M) : E;
   const KxEi = diagMulLeft(kx, zero, Ei);
   const P = blocks(scale(KxEi, ky), add(I, diagMulRight(KxEi, kx, zero), -1), add(scale(Ei, ky * ky), I, -1), scale(diagMulRight(Ei, kx, zero), -ky));
   const Q = blocks(
@@ -215,6 +220,7 @@ function conicalStack(layers: RcwaLayer[], kx: Float64Array, ky: number, k0: num
   const M = kx.length;
   const n0 = X.c(layers[0].n!.re);
   const V0i = gapVinv(kx, ky);
+  if (layers.some((L) => L.fff)) throw new Error('smooth (FFF) profiles are computed in planar incidence for now: choose “profiles: staircase” for φ ≠ 0 or a Jones state');
   const isGrating = (L: RcwaLayer, i: number) => !!L.segs && i > 0 && i < layers.length - 1;
   const fast = !withFields && RCWA_FAST.on;
   let Sref: SMat;

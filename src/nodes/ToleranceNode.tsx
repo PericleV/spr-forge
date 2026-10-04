@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { ToleranceInfo } from '../engine/evaluate.ts';
+import { InstrumentControls } from './InstrumentControls.tsx';
 import type { Dataset } from '../engine/types.ts';
 import { exportCsv } from '../plot/export.ts';
 import { Histogram } from '../plot/Histogram.tsx';
@@ -13,6 +14,23 @@ import { Messages, NumInput, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
 const COLOR = '#b5306a';
+
+// A σ that can be left at the global value (empty) or set, behind an include tick box.
+function SigmaCell({ on, value, placeholder, step, onToggle, onChange }: { on: boolean; value: number | undefined; placeholder: number; step: number; onToggle: (on: boolean) => void; onChange: (v: number) => void }) {
+  return (
+    <td>
+      <input className="nodrag" type="checkbox" checked={on} onChange={(e) => onToggle(e.target.checked)} />
+      {on && <NumInput className="tiny" value={value ?? NaN} placeholder={String(placeholder)} step={step} onChange={onChange} />}
+    </td>
+  );
+}
+const setIn = <K extends string | number>(list: K[] | undefined, k: K, out: boolean) => (out ? [...new Set([...(list ?? []), k])] : (list ?? []).filter((x) => x !== k));
+const setVal = (rec: Record<string, number> | undefined, k: string, v: number) => {
+  const o = { ...(rec ?? {}) };
+  if (Number.isFinite(v)) o[k] = v;
+  else delete o[k];
+  return o;
+};
 
 // Wide CSV of a dataset: one row per point, a column per axis and per field.
 function datasetCsv(ds: Dataset, name: string) {
@@ -63,6 +81,9 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
   const [hist, setHist] = useState(-1);
   const critRows = info?.criteria?.flatMap((c) => c.rows.map((r) => ({ ...r, name: c.name }))) ?? [];
   const histRow = critRows.find((r) => r.index === hist);
+  const custom =
+    Object.keys(data.dOverride).length + Object.keys(data.nOverride ?? {}).length + Object.keys(data.dSysOverride ?? {}).length + Object.keys(data.nSysOverride ?? {}).length > 0 ||
+    [data.dSkip, data.nSkip, data.sysSkipD, data.sysSkipN].some((l) => (l?.length ?? 0) > 0);
 
   return (
     <div className="node node-tolerance">
@@ -86,7 +107,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
         <label className="radio" title="Errors limited to ± this many σ (fabrication limits)">limit ± <NumInput className="tiny" value={data.clip} step={0.5} onChange={(clip) => set({ clip })} /> σ</label>
       </div>
 
-      <div className="section">Errors</div>
+      <div className="section">Fabrication errors</div>
       <label className="radio">
         <input className="nodrag" type="checkbox" checked={data.thickness} onChange={(e) => set({ thickness: e.target.checked })} />
         thickness
@@ -103,31 +124,6 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
           </label>
         </div>
       )}
-      {data.thickness && (info?.layers.length ?? 0) > 0 && (
-        <details className="nodrag indent">
-          <summary>σ per layer ({Object.keys(data.dOverride).length} set)</summary>
-          <div className="stack-rows">
-            {info!.layers.map((L) => (
-              <div className="row" key={L.index}>
-                <span className="grow">{L.side === 'back' ? 'back ' : ''}{L.name} · {+L.d.toFixed(1)} nm</span>
-                <NumInput
-                  className="tiny"
-                  value={data.dOverride[String(L.index)] ?? NaN}
-                  placeholder={String(data.dSigma)}
-                  step={0.1}
-                  onChange={(v) => {
-                    const o = { ...data.dOverride };
-                    if (Number.isFinite(v)) o[String(L.index)] = v;
-                    else delete o[String(L.index)];
-                    set({ dOverride: o });
-                  }}
-                />
-                <span className="muted">{unitD}</span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
       <label className="radio">
         <input className="nodrag" type="checkbox" checked={data.index} onChange={(e) => set({ index: e.target.checked })} />
         refractive index (Δn)
@@ -137,6 +133,81 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
           <label className="radio" title="Independent for every layer">random σ <NumInput className="short" value={data.nSigma} step={0.001} onChange={(nSigma) => set({ nSigma })} /></label>
           <label className="radio" title="The same for all layers of a material (Material node)">systematic σ <NumInput className="short" value={data.nSys} step={0.001} onChange={(nSys) => set({ nSys })} /></label>
         </div>
+      )}
+      {(data.thickness || data.index) && (info?.layers.length ?? 0) > 0 && (
+        <details className="nodrag indent" open={custom || undefined}>
+          <summary>per layer / material{custom ? ' (set)' : ''}</summary>
+          <table className="zone-table tol-table">
+            <thead>
+              <tr>
+                <th>layer (random)</th>
+                {data.thickness && <th>d σ [{unitD}]</th>}
+                {data.index && <th>Δn σ</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {info!.layers.map((L) => {
+                const k = String(L.index);
+                return (
+                  <tr key={L.index}>
+                    <td>{L.side === 'back' ? 'back ' : ''}{L.name} · {+L.d.toFixed(1)} nm</td>
+                    {data.thickness && (
+                      <SigmaCell
+                        on={!(data.dSkip ?? []).includes(L.index)}
+                        value={data.dOverride[k]}
+                        placeholder={data.dSigma}
+                        step={0.1}
+                        onToggle={(on) => set({ dSkip: setIn(data.dSkip, L.index, !on) })}
+                        onChange={(v) => set({ dOverride: setVal(data.dOverride, k, v) })}
+                      />
+                    )}
+                    {data.index && (
+                      <SigmaCell
+                        on={!(data.nSkip ?? []).includes(L.index)}
+                        value={data.nOverride?.[k]}
+                        placeholder={data.nSigma}
+                        step={0.001}
+                        onToggle={(on) => set({ nSkip: setIn(data.nSkip, L.index, !on) })}
+                        onChange={(v) => set({ nOverride: setVal(data.nOverride, k, v) })}
+                      />
+                    )}
+                  </tr>
+                );
+              })}
+              <tr>
+                <th>material (systematic)</th>
+                {data.thickness && <th />}
+                {data.index && <th />}
+              </tr>
+              {info!.materials.map((m) => (
+                <tr key={m.key}>
+                  <td>{m.name}</td>
+                  {data.thickness && (
+                    <SigmaCell
+                      on={!(data.sysSkipD ?? []).includes(m.key)}
+                      value={data.dSysOverride?.[m.key]}
+                      placeholder={data.dSys}
+                      step={0.1}
+                      onToggle={(on) => set({ sysSkipD: setIn(data.sysSkipD, m.key, !on) })}
+                      onChange={(v) => set({ dSysOverride: setVal(data.dSysOverride, m.key, v) })}
+                    />
+                  )}
+                  {data.index && (
+                    <SigmaCell
+                      on={!(data.sysSkipN ?? []).includes(m.key)}
+                      value={data.nSysOverride?.[m.key]}
+                      placeholder={data.nSys}
+                      step={0.001}
+                      onToggle={(on) => set({ sysSkipN: setIn(data.sysSkipN, m.key, !on) })}
+                      onChange={(v) => set({ nSysOverride: setVal(data.nSysOverride, m.key, v) })}
+                    />
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="hint">Untick to leave a layer (or material) without that error; an empty σ takes the global value. A layer without thickness errors keeps its thickness (no systematic error either).</div>
+        </details>
       )}
       {info?.layers.some((L) => L.grating) && (
         <>
@@ -163,15 +234,41 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
           )}
         </label>
       )}
-      <label className="radio">
+
+      <div className="section">Instrument (measurement)</div>
+      <label className="radio" title="An offset of the angle of incidence, its own for every sample (alignment of the sample on the goniometer)">
         <input className="nodrag" type="checkbox" checked={data.angle} onChange={(e) => set({ angle: e.target.checked })} />
-        angle of incidence
+        angle of incidence error
         {data.angle && (
           <>
             σ <NumInput className="tiny" value={data.aSigma} step={0.1} onChange={(aSigma) => set({ aSigma })} /> °
           </>
         )}
       </label>
+      <InstrumentControls data={data} set={set} />
+      {info?.preview && (
+        <>
+          <div className="row chart-head">
+            <span className="muted">measured signal ({data.field}) — sample</span>
+            <NumInput className="tiny" value={info.preview.sample} step={1} onChange={(preview) => set({ preview })} />
+          </div>
+          <div className="nodrag nowheel chart">
+            <LinePlot
+              xAxis={{ id: info.along ?? 'x', label: info.along === 'theta' ? 'θ' : info.along === 'lambda' ? 'λ' : 'x', unit: info.unit ?? '', values: xs }}
+              series={[
+                { key: 'ideal', label: 'ideal (nominal)', color: 'var(--muted)', y: info.preview.ideal, width: 1.2, dash: '4 3' },
+                { key: 'inst', label: 'through the instrument', color: 'var(--text)', y: info.preview.instrument, width: 1.6 },
+                { key: 'meas', label: `measured, sample ${info.preview.sample}`, color: COLOR, y: info.preview.measured, width: 1.2 },
+              ]}
+              yLabel={data.field}
+              yUnit=""
+              width={CHART_W}
+              height={190}
+            />
+          </div>
+          <div className="hint">For noisy curves, locate the dips of the criteria nodes (Min / max, FWHM, Sensitivity) by a polynomial fit or the centroid, not the 3-point parabola.</div>
+        </>
+      )}
 
       <div className="section">Specification (yield)</div>
       <label className="radio">

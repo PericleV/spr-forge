@@ -40,15 +40,15 @@ function gratingDetails(g: GratingParams<MaterialValue>): string {
 }
 
 // Rows of one film (a grating layer adds one row per slice when it is not a single rectangle).
-function filmRows(L: StackLayer, no: string, note: string): LayerRow[] {
+function filmRows(L: StackLayer, no: string, note: string, name?: string): LayerRow[] {
   const g = L.grating;
   if (!g) {
     const details = [L.layers2D ? `${L.layers2D} monolayer${L.layers2D === 1 ? '' : 's'}` : '', L.vary ? 'swept (nominal value)' : '', note].filter(Boolean).join('; ');
-    return [{ no, layer: L.label || L.mat.name, material: L.mat.name, d: L.d, details }];
+    return [{ no, layer: name || L.label || L.mat.name, material: L.mat.name, d: L.d, details }];
   }
   const names = g.mats.map((m) => m.name);
   const material = g.profile === 'pixel' ? names.join(' / ') : `ridge ${names[0]} / groove ${names[1]}`;
-  const rows: LayerRow[] = [{ no, layer: L.label || 'grating', material, d: L.d, details: [gratingDetails(g), L.vary ? 'swept (nominal value)' : '', note].filter(Boolean).join('; ') }];
+  const rows: LayerRow[] = [{ no, layer: name || L.label || 'grating', material, d: L.d, details: [gratingDetails(g), L.vary ? 'swept (nominal value)' : '', note].filter(Boolean).join('; ') }];
   const slices = gratingSlices(g);
   if (slices.length > 1)
     slices.forEach((s, k) =>
@@ -64,7 +64,9 @@ function filmRows(L: StackLayer, no: string, note: string): LayerRow[] {
   return rows;
 }
 
-export function layerList(stack: StackValue): LayerList {
+// names: labels given on View Stack, by layer key and for the media 'incident' / 'exit' / 'out' (they replace the Layer
+// node's label in the layer column)
+export function layerList(stack: StackValue, names: Record<string, string> = {}): LayerList {
   const rows: LayerRow[] = [];
   let count = 0;
   let total = 0;
@@ -82,20 +84,20 @@ export function layerList(stack: StackValue): LayerList {
       }
       count++;
       total += L.d;
-      rows.push(...filmRows(L, String(count), extra));
+      rows.push(...filmRows(L, String(count), extra, names[L.key]));
     });
   };
-  if (stack.incident) rows.push({ no: 'in', layer: 'incident medium', material: matName(stack.incident), d: null, details: 'semi-infinite' });
+  if (stack.incident) rows.push({ no: 'in', layer: names.incident || 'incident medium', material: matName(stack.incident), d: null, details: 'semi-infinite' });
   films(stack.layers);
   const sub = stack.substrate;
   if (stack.exit) {
-    if (sub) rows.push({ no: 'sub', layer: 'substrate', material: matName(stack.exit), d: sub.d, details: `thick plate (incoherent), ${num(sub.d / 1e6)} mm` });
-    else rows.push({ no: 'out', layer: 'exit medium', material: matName(stack.exit), d: null, details: 'semi-infinite' });
+    if (sub) rows.push({ no: 'sub', layer: names.exit || 'substrate', material: matName(stack.exit), d: sub.d, details: `thick plate (incoherent), ${num(sub.d / 1e6)} mm` });
+    else rows.push({ no: 'out', layer: names.exit || 'exit medium', material: matName(stack.exit), d: null, details: 'semi-infinite' });
   }
   if (sub) {
     films(sub.back, 'back side of the substrate');
     const o = sub.out ?? stack.incident;
-    if (o) rows.push({ no: 'out', layer: 'back medium', material: matName(o), d: null, details: 'semi-infinite' });
+    if (o) rows.push({ no: 'out', layer: names.out || 'back medium', material: matName(o), d: null, details: 'semi-infinite' });
   }
   return { rows, count, total };
 }

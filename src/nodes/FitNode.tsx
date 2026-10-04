@@ -24,6 +24,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
   const info = result?.info as FitInfo | undefined;
   const out = result?.outs.out;
   const chart = useRef<HTMLDivElement>(null);
+  const partsChart = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState('');
   // the fit running in its worker (Stop ends it; closing the node too)
   const job = useRef<FitJob | null>(null);
@@ -105,12 +106,13 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
   const axisLabel = info?.axes.find((a) => a.id === info.along)?.label ?? 'x';
   const xAxis: Axis | null = ready ? { id: info.along ?? 'x', label: axisLabel, unit: info.xUnit, values: info.xs } : null;
   const series: Series[] = [];
+  // the components on a plot of their own, above the data and the fit (on the same axis they hid the data)
+  const partSeries: Series[] =
+    ready && spectrum && data.showParts && data.components.length > 1
+      ? info.parts!.map((p, i) => ({ key: `part${i}`, label: `${COMPONENTS[data.components[i].type].label} ${i + 1}`, color: PART_COLORS[i % PART_COLORS.length], y: p, width: 1.6 }))
+      : [];
   if (ready && spectrum) {
     series.push({ key: 'data', label: 'data', color: '#8a93a6', y: info.ys!, width: 1.4 });
-    if (data.showParts && data.components.length > 1)
-      info.parts!.forEach((p, i) =>
-        series.push({ key: `part${i}`, label: COMPONENTS[data.components[i].type].label, color: PART_COLORS[i % PART_COLORS.length], y: p, dash: '4 3', width: 1.2 }),
-      );
     series.push({ key: 'model', label: 'fit', color: data.color, y: info.model!, width: 2.2 });
   } else if (ready) {
     series.push(
@@ -225,6 +227,27 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
         </>
       )}
 
+      {xAxis && partSeries.length > 0 && (
+        <>
+          <div className="row chart-head">
+            <span className="muted">components</span>
+            <FigureTools target={partsChart} name="fit-components" />
+          </div>
+          <div className="nodrag nowheel chart" ref={partsChart}>
+            <LinePlot
+              xAxis={xAxis}
+              series={partSeries}
+              yLabel={fields.find((f) => f.key === data.field)?.short ?? 'y'}
+              yUnit={info?.yUnit ?? ''}
+              width={CHART_W}
+              height={170}
+              overlays={
+                Number.isFinite(data.lo) || Number.isFinite(data.hi) ? [{ kind: 'span', key: 'win', lo: data.lo, hi: data.hi, color: data.color }] : []
+              }
+            />
+          </div>
+        </>
+      )}
       <div className="nodrag nowheel chart" ref={chart}>
         {xAxis && series.length ? (
           <LinePlot

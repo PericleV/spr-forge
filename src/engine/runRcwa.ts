@@ -8,10 +8,10 @@ import { rcwaConical } from '../physics/rcwaConical.ts';
 import { biaxial, flipY, rotateZ, uniaxial } from '../physics/berreman.ts';
 import { rcwaThickConical, rcwaThickPoint } from '../physics/rcwaThick.ts';
 import type { Polarization } from '../physics/tmm.ts';
-import { gratingSlices, type GratingParams } from './grating.ts';
+import { FFF_PROFILES, gratingFff, gratingOutline, gratingSlices, type GratingParams } from './grating.ts';
 import type { Bound, FieldMeta, LayerSpec, TmmSpec } from './types.ts';
 import { TMM_META } from './dataset.ts';
-import { roughPlan, sliceIndex } from './rough.ts';
+import { roughFff, roughPlan, sliceIndex } from './rough.ts';
 
 const at = <T,>(b: Bound<T>, dims: number[], idx: number[]) => {
   let k = 0;
@@ -70,9 +70,12 @@ export function gratingAt(L: LayerSpec, dims: number[], idx: number[]): GratingP
 export type RcwaStructure = { layers: RcwaLayer[]; period: number; hasGrating: boolean; owner: number[] };
 
 // The RCWA layers at sweep steps idx and wavelength lam (grating layers split into their slices); `list` = the
-// front (default) or the back of a thick substrate (substrate, back layers, out medium).
-export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: LayerSpec[] = spec.layers): RcwaStructure {
+// front (default) or the back of a thick substrate (substrate, back layers, out medium). Smooth profiles (Compute RCWA
+// „profiles: smooth (FFF)”): a trapezoid, sinus or blazed grating is one layer integrated through its true profile
+// (physics/rcwaFff.ts) instead of its staircase slices; `outline`: its true outline (field maps).
+export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: LayerSpec[] = spec.layers, outline = false): RcwaStructure {
   const dims = spec.sweeps;
+  const fff = spec.rcwa?.profiles === 'fff';
   // `filler`: the pores of an effective-medium material hold this index (the neighbouring plain layer)
   const indexOf = (key: string, filler?: C): C => {
     const inst = spec.instances[key];
@@ -144,6 +147,13 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
     if (Number.isNaN(period)) period = g.period;
     else if (Math.abs(g.period - period) > 1e-9 * period) throw new Error(`the grating layers have different periods (${period} and ${g.period} nm)`);
     const ns = g.mats.map((k) => shifted(indexOf(k)));
+    if (fff && FFF_PROFILES.includes(g.profile)) {
+      if (d > 0) {
+        out.push({ d, fff: gratingFff(g, d, (m) => ns[m] ?? ns[1]), ...(outline ? { outline: { d, lines: gratingOutline(g) } } : {}) });
+        owner.push(i);
+      }
+      return;
+    }
     for (const s of gratingSlices(g)) {
       if (!(s.h * d > 0)) continue;
       out.push({ d: s.h * d, segs: s.segs.map((q) => ({ from: q.from, to: q.to, n: ns[q.m] ?? ns[1] })) });
@@ -160,6 +170,7 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
     const fullD = (i: number) => (i === 0 || i === list.length - 1 ? 0 : list[i].bind.d ? at(list[i].bind.d!, dims, idx) : list[i].d);
     const nOf = (m: number) => (shiftOf(list[m]) ? X.add(plain(m), c(shiftOf(list[m]))) : plain(m));
     let pixels = false;
+    const zonesDone = new Set<number>();
     for (const it of plan.items) {
       if (it.kind === 'layer') {
         if (special(it.i) && Math.abs(it.d - fullD(it.i)) > 1e-9) throw new Error('a rough interface reaches a grating or an anisotropic layer');
@@ -167,6 +178,18 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
         continue;
       }
       if (it.mats.some(special)) throw new Error('a rough interface reaches a grating or an anisotropic layer');
+      if (spec.rcwa && fff) {
+        // the whole rough zone as one smooth (FFF) layer, its true outline the surfaces themselves
+        pixels = true;
+        if (zonesDone.has(it.zone)) continue;
+        zonesDone.add(it.zone);
+        const z = plan.zones[it.zone];
+        const d = z.z1 - z.z0;
+        const lines = z.S.map((s) => Array.from({ length: z.px + 1 }, (_, x) => [(x + 0.5) / z.px, (s[x % z.px] - z.z0) / d]).flat());
+        out.push({ d, fff: roughFff(z, plan.cell, nOf), ...(outline ? { outline: { d, lines } } : {}) });
+        owner.push(it.owner);
+        continue;
+      }
       if (spec.rcwa) {
         pixels = true;
         const ns = new Map(it.mats.map((m) => [m, nOf(m)]));

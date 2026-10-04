@@ -14,6 +14,15 @@ const num = (z: Cx) => (z[1] ? `(${z[0]}+${z[1]}i)` : `${z[0]}`);
 
 // Reticolo texture: {[x1 … xN], [n1 … nN]}, n_p on (x_{p−1}, x_p), n1 on (x_N − Λ, x1): the right edges of our segments.
 // Reticolo's z axis points up: the tensor mirrored z → −z (the xz, yz, zx, zy components change sign)
+// A diagonal anisotropic segment: a placeholder index in the texture, replaced by [nx, ny, nz] through
+// parm.res1.change_index = {[placeholder, nx, ny, nz], …} (Reticolo squares them; n = √ε with Im n ≥ 0).
+let changes: string[] = [];
+const csqrt = (z: Cx): Cx => {
+  const r = Math.hypot(z[0], z[1]);
+  const re = Math.sqrt((r + z[0]) / 2);
+  const im = Math.sqrt(Math.max(0, (r - z[0]) / 2));
+  return [re, z[1] < 0 ? -im : im];
+};
 function texture(L: RetCase['layers'][number], period: number): string {
   if (L.eps) {
     const e = L.eps.map((v, k) => ([2, 5, 6, 7].includes(k) ? ([-v[0], -v[1]] as Cx) : v));
@@ -21,11 +30,19 @@ function texture(L: RetCase['layers'][number], period: number): string {
   }
   if (!L.segs) return `{${num(L.n!)}}`;
   const segs = [...L.segs].sort((a, b) => a.from - b.from);
-  return `{[${segs.map((s) => s.to * period).join(',')}],[${segs.map((s) => num(s.n)).join(',')}]}`;
+  const nOf = (s: (typeof segs)[number]) => {
+    if (!s.eps) return num(s.n);
+    const bidon: Cx = [1.01 + 0.0013 * changes.length, 0.0007];
+    changes.push(`[${[bidon, ...s.eps.map(csqrt)].map(num).join(',')}]`);
+    return num(bidon);
+  };
+  return `{[${segs.map((s) => s.to * period).join(',')}],[${segs.map(nOf).join(',')}]}`;
 }
 
 function caseScript(c: RetCase): string {
+  changes = [];
   const tex = [`{${num(c.top)}}`, `{${num(c.bottom)}}`, ...c.layers.map((L) => texture(L, c.period))];
+  const change = changes.length ? ` parm.res1.change_index = {${changes.join(',')}};` : '';
   const profile = `{[0,${c.layers.map((L) => L.d).join(',')},0],[1,${c.layers.map((_, i) => i + 3).join(',')},2]}`;
   if (c.phi !== undefined) {
     // conical: Reticolo's 2D solver with one harmonic along y; efficiency, efficiency_TE, efficiency_TM of each order
@@ -44,7 +61,7 @@ printf('\\n');
 `;
   }
   return `
-parm = res0(${c.pol === 's' ? 1 : -1}); parm.not_io = 1;
+parm = res0(${c.pol === 's' ? 1 : -1}); parm.not_io = 1;${change}
 textures = {${tex.map((t) => (t.startsWith('{{') ? t.slice(1, -1) : t)).join(',')}};
 aa = res1(${c.lam}, ${c.period}, textures, ${c.N}, ${c.top[0]}*sin(${c.theta}*pi/180), parm);
 ef = res2(aa, ${profile});

@@ -55,7 +55,7 @@ function resolveView(ds: Dataset, d: PlotData): View {
     y = has(d.y) && pick(d.y) !== x ? pick(d.y) : (free.find((i) => ids[i] === 'lambda' && i !== x) ?? free.find((i) => i !== x) ?? -1);
   } else if (d.series !== 'none') {
     if (has(d.series) && pick(d.series) !== x) series = pick(d.series);
-    else if (d.series === '') series = free.find((i) => i !== x && (ids[i].startsWith('sweep:') || ids[i] === 'design' || ids[i] === 'sample' || ids[i] === 'source')) ?? -1;
+    else if (d.series === '') series = free.find((i) => i !== x && (ids[i].startsWith('sweep:') || ids[i] === 'design' || ids[i] === 'sample' || ids[i] === 'source' || ids[i] === 'seed' || ids[i] === 'kin')) ?? -1;
   }
   const sliders = free.filter((i) => i !== x && i !== y && i !== series);
   return { mode, x, y, series, fixed, sliders, free };

@@ -8,6 +8,7 @@ import { rcwaConical } from '../physics/rcwaConical.ts';
 import { rcwaThickConical } from '../physics/rcwaThick.ts';
 import { GD_META, TMM_META } from './dataset.ts';
 import { roughPlan, sliceIndex } from './rough.ts';
+import { coneRays } from './cone.ts';
 
 export const specSize = (spec: TmmSpec) =>
   spec.sweeps.reduce((p, n) => p * n, 1) * spec.lambda.length * spec.theta.length;
@@ -261,8 +262,22 @@ export function runTmm(spec: TmmSpec, onProgress?: (p: number) => void, range: P
       const back = spec.back ? layersAt(spec, idx, lam, spec.back.layers) : null;
       for (let ti = Math.max(0, k0 - base); ti < Math.min(nT, k1 - base); ti++) {
         const th = spec.theta[ti] + dTheta;
-        const p = back ? incoherentPoint(layers, back, spec.back!.d, lam, th, pol) : tmmPoint(layers, lam, th, pol);
+        const point = (t: number) => (back ? incoherentPoint(layers, back, spec.back!.d, lam, t, pol) : tmmPoint(layers, lam, t, pol));
         const k = base + ti - k0;
+        if (spec.cone) {
+          // a converging beam: R, T, A averaged over its rays (the phases of the rays do not add up: NaN)
+          let [R, T, A] = [0, 0, 0];
+          for (const ray of coneRays(th, spec.cone)) {
+            const q = point(ray.theta);
+            R += ray.w * q.R;
+            T += ray.w * q.T;
+            A += ray.w * q.A;
+          }
+          [out.R[k], out.T[k], out.A[k]] = [R, T, A];
+          out.phiR[k] = out.phiT[k] = out.rRe[k] = out.rIm[k] = out.tRe[k] = out.tIm[k] = NaN;
+          continue;
+        }
+        const p = point(th);
         out.R[k] = p.R;
         out.T[k] = p.T;
         out.A[k] = p.A;

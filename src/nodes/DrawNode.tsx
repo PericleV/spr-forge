@@ -170,6 +170,8 @@ export function DrawNodeView({ id, data }: NodeProps<DrawNode>) {
     return blocks.filter((b) => !seen.has(overrideKey(b)) && seen.add(overrideKey(b)));
   }, [blocks]);
 
+  // the labels given here, for the layer list too
+  const names = useMemo(() => Object.fromEntries(Object.entries(data.overrides).flatMap(([k, o]) => (o?.label ? [[k, o.label]] : []))), [data.overrides]);
   const nameOf = (b: Block) => data.overrides[overrideKey(b)]?.label || b.name;
   const thickText = (L: StackLayer) => (L.layers2D ? `${L.layers2D} ML` : `${+L.d.toFixed(1)} nm`) + (L.vary ? ' (swept)' : '');
   const textOf = (b: Block) => {
@@ -343,7 +345,6 @@ export function DrawNodeView({ id, data }: NodeProps<DrawNode>) {
         )}
       </div>
 
-      {stack && <LayerListView stack={stack} name="stack" />}
       {unique.length > 0 && (
         <details className="nodrag">
           <summary>Labels ({unique.length}) — colours come from the Material nodes</summary>
@@ -360,6 +361,7 @@ export function DrawNodeView({ id, data }: NodeProps<DrawNode>) {
           </div>
         </details>
       )}
+      {stack && <LayerListView stack={stack} name="stack" names={names} />}
       <Messages result={result} />
       <OutPort label="stack" port="stack" />
     </div>

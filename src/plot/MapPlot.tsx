@@ -222,7 +222,7 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
           {traces.map((t) => (
             <path
               key={t.key}
-              d={t.x.map((x, i) => `${i ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(t.y[i]).toFixed(1)}`).join('')}
+              d={t.x.map((x, i) => (Number.isFinite(x) && Number.isFinite(t.y[i]) ? `${i && Number.isFinite(t.x[i - 1]) && Number.isFinite(t.y[i - 1]) ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(t.y[i]).toFixed(1)}` : '')).join('')}
               fill="none"
               stroke={t.color}
               strokeWidth={2}

@@ -95,16 +95,31 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
     runFieldMap(id, key, info.job, () => updateNodeData(id, { runKey: `${key}:${Date.now()}` }));
   };
 
-  // outlines: interfaces (horizontal) and the material walls of the grating slices (vertical), in height = −z
+  // outlines: interfaces (horizontal) and the material walls of the grating slices (vertical), in height = −z; a smooth
+  // (FFF) profile: its true outline (one trace per period, the polylines apart)
   const traces: Trace[] = [];
+  const smooth = !!map?.outlines.some((o) => o.lines);
   if (map && data.outlines && info?.period) {
     // every period the map covers (a window may start anywhere); the plot clips what lies outside
     const [x0, x1] = [map.xs[0], map.xs[map.xs.length - 1]];
     const P = info.period;
     map.boundaries.forEach((z, i) => traces.push({ key: `b${i}`, x: [x0, x1], y: [-z, -z], color: '#ffffff' }));
     map.outlines.forEach((o, i) => {
-      for (let p = Math.floor(x0 / P); p <= Math.ceil(x1 / P); p++)
+      for (let p = Math.floor(x0 / P); p <= Math.ceil(x1 / P); p++) {
         o.xs.forEach((x, j) => traces.push({ key: `w${i}-${p}-${j}`, x: [x + p * P, x + p * P], y: [-o.z0, -o.z1], color: '#ffffff' }));
+        if (o.lines) {
+          const [xl, yl]: [number[], number[]] = [[], []];
+          for (const ln of o.lines) {
+            for (let k = 0; k + 1 < ln.length; k += 2) {
+              xl.push(ln[k] + p * P);
+              yl.push(-ln[k + 1]);
+            }
+            xl.push(NaN);
+            yl.push(NaN);
+          }
+          traces.push({ key: `l${i}-${p}`, x: xl, y: yl, color: '#ffffff' });
+        }
+      }
     });
   }
   const winX = Number.isFinite(data.x0) || Number.isFinite(data.x1);
@@ -276,7 +291,7 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
           <div className="empty small">{info?.stale ? 'Out of date — press Run.' : 'Press Run to compute the field map.'}</div>
         )}
       </div>
-      {map && run?.status === 'done' && <div className="hint">computed in {run.seconds.toFixed(1)} s · incident medium at the top</div>}
+      {map && run?.status === 'done' && <div className="hint">computed in {run.seconds.toFixed(1)} s · incident medium at the top{smooth ? ' · smooth profile (FFF)' : ''}</div>}
       <Messages result={result} />
       <OutPort label="map (data)" port="data" />
     </div>

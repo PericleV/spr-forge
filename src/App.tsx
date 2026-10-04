@@ -46,6 +46,8 @@ import {
   RCWA_DEFAULTS,
   DRAWGRATING_DEFAULTS,
   RCWAFIELD_DEFAULTS,
+  KINETICS_DEFAULTS,
+  SENSORGRAM_DEFAULTS,
   ANISO_DEFAULTS,
   NOTES_DEFAULTS,
 } from './defaults.ts';
@@ -82,6 +84,7 @@ import { FilterNodeView } from './nodes/FilterNode.tsx';
 import { ToleranceNodeView } from './nodes/ToleranceNode.tsx';
 import { DrawGratingNodeView, GratingNodeView, RcwaNodeView } from './nodes/RcwaNodes.tsx';
 import { RcwaFieldNodeView } from './nodes/RcwaFieldNode.tsx';
+import { KineticsNodeView, SensorgramNodeView } from './nodes/SensorgramNodes.tsx';
 import { CustomNodeView, ExtractNodeView, MergeNodeView } from './nodes/DataNodes.tsx';
 import { FILTER_DEFAULTS } from './engine/filters.ts';
 import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeTitle } from './nodeColors.ts';
@@ -134,6 +137,8 @@ const baseNodeTypes = {
   rcwa: RcwaNodeView,
   drawgrating: DrawGratingNodeView,
   rcwafield: RcwaFieldNodeView,
+  kinetics: KineticsNodeView,
+  sensorgram: SensorgramNodeView,
   extract: ExtractNodeView,
   merge: MergeNodeView,
   custom: CustomNodeView,
@@ -195,6 +200,8 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       },
       { type: 'compute', label: 'Compute TMM', data: { name: '', polarization: 'p' } },
       { type: 'rcwa', label: 'Compute RCWA', data: RCWA_DEFAULTS },
+      { type: 'kinetics', label: 'Binding kinetics', data: KINETICS_DEFAULTS },
+      { type: 'sensorgram', label: 'Sensorgram', data: SENSORGRAM_DEFAULTS },
     ],
   },
   {
@@ -294,9 +301,10 @@ function Flow() {
   }, [userMaterials]);
   const engine = useEngine(nodes, edges, library.lib);
 
-  // Autosave (debounced) to the browser.
+  // Autosave (debounced) to the browser; a failure (storage full) is shown in the toolbar until a save succeeds.
+  const [autosaveFailed, setAutosaveFailed] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => autosave(toProject(nodes, edges, userMaterials, projectName)), 500);
+    const t = setTimeout(() => setAutosaveFailed(!autosave(toProject(nodes, edges, userMaterials, projectName))), 500);
     return () => clearTimeout(t);
   }, [nodes, edges, userMaterials, projectName]);
 
@@ -360,6 +368,7 @@ function Flow() {
         else {
           setWelcomeState(null);
           load(p, p.name ?? 'Shared project');
+          if (p.repaired) alert(p.repaired);
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -555,6 +564,11 @@ function Flow() {
           onChange={(e) => setProjectName(e.target.value)}
         />
         {history.canUndo && <span className="muted" title="Modified since it was loaded">•</span>}
+        {autosaveFailed && (
+          <span className="save-warning" title="The browser storage is full: the changes are not kept for the next visit. Save the project to a file (Save), or delete projects kept in the browser (Projects…).">
+            ⚠ not autosaved — use Save
+          </span>
+        )}
         <button onClick={newProject} title="Remove everything and start an empty project">New</button>
         <select
           className="examples-menu"
@@ -619,7 +633,10 @@ function Flow() {
             if (!f) return;
             const p = parseProject(await f.text());
             if (typeof p === 'string') alert(p);
-            else load(p, p.name ?? f.name.replace(/\.json$/i, ''));
+            else {
+              load(p, p.name ?? f.name.replace(/\.json$/i, ''));
+              if (p.repaired) alert(p.repaired);
+            }
           }}
         />
       </header>

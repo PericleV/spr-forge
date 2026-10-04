@@ -1,5 +1,5 @@
 // Help: getting started, the nodes by section, keyboard and mouse, the examples and the validation of the physics.
-import { GETTING_STARTED, NODE_HELP, SHORTCUTS, VALIDATION } from './help.ts';
+import { GETTING_STARTED, GLOSSARY, NODE_HELP, SHORTCUTS, VALIDATION } from './help.ts';
 import { GROUP_COLORS, HIDDEN_NODES, NODE_SECTION, NODE_TITLES } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
@@ -37,6 +37,18 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
           </dl>
         </details>
       ))}
+      <h4>Glossary</h4>
+      <details>
+        <summary>SPR and binding experiments</summary>
+        <dl>
+          {GLOSSARY.map(([k, v]) => (
+            <div key={k}>
+              <dt>{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
       <h4>Mouse and keyboard</h4>
       <table className="help-table">
         <tbody>

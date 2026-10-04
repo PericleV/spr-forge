@@ -1,5 +1,5 @@
 // Combine notes: the notes of its slots, in order, as one document; preview and export (.md, .txt).
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NodeResizer, useReactFlow, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { NotesInfo } from '../engine/evaluate.ts';
@@ -16,6 +16,11 @@ export function NotesNodeView({ id, data, selected }: NodeProps<NotesNode>) {
   useEffect(() => updateNodeInternals(id), [id, data.count, updateNodeInternals]);
   const result = useNodeResult(id);
   const info = result?.info as NotesInfo | undefined;
+  // the size stays local while dragging (see the Info node): node data written mid-drag races the resizer
+  const [live, setLive] = useState<{ width: number; height: number } | null>(null);
+  const size = (p: { width: number; height: number }) => ({ width: p.width, height: Math.max(180, p.height - 32) });
+  const width = live?.width ?? data.width;
+  const height = live?.height ?? data.height;
   const out = result?.outs.out;
   const doc = out?.type === 'note' ? out.doc : undefined;
   const md = doc ? noteMarkdown(doc) : '';
@@ -25,9 +30,18 @@ export function NotesNodeView({ id, data, selected }: NodeProps<NotesNode>) {
     set({ count: n });
   };
   return (
-    <div className={`node node-notes${data.height ? ' sized' : ''}`} style={{ ...(data.width ? { width: data.width } : {}), ...(data.height ? { height: data.height } : {}) }}>
+    <div className={`node node-notes${height ? ' sized' : ''}`} style={{ ...(width ? { width } : {}), ...(height ? { height } : {}) }}>
       {/* resizable like an Info node: the preview takes the room */}
-      <NodeResizer isVisible={selected} minWidth={260} minHeight={220} onResize={(_, p) => set({ width: p.width, height: Math.max(180, p.height - 32) })} />
+      <NodeResizer
+        isVisible={selected}
+        minWidth={260}
+        minHeight={220}
+        onResize={(_, p) => setLive(size(p))}
+        onResizeEnd={(_, p) => {
+          setLive(null);
+          set(size(p));
+        }}
+      />
       <label>
         Title
         <input className="nodrag" value={data.name} placeholder="(none)" onChange={(e) => set({ name: e.target.value })} />

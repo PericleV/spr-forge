@@ -7,7 +7,7 @@ import type { FormulaInfo } from '../engine/evaluate.ts';
 import { FUNCTION_NAMES } from '../engine/expr.ts';
 import type { FormulaStat } from '../engine/objectives.ts';
 import type { AppNode, FormulaData, FormulaNode, FormulaTerm, InfoData, InfoNode } from '../types.ts';
-import { Messages, NumInput, OutPort, Port, Radios, SliceControls } from './ui.tsx';
+import { AutoText, Messages, NumInput, OutPort, Port, Radios, SliceControls } from './ui.tsx';
 
 const fmt = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? `${+v.toPrecision(5)}` : '—');
 
@@ -48,15 +48,30 @@ export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
     set({ text: r.text });
     t?.focus();
   };
-  const frame = { width: data.width, height: data.height, ...(data.color ? { '--node-color': data.color } : {}) } as CSSProperties;
-  const resizer = <NodeResizer isVisible={selected} minWidth={180} minHeight={90} onResize={(_, p) => set({ width: p.width, height: Math.max(60, p.height - 32) })} />;
+  // while dragging, the size stays local: writing the node data then would race the resizer's own position change
+  // (dragging the left or top edge moved the note without resizing it)
+  const [live, setLive] = useState<{ width: number; height: number } | null>(null);
+  const size = (p: { width: number; height: number }) => ({ width: p.width, height: Math.max(60, p.height - 32) });
+  const frame = { width: live?.width ?? data.width, height: live?.height ?? data.height, ...(data.color ? { '--node-color': data.color } : {}) } as CSSProperties;
+  const resizer = (
+    <NodeResizer
+      isVisible={selected}
+      minWidth={180}
+      minHeight={90}
+      onResize={(_, p) => setLive(size(p))}
+      onResizeEnd={(_, p) => {
+        setLive(null);
+        set(size(p));
+      }}
+    />
+  );
   // formatting hidden: a plain text box, as written
   if (!SHOW_FORMATTING)
     return (
       <div className="node node-info" style={frame}>
         {resizer}
         <div className="row port-row">
-          <input className="nodrag title-input" value={data.title} placeholder="Title" onChange={(e) => set({ title: e.target.value })} />
+          <AutoText className="title-input" value={data.title} placeholder="Title" onChange={(title) => set({ title })} />
           <input className="nodrag" type="color" value={data.color || '#8a93a6'} title="colour of the note" onChange={(e) => set({ color: e.target.value })} />
           <Port kind="source" id="out" port="note" />
         </div>
@@ -68,7 +83,7 @@ export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
       {resizer}
       {/* a port row: the note's output handle sits on the node's right edge, level with the title */}
       <div className="row port-row">
-        <input className="nodrag title-input" value={data.title} placeholder="Title" onChange={(e) => set({ title: e.target.value })} />
+        <AutoText className="title-input" value={data.title} placeholder="Title" onChange={(title) => set({ title })} />
         <input className="nodrag" type="color" value={data.color || '#8a93a6'} title="colour of the note" onChange={(e) => set({ color: e.target.value })} />
         <Port kind="source" id="out" port="note" />
       </div>

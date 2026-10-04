@@ -77,6 +77,17 @@ export function ComputeNodeView({ id, data }: NodeProps<ComputeNode>) {
         </div>
       )}
       {info?.berreman && <div className="hint">Berreman 4×4 method (anisotropic layers{data.polMix ? ', Jones / circular state' : ''}).</div>}
+      <div className="row wrap">
+        <label className="radio" title="A converging beam: every θ is the mean of R, T, A over the rays of a cone of this half-angle around it (pupil filled uniformly; s / p in each ray's own plane of incidence — exact for unpolarized light). The phases are then not defined. Isotropic stacks.">
+          <input className="nodrag" type="checkbox" checked={!!data.cone} onChange={(e) => set({ cone: e.target.checked })} />
+          cone of light
+        </label>
+        {data.cone && (
+          <label className="radio">
+            half-angle <NumInput className="tiny" value={data.coneHalf ?? 5} step={1} onChange={(coneHalf) => set({ coneHalf })} /> °
+          </label>
+        )}
+      </div>
 
       <Messages result={result} />
       {result?.pending && (

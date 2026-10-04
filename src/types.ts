@@ -13,7 +13,8 @@ import type { ColorMapName } from './plot/colors.ts';
 import type { FitComponent, FitParam, Mode2Model } from './engine/fitmodels.ts';
 import type { Component } from './physics/field.ts';
 import type { FitStats } from './engine/fitrun.ts';
-import type { LevelMethod } from './engine/metrics.ts';
+import type { LevelMethod, LocateMethod } from './engine/metrics.ts';
+import type { KineticModel } from './engine/kinetics.ts';
 import type { FormulaStat, MetricGoal, MetricStat, Outside, Zone, ZoneReduce } from './engine/objectives.ts';
 import type { SpecKind, SpecPol } from './engine/spec.ts';
 import type { Quantity, SweepKind } from './engine/types.ts';
@@ -82,7 +83,8 @@ export type SweepData = {
   list: string;
 };
 // phi, polMix: as in Compute RCWA (used by the Berreman 4×4 computation: anisotropic layers, or a Jones state)
-export type ComputeData = { name: string; polarization: Polarization; phi?: number; polMix?: { psi: number; delta: number } };
+// cone / coneHalf: a converging beam, each θ averaged over the rays of a cone of this half-angle (°; isotropic stacks)
+export type ComputeData = { name: string; polarization: Polarization; phi?: number; polMix?: { psi: number; delta: number }; cone?: boolean; coneHalf?: number };
 export type PlotMode = 'auto' | 'curves' | 'map' | 'histogram';
 export type PlotData = {
   field: string;
@@ -140,7 +142,9 @@ export type ZonePoint = { y: number; lo: number; hi: number };
 export type ZonePath = { at: string; pts: ZonePoint[] };
 // With a path the interval is the zone; lo / hi are kept for when the path is removed.
 export type Interval = { lo: number; hi: number; path?: ZonePath };
-export type ExtremumData = { mode: 'min' | 'max'; field: string; along: string; lo: number; hi: number; path?: ZonePath; color: string };
+// locate / locLevel / locDeg: how the position of the dip (peak) is found (engine/metrics.ts `Locate`; absent = parabola)
+export type LocateFields = { locate?: LocateMethod; locLevel?: number; locDeg?: number };
+export type ExtremumData = { mode: 'min' | 'max'; field: string; along: string; lo: number; hi: number; path?: ZonePath; color: string } & LocateFields;
 export type FwhmData = {
   kind: 'dip' | 'peak';
   field: string;
@@ -149,7 +153,7 @@ export type FwhmData = {
   level: number; // for method 'absolute'
   intervals: Interval[];
   color: string;
-};
+} & LocateFields;
 export type SensitivityData = {
   target: string; // 'mat:<instance key>' or 'layer:<index>'
   dn: number;
@@ -160,7 +164,7 @@ export type SensitivityData = {
   hi: number;
   path?: ZonePath;
   color: string;
-};
+} & LocateFields;
 
 export type FitData = {
   mode: 'spectrum' | 'dispersion';
@@ -407,7 +411,8 @@ export type RoughData = {
 export type RoughNode = Node<RoughData, 'rough'>;
 
 // Filter designer: target bands (λ), materials H / L (/ M), constraints, algorithm; the designed layers are kept here.
-export type FilterBand = { lo: number; hi: number; q: 'R' | 'T' | 'A' | 'OD'; value: number; weight: number; kind?: SpecKind; tol?: number };
+// avg: the band's mean (trapezoid in λ) or its photopic mean (V(λ)·D65, e.g. Rv) is the target, not every point
+export type FilterBand = { lo: number; hi: number; q: 'R' | 'T' | 'A' | 'OD'; value: number; weight: number; kind?: SpecKind; tol?: number; avg?: 'mean' | 'photopic' };
 export type FilterData = {
   name: string;
   preset: 'custom' | 'ar' | 'longpass' | 'shortpass' | 'bandpass' | 'notch' | 'mirror';
@@ -438,10 +443,19 @@ export type FilterData = {
   startPeriods: number;
   startMat: number;
   startD: number;
-  design: { front: { m: number; d: number }[]; back: { m: number; d: number }[] };
+  design: { front: { m: number; d: number; fix?: boolean; tie?: string }[]; back: { m: number; d: number; fix?: boolean; tie?: string }[] };
   merit: number;
   history: number[];
   historyD?: number[]; // total physical thickness after each step (merit vs thickness)
+  matMin?: number[]; // per coating material: its own min / max layer thickness (NaN / absent: min d / max d)
+  matMax?: number[];
+  // a converging beam around each angle: half-angle (°) in the incident medium, or from an f-number
+  cone?: boolean;
+  coneHalf?: number;
+  coneF?: number;
+  coneBy?: 'angle' | 'f';
+  sensStep?: number; // layer sensitivity: the thickness error (nm, or % with sensRel)
+  sensRel?: boolean;
 };
 export type FilterNode = Node<FilterData, 'filter'>;
 
@@ -481,8 +495,82 @@ export type ToleranceData = {
   // curve's axis, else λ when it is a range, else θ)
   along?: string;
   criteria?: ToleranceCriterion[];
-};
+  // layers left out of the random errors (indices as dOverride), σ of Δn of individual layers
+  dSkip?: number[];
+  nSkip?: number[];
+  nOverride?: Record<string, number>;
+  // systematic errors per material (key = material instance): left out, or their own σ
+  sysSkipD?: string[];
+  sysSkipN?: string[];
+  dSysOverride?: Record<string, number>;
+  nSysOverride?: Record<string, number>;
+  preview?: number; // the sample shown on the preview of the measured signal (1 …)
+} & InstrumentFields;
 export type ToleranceNode = Node<ToleranceData, 'tolerance'>;
+// The instrument (engine/instrument.ts): angular spread of the beam, source bandwidth, detector noise (Tolerance,
+// Sensorgram).
+export type InstrumentFields = {
+  spreadOn?: boolean;
+  spread?: number; // ° (σ or ± half-angle) or NA, by spreadShape
+  spreadShape?: 'gauss' | 'uniform' | 'na';
+  bandOn?: boolean;
+  band?: number; // nm FWHM
+  noise?: boolean;
+  noiseAdd?: number; // σ, units of R
+  noiseShot?: number; // photoelectrons at R = 1 (0 = off)
+  noiseSource?: number; // % per scan
+  noiseAvg?: number; // scans averaged
+  noiseBits?: number; // ADC bits (0 = off)
+};
+
+// ---- Sensorgrams ----
+// Binding kinetics (engine/kinetics.ts): the model, its constants, the analyte, the protocol (steps; c in nM).
+export type KineticsStepData = { label: string; t: number; c: number; regen?: boolean; swell?: number };
+export type KineticsData = {
+  name: string;
+  model: KineticModel;
+  ka: number;
+  kd: number;
+  rmax: number;
+  kt: number;
+  ka2: number;
+  kd2: number;
+  rmax2: number;
+  tau: number;
+  analyte: string; // a key of ANALYTES, or 'custom' (the values below)
+  mw: number;
+  dndc: number;
+  rho: number;
+  dims: [number, number, number]; // nm, a ≥ b ≥ c (custom analyte)
+  orient: 'side' | 'end'; // lying (side-on) or standing (end-on) on the surface
+  surface: 'ligand' | 'rsa'; // 1:1 models: ligand sites (Rmax typed) or a free surface (random sequential adsorption)
+  ionic: number; // ionic strength, mM (the double layer: repulsion between bound molecules)
+  zeta: number; // ζ potential of the analyte, mV
+  steps: KineticsStepData[];
+  dt: number; // s between samples
+  sweepOf: 'c' | 'ka' | 'kd' | 'rmax' | 'kt' | 'ka2' | 'kd2' | 'tau' | 'ionic' | 'zeta'; // the constant a connected Sweep varies
+};
+export type KineticsNode = Node<KineticsData, 'kinetics'>;
+// Sensorgram: the Compute TMM structure with a binding layer on the sensing medium (or a target layer that takes up
+// the analyte / swells), recomputed at every time of the kinetics; the dip (or R at a point) vs time.
+export type SensorgramData = {
+  name: string;
+  target: string; // '' = the exit medium (a binding layer is added on it); 'layer:<i>' = layer i of the structure
+  // binding layer: 'auto' = a monolayer as high as the molecule while it fits (up to the jamming capacity), then
+  // growing with the extra mass (multilayer); 'compact' = all the mass as a dense layer, d = Γ/ρ
+  thick: 'auto' | 'compact';
+  drift: number; // baseline drift of the buffer index, µRIU/min
+  mixing: 'linear' | 'bruggeman' | 'maxwell-garnett'; // linear in n = de Feijter
+  bulk: boolean; // the bulk index of the flowing analyte solution (dn/dc · c)
+  along: string; // interrogation axis ('' = θ, else λ)
+  readout: 'dip' | 'value';
+  at: number; // readout 'value': R at this angle / wavelength
+  track: boolean; // the dip refined between the grid points (exact; without noise)
+  maxTimes: number; // time points computed (at most)
+  seed: number; // detector noise realization (the `seed` port sweeps it: one series per seed)
+} & LocateFields &
+  InstrumentFields;
+export type SensorgramNode = Node<SensorgramData, 'sensorgram'>;
 
 // ---- RCWA (1D gratings) ----
 export type GratingData = {
@@ -501,7 +589,9 @@ export type GratingData = {
 // asr: adaptive spatial resolution (faster convergence at the edges, metals in TM), eta its strength (0 … 0.99)
 // phi: azimuth of the plane of incidence from the grating vector, degrees (≠ 0: conical incidence; the `phi` port sweeps it)
 // polMix: an incident Jones state E = cos ψ p̂ + sin ψ e^{iδ} ŝ (degrees) instead of TE / TM
-export type RcwaData = { name: string; polarization: Polarization; orders: number; show: number; asr?: boolean; eta?: number; phi?: number; polMix?: { psi: number; delta: number } };
+// profiles: how trapezoid / sinus / blazed gratings are computed — staircase slices, or their smooth profile by the
+// differential method with fast Fourier factorization (absent in projects saved before it: the staircase)
+export type RcwaData = { name: string; polarization: Polarization; orders: number; show: number; asr?: boolean; eta?: number; phi?: number; polMix?: { psi: number; delta: number }; profiles?: 'staircase' | 'fff' };
 export type DrawGratingData = { periods: number; grid: boolean; brush: number; layer: number };
 export type RcwaFieldData = {
   res?: 'R' | 'T' | 'A'; // λ / θ start at the resonance: the minimum of R (default) or the maximum of T or A
@@ -603,6 +693,8 @@ export type AppNode =
   | RcwaNode
   | DrawGratingNode
   | RcwaFieldNode
+  | KineticsNode
+  | SensorgramNode
   | FrameNode;
 
 // Group frame: a named, coloured box; the grouped nodes are its children (they move with it).

@@ -4,7 +4,8 @@
 // Segments: x in units of the period, [from, to) covering [0, 1).
 export type Cx = [number, number]; // re, im
 // eps: a homogeneous anisotropic layer, the 3×3 tensor row-major (our axes: z down into the structure)
-export type RetLayer = { d: number; n?: Cx; segs?: { from: number; to: number; n: Cx }[]; eps?: Cx[] };
+// segs[].eps: a diagonal anisotropic segment (εxx, εyy, εzz; n is then unused) — Reticolo parm.res1.change_index
+export type RetLayer = { d: number; n?: Cx; segs?: { from: number; to: number; n: Cx; eps?: [Cx, Cx, Cx] }[]; eps?: Cx[] };
 export type RetCase = {
   id: string;
   source: string;
@@ -37,6 +38,19 @@ const lamellar = (fill: number, ridge: Cx, groove: Cx, d: number, from = 0): Ret
 // ε = (0.22 + 6.71 i)² = −44.9757 + 2.9524 i: the classic metallic lamellar benchmark (Li 1996, Granet 1999)
 const nLi: Cx = [0.22, 6.71];
 
+// ε of a fraction f of a and 1 − f of b, as the sub-pixel smoothing of a rough slice: εxx = εyy arithmetic, εzz harmonic
+const cmul = (a: Cx, b: Cx): Cx => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+const cinv = (a: Cx): Cx => [a[0] / (a[0] ** 2 + a[1] ** 2), -a[1] / (a[0] ** 2 + a[1] ** 2)];
+const sq = (n: Cx) => cmul(n, n);
+const mix = (a: Cx, b: Cx, f: number): [Cx, Cx, Cx] => {
+  const [ea, eb] = [sq(a), sq(b)];
+  const ar: Cx = [f * ea[0] + (1 - f) * eb[0], f * ea[1] + (1 - f) * eb[1]];
+  const [ia, ib] = [cinv(ea), cinv(eb)];
+  return [ar, ar, cinv([f * ia[0] + (1 - f) * ib[0], f * ia[1] + (1 - f) * ib[1]])];
+};
+const AU633: Cx = [0.18344, 3.4332]; // gold at 633 nm (Treebupachatsakul et al. 2021)
+const WATER: Cx = [1.33, 0];
+
 export const RETICOLO_CASES: RetCase[] = [
   // Li / Granet metallic lamellar grating: Λ = λ = 1, depth 1, fill 0.5, 30°
   ...(['s', 'p'] as const).flatMap((pol) =>
@@ -52,6 +66,35 @@ export const RETICOLO_CASES: RetCase[] = [
   ...[9.2, 9.9, 10.05, 10.8].map((lam): RetCase => ({ id: `ex5-${lam}`, source: 'Reticolo exemple5_1D', lam, period: 10, top: [1, 0], bottom: [1.5, 0], layers: [lamellar(0.2, [1.5, 0], [1, 0], 20, 0.4)], theta: 0, pol: 'p', N: 10 })),
   // Reticolo exemple_1D_pertes (case 1): lossy (0.1 + 5i) grating with slits, incident medium 1.2, 10°
   ...(['s', 'p'] as const).map((pol): RetCase => ({ id: `loss-${pol}`, source: 'Reticolo exemple_1D_pertes', lam: 8, period: 10, top: [1.2, 0], bottom: [1.5, 0], layers: [lamellar(0.8, [0.1, 5], [1, 0], 0.3, 0.1)], theta: 10, pol, N: 50 })),
+  // diagonal anisotropy in grating segments (Reticolo parm.res1.change_index): a uniaxial dielectric ridge, TE and TM
+  ...(['s', 'p'] as const).map((pol): RetCase => ({
+    id: `aniso-seg-${pol}`,
+    source: 'diagonal anisotropic segment (Reticolo change_index)',
+    lam: 633,
+    period: 500,
+    top: [1, 0],
+    bottom: [1.5, 0],
+    layers: [{ d: 300, segs: [{ from: 0, to: 0.4, n: [1.5, 0], eps: [[2.25, 0], [3.0, 0], [1.8, 0]] }, { from: 0.4, to: 1, n: [1, 0] }] }],
+    theta: 20,
+    pol,
+    N: 15,
+  })),
+  // a gold film under a slice of smoothed sub-pixels (gold / water mixtures), Kretschmann at 70°: the rough-SPR case
+  ...(['s', 'p'] as const).map((pol): RetCase => ({
+    id: `aniso-mix-${pol}`,
+    source: 'smoothed rough slice: Au / water sub-pixels (Reticolo change_index)',
+    lam: 633,
+    period: 500,
+    top: [1.515, 0],
+    bottom: WATER,
+    layers: [
+      { d: 45, n: AU633 },
+      { d: 4, segs: [{ from: 0, to: 0.3, n: AU633 }, { from: 0.3, to: 0.45, n: [1, 0], eps: mix(AU633, WATER, 0.6) }, { from: 0.45, to: 0.7, n: [1, 0], eps: mix(AU633, WATER, 0.25) }, { from: 0.7, to: 1, n: WATER }] },
+    ],
+    theta: 70,
+    pol,
+    N: 20,
+  })),
   // Reticolo exemple11_1D: extraordinary transmission through a metallic slit array (TM, normal incidence)
   ...[0.5, 1.5, 2.7].map((h): RetCase => ({ id: `eot-${h}`, source: 'Reticolo exemple11_1D', lam: 6, period: 5, top: [1, 0], bottom: [1, 0], layers: [lamellar(0.6, [0.030465, 3.2792], [1, 0], h, 0.2)], theta: 0, pol: 'p', N: 10 })),
   // Reticolo exemple10_1D: echelette approximated by 12 steps (λ = 13, Λ = 30), two angles, TE and TM

@@ -5,7 +5,15 @@ import type { AppNode } from './types.ts';
 import { NODE_TITLES } from './nodeColors.ts';
 
 // name: the project's title (an example's name, a file name or typed by the user); optional, format 3 unchanged.
-export type Project = { app: 'spr-flow'; version: 3; nodes: AppNode[]; edges: Edge[]; materials: MaterialDef[]; name?: string };
+// repaired: set when a damaged file was opened — what was left out (not saved: a note for the user).
+export type Project = { app: 'spr-flow'; version: 3; nodes: AppNode[]; edges: Edge[]; materials: MaterialDef[]; name?: string; repaired?: string };
+
+// The format of project files. Saved files must keep opening in later versions: a change of the format bumps this number
+// together with its conversion in MIGRATIONS, and a file of the old format joins scripts/fixtures (checked by check:tmm).
+// Within a format, node data only gain optional fields (the nodes read missing ones as their defaults).
+export const PROJECT_VERSION = 3;
+// MIGRATIONS[v] turns a file of format v into format v + 1 (none yet: format 3 is the first published one).
+const MIGRATIONS: Record<number, (p: Record<string, unknown>) => Record<string, unknown>> = {};
 
 const STORAGE_KEY = 'spr-flow:project';
 
@@ -26,7 +34,7 @@ export function toProject(nodes: AppNode[], edges: Edge[], materials: MaterialDe
 // JSON has no NaN / ±Infinity (they would become null): numbers that are not finite are written as {"$num": "NaN"}.
 const NONFINITE = '$num';
 export const stringifyProject = (p: Project, indent?: number) =>
-  JSON.stringify(p, (_, v) => (typeof v === 'number' && !Number.isFinite(v) ? { [NONFINITE]: String(v) } : v), indent);
+  JSON.stringify({ ...p, repaired: undefined }, (_, v) => (typeof v === 'number' && !Number.isFinite(v) ? { [NONFINITE]: String(v) } : v), indent);
 const revive = (_: string, v: unknown) =>
   v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 1 && NONFINITE in v ? Number((v as Record<string, string>)[NONFINITE]) : v;
 
@@ -35,25 +43,39 @@ const finite = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 
 // A damaged file must not stop the application: nodes without an id, a known type or data are left out (with their
 // connections), a missing position becomes (0, 0), connections to missing nodes and unknown group frames are removed.
-function checked(nodes: unknown[], edges: unknown[]): { nodes: AppNode[]; edges: Edge[] } {
+function checked(nodes: unknown[], edges: unknown[]): { nodes: AppNode[]; edges: Edge[]; repaired?: string } {
   const valid = nodes.filter((n): n is Record<string, unknown> & { id: string } => isObj(n) && typeof n.id === 'string' && typeof n.type === 'string' && n.type in NODE_TITLES && isObj(n.data));
   const ids = new Set(valid.map((n) => n.id));
+  const kept = edges.filter((e): e is Edge => isObj(e) && typeof e.id === 'string' && typeof e.source === 'string' && typeof e.target === 'string' && ids.has(e.source) && ids.has(e.target));
+  // what was left out, for the user (a node of a type this version does not know, a broken connection)
+  const unknown = [...new Set(nodes.filter((n) => isObj(n) && typeof n.type === 'string' && !(n.type in NODE_TITLES)).map((n) => (n as { type: string }).type))];
+  const lostN = nodes.length - valid.length;
+  const lostE = edges.length - kept.length;
+  const repaired = lostN || lostE ? `The file was repaired: ${[lostN ? `${lostN} node${lostN > 1 ? 's' : ''} left out${unknown.length ? ` (unknown type${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')})` : ''}` : '', lostE ? `${lostE} connection${lostE > 1 ? 's' : ''} left out` : ''].filter(Boolean).join(', ')}.` : undefined;
   return {
     nodes: valid.map((n) => {
       const out: Record<string, unknown> = { ...n, position: isObj(n.position) && finite(n.position.x) && finite(n.position.y) ? n.position : { x: 0, y: 0 } };
       if (!(typeof n.parentId === 'string' && ids.has(n.parentId))) delete out.parentId;
       return out as AppNode;
     }),
-    edges: edges.filter((e): e is Edge => isObj(e) && typeof e.id === 'string' && typeof e.source === 'string' && typeof e.target === 'string' && ids.has(e.source) && ids.has(e.target)),
+    edges: kept,
+    ...(repaired ? { repaired } : {}),
   };
 }
 
 export function parseProject(text: string): Project | string {
   try {
-    const p = JSON.parse(text, revive) as Partial<Project>;
-    if (p.app !== 'spr-flow' || !Array.isArray(p.nodes) || !Array.isArray(p.edges)) return 'Not an SPR Forge project file.';
-    if (p.version !== 3) return `This project was saved by an older version of SPR Forge (format ${p.version}); it cannot be opened.`;
-    return { app: 'spr-flow', version: 3, ...checked(p.nodes, p.edges), materials: Array.isArray(p.materials) ? p.materials : [], ...(typeof p.name === 'string' && p.name ? { name: p.name } : {}) };
+    let p = JSON.parse(text, revive) as Record<string, unknown>;
+    if (!isObj(p) || p.app !== 'spr-flow') return 'Not an SPR Forge project file.';
+    const v0 = p.version;
+    if (typeof v0 !== 'number') return 'Not an SPR Forge project file (no format version).';
+    if (v0 > PROJECT_VERSION) return `This project was saved by a newer version of SPR Forge (format ${v0}; this page reads up to ${PROJECT_VERSION}). Reload the page to get the latest version.`;
+    for (let v = v0; v < PROJECT_VERSION; v++) {
+      if (!MIGRATIONS[v]) return `This project was saved by an older version of SPR Forge (format ${v0}); it cannot be opened.`;
+      p = { ...MIGRATIONS[v](p), version: v + 1 };
+    }
+    if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) return 'Not an SPR Forge project file.';
+    return { app: 'spr-flow', version: 3, ...checked(p.nodes, p.edges), materials: Array.isArray(p.materials) ? (p.materials as MaterialDef[]) : [], ...(typeof p.name === 'string' && p.name ? { name: p.name } : {}) };
   } catch {
     return 'The file is not valid JSON.';
   }
@@ -69,11 +91,13 @@ export function loadAutosave(): Project | null {
   }
 }
 
-export function autosave(p: Project) {
+// false: the browser storage is full or unavailable (the page tells the user: a reload would lose the changes)
+export function autosave(p: Project): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, stringifyProject(p));
+    return true;
   } catch {
-    // storage full or unavailable: autosave is best effort
+    return false;
   }
 }
 

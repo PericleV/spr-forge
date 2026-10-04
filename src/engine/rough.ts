@@ -9,6 +9,9 @@
 import * as X from '../physics/complex.ts';
 import { c, type C } from '../physics/complex.ts';
 import type { EmaMethod } from '../physics/materials.ts';
+import type { SliceSeg } from './grating.ts';
+import type { Segment } from '../physics/rcwa.ts';
+import type { FffProfile, NormalSeg } from '../physics/rcwaFff.ts';
 import type { Bound, LayerSpec } from './types.ts';
 
 export type RoughParams = {
@@ -146,9 +149,12 @@ export function roughAt(r: RoughSpec, dims: number[], idx: number[]): RoughParam
 
 export type PlanItem =
   | { kind: 'layer'; i: number; d: number } // (a part of) layer i of the list, flat
-  | { kind: 'slice'; d: number; owner: number; mats: number[]; frac: number[]; segs: { from: number; to: number; m: number }[]; ema: EmaMethod };
+  | { kind: 'slice'; d: number; owner: number; mats: number[]; frac: number[]; segs: SliceSeg[]; ema: EmaMethod; zone: number };
+// A rough zone: depths z0 … z1 (nm from the top of the first finite layer), its surfaces k0 … k1 sampled at px points over the
+// cell (the smooth FFF profile is the line through them); below surface k lies layer k + 1 of the list.
+export type RoughZone = { z0: number; z1: number; k0: number; k1: number; S: Float64Array[]; px: number };
 // notes: a thin film made conformal (layer: its index in the list), a film pinched off
-export type Plan = { items: PlanItem[]; cell: number; notes: { layer?: number; text: string }[] };
+export type Plan = { items: PlanItem[]; cell: number; notes: { layer?: number; text: string }[]; zones: RoughZone[] };
 
 const plans = new WeakMap<LayerSpec[], Map<string, Plan | null>>();
 
@@ -181,7 +187,7 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
     const r = up ?? dn;
     return r ? roughAt(r, dims, idx) : null;
   });
-  if (!par.some((p) => p)) return { items: list.map((_, i) => ({ kind: 'layer', i, d: d[i] })), cell: cellFixed ?? 1000, notes };
+  if (!par.some((p) => p)) return { items: list.map((_, i) => ({ kind: 'layer', i, d: d[i] })), cell: cellFixed ?? 1000, notes, zones: [] };
   const cell = cellFixed ?? par.find((p) => p)!.cell;
   const px = Math.max(...par.map((p) => (p ? Math.round(p.px) : 0)));
   // unit shapes: an own realization per interface; a thin film's second interface copies the first one's shape
@@ -238,22 +244,23 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
     if (gi >= 0) {
       if (done.has(gi)) continue;
       done.add(gi);
-      items.push(...sliceGroup(groups[gi], S, par, px));
+      items.push(...sliceGroup(groups[gi], S, par, px, gi));
       continue;
     }
     // the layer containing depth m (outside the finite layers: nothing, the media are semi-infinite)
     for (let j = 1; j < n - 1; j++) if (m > z[j - 1] && m < z[j]) push(j, b - a);
   }
   // zones reaching above the first finite layer or below the last one
-  for (let gi = 0; gi < groups.length; gi++) if (!done.has(gi)) items.push(...sliceGroup(groups[gi], S, par, px));
+  for (let gi = 0; gi < groups.length; gi++) if (!done.has(gi)) items.push(...sliceGroup(groups[gi], S, par, px, gi));
   items.push({ kind: 'layer', i: n - 1, d: 0 });
-  return { items, cell, notes };
+  return { items, cell, notes, zones: groups.map((g) => ({ ...g, S: S.slice(g.k0, g.k1 + 1), px })) };
 }
 
 // Nearest-point resampling of a periodic profile to n points.
 const resample = (h: Float64Array, n: number) => (h.length === n ? h : Float64Array.from({ length: n }, (_, i) => h[Math.floor((i * h.length) / n)]));
 
-function sliceGroup(g: { k0: number; k1: number; z0: number; z1: number }, S: Float64Array[], par: (RoughParams | null)[], px: number): PlanItem[] {
+type Group = { k0: number; k1: number; z0: number; z1: number };
+function sliceGroup(g: Group, S: Float64Array[], par: (RoughParams | null)[], px: number, zone: number): PlanItem[] {
   const members = par.slice(g.k0, g.k1 + 1).filter((p): p is RoughParams => !!p);
   const N = Math.max(1, members.reduce((s, p) => s + Math.max(1, Math.round(p.slices)), 0));
   const ema = members[0]?.ema ?? 'bruggeman';
@@ -279,9 +286,64 @@ function sliceGroup(g: { k0: number; k1: number; z0: number; z1: number }, S: Fl
     const mats = [...count.keys()].sort((a, b) => a - b);
     const frac = mats.map((m) => count.get(m)! / px);
     const owner = mats[frac.indexOf(Math.max(...frac))];
-    out.push({ kind: 'slice', d: h, owner, mats, frac, segs, ema });
+    out.push({ kind: 'slice', d: h, owner, mats, frac, segs, ema, zone });
   }
   return out;
+}
+
+// The smooth (FFF) profile of a rough zone: each surface the line through its points (pixel centres, periodic); at depth
+// t the layers between the crossings, exactly; the normal from the slope of the first surface of the zone (exact for one
+// surface and for a conformal film of equal height). n(k): refractive index of layer k of the list.
+export function roughFff(z: RoughZone, cell: number, n: (k: number) => C): FffProfile {
+  const { px, S, k0 } = z;
+  const depth = z.z1 - z.z0;
+  const xc = (i: number) => (i + 0.5) / px;
+  const segsAt = (t: number): Segment[] => {
+    const zz = z.z0 + Math.min(1, Math.max(0, t)) * depth;
+    const cuts: number[] = [0, 1];
+    for (const s of S)
+      for (let i = -1; i < px; i++) {
+        const [a, b] = [s[(i + px) % px], s[(i + 1) % px]];
+        if ((a - zz) * (b - zz) < 0) {
+          const x = xc(i) + ((zz - a) / (b - a)) / px;
+          if (x > 0 && x < 1) cuts.push(x);
+        }
+      }
+    cuts.sort((p, q) => p - q);
+    // the layer at x: below every surface above zz (surfaces interpolated linearly)
+    const at = (x: number) => {
+      const u = x * px - 0.5;
+      const i = Math.floor(u);
+      const f = u - i;
+      let L = k0;
+      S.forEach((s, j) => {
+        const h = (1 - f) * s[((i % px) + px) % px] + f * s[(((i + 1) % px) + px) % px];
+        if (h <= zz) L = k0 + j + 1;
+      });
+      return L;
+    };
+    const out: Segment[] = [];
+    let last = -1;
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      if (!(cuts[k + 1] > cuts[k] + 1e-12)) continue;
+      const L = at((cuts[k] + cuts[k + 1]) / 2);
+      if (L === last) out[out.length - 1].to = cuts[k + 1];
+      else out.push({ from: cuts[k], to: cuts[k + 1], n: n(L) });
+      last = L;
+    }
+    return out;
+  };
+  // the normal of each linear piece of the first surface (−dz/dx, 1), dz/dx in nm/nm
+  const s0 = S[0];
+  const normals: NormalSeg[] = [];
+  for (let i = -1; i < px; i++) {
+    const slope = (s0[(i + 1) % px] - s0[(i + px) % px]) / (cell / px);
+    const [a, b] = [Math.max(0, xc(i)), Math.min(1, xc(i + 1))];
+    if (b > a) normals.push({ from: a, to: b, nx: -slope, nz: 1 });
+  }
+  let hash = 0;
+  S.forEach((s) => s.forEach((v, i) => (hash = (hash * 31 + Math.round(v * 1e6) + i) % 2147483647)));
+  return { segsAt, normals, key: `rough|${z.z0}|${z.z1}|${px}|${cell}|${hash}|${Array.from({ length: S.length + 1 }, (_, j) => `${n(k0 + j).re},${n(k0 + j).im}`).join(';')}` };
 }
 
 // ---- effective medium of a slice ----

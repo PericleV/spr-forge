@@ -8,6 +8,7 @@
   overflow: clip;
 }
 
+.toolbar .save-warning { color: var(--err); white-space: nowrap; }
 .toolbar .project-name {
   width: 250px;
   font-weight: 600;
@@ -134,8 +135,12 @@ input.node-caption.editing { overflow: visible; width: 260px; font-style: normal
 .node input.title { font-weight: 600; font-size: var(--fs-title); background: transparent; border-color: transparent; padding: 1px 3px; width: 150px; }
 .node input.title:hover, .node input.title:focus { border-color: var(--border); }
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgb(0 0 0 / 0.25); flex: none; }
-.node input.short { width: 64px; }
-.node input.tiny { width: 50px; }
+.node input.short { width: 72px; }
+.node input.tiny { width: 56px; }
+/* the small number fields without the spin arrows (they hid half of the digits; ↑ / ↓ still step the value) */
+.node input.short, .node input.tiny { -moz-appearance: textfield; appearance: textfield; }
+.node input.short::-webkit-inner-spin-button, .node input.short::-webkit-outer-spin-button,
+.node input.tiny::-webkit-inner-spin-button, .node input.tiny::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .node input.label { flex: 1; min-width: 60px; }
 .node input.color, .lib-editor input[type='color'] { width: 26px; height: 22px; padding: 1px; }
 .stack-rows { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; background: var(--input); border-radius: 4px; max-height: 140px; overflow: auto; }
@@ -147,13 +152,18 @@ input.node-caption.editing { overflow: visible; width: 260px; font-style: normal
 .curve { display: flex; flex-direction: column; gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: 4px; }
 .curve.off { opacity: 0.55; }
 .curve select { max-width: 110px; }
+.curve select.src { max-width: 230px; }
 .curve .slice { padding-left: 22px; }
 .plot .draw-label { fill: var(--text); font-size: var(--fs-small); }
 .plot .draw-label.bold { font-weight: 600; }
 .plot .bracket { stroke: var(--text); stroke-width: 1.2; }
 .plot .light { stroke: #e0a000; stroke-width: 2.5; fill: none; }
 .node label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.node label input[type='number'], .node label select { width: 96px; }
+.node label input[type='number'] { width: 96px; }
+/* lists as wide as their longest choice (at least the width of a number field, at most the node): nothing cut off */
+.node label select { width: auto; min-width: 96px; max-width: 100%; }
+/* a name / text field in a label takes the rest of the row */
+.node label > input:not([type]), .node label > input[type='text'] { flex: 1 1 auto; min-width: 0; }
 .node .row { display: flex; gap: 6px; align-items: center; justify-content: flex-start; }
 .node .btns { margin-top: 2px; }
 .hint { color: var(--muted); font-size: var(--fs-small); }
@@ -164,7 +174,7 @@ input.node-caption.editing { overflow: visible; width: 260px; font-style: normal
 .zone-table input.short { width: 80px; }
 .zone-handle { cursor: move; }
 
-.node-material { width: var(--node-s); }
+.node-material { width: 340px; } /* the longest library names fit in its list */
 .node-layer { width: var(--node-s); }
 .node-rough { width: var(--node-s); }
 /* Roughness: the lists as wide as their longest choice (“bottom (exit side)”, “peak-to-peak [nm]”, “Maxwell-Garnett”) */
@@ -220,7 +230,7 @@ input.node-caption.editing { overflow: visible; width: 260px; font-style: normal
 .node .radios, .node .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .node .checks { max-height: 120px; overflow-y: auto; }
 .node label.radio { display: inline-flex; justify-content: flex-start; gap: 4px; }
-.node label.slider { display: grid; grid-template-columns: 90px 1fr 90px; gap: 8px; }
+.node label.slider { display: grid; grid-template-columns: 90px 1fr auto; gap: 8px; }
 .node label.slider input { width: 100%; }
 .node input.list { width: 150px; }
 .node details summary { cursor: pointer; color: var(--muted); }
@@ -288,7 +298,7 @@ table.point td { padding: 2px 10px; }
 
 .node-analysis { width: var(--node-m); }
 .node-analysis .interval { display: inline-flex; gap: 4px; align-items: center; }
-.node-analysis select.wide { width: 210px; }
+.node-analysis select.wide { width: auto; max-width: 100%; }
 .stack-rows.results { font-size: var(--fs-small); }
 .plot .ann-text { font-size: var(--fs-tiny); fill: var(--text); font-family: ui-monospace, Consolas, monospace; }
 .legend i.dot { width: 8px; height: 8px; border-radius: 50%; background: transparent !important; border: 2px solid currentColor; }
@@ -299,9 +309,10 @@ table.point td { padding: 2px 10px; }
 .node-fit .interval { display: inline-flex; gap: 4px; align-items: center; }
 .fit-comp { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
 .fit-comp .remove { margin-left: auto; padding: 0 6px; }
-.fit-param { display: grid; grid-template-columns: 126px 1fr 74px 48px 28px 62px; gap: 4px; align-items: center; font-size: var(--fs-small); }
+.fit-param { display: grid; grid-template-columns: 120px 1fr 96px 40px 38px 64px; gap: 4px; align-items: center; font-size: var(--fs-small); }
 .fit-param input[type='range'] { width: 100%; }
-.fit-param input.short { width: 70px; }
+.fit-param input.short { width: 96px; box-sizing: border-box; }
+.fit-param .lock { white-space: nowrap; }
 .fit-param .unit { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fit-param .lock { font-size: var(--fs-tiny); }
 .fit-param .sigma { color: var(--muted); }
@@ -326,10 +337,12 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 .node-objective .interval { display: inline-flex; gap: 4px; align-items: center; }
 .node-zones { width: var(--node-l); }
 .zones { display: flex; flex-direction: column; gap: 3px; }
-.zone-row { display: flex; gap: 4px; align-items: center; font-size: var(--fs-small); }
-.zone-row select { max-width: 90px; }
+.zone-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: var(--fs-small); }
+.zone-row select { max-width: 160px; }
 .zone-row.sub { padding-left: 18px; flex-wrap: wrap; }
 .formula-input { flex: 1 1 180px; min-width: 160px; }
+.design-table input.tie { width: 44px; }
+.design-table td { white-space: nowrap; }
 .band-block { display: flex; flex-direction: column; gap: 2px; padding: 2px 0; border-bottom: 1px dashed var(--border); }
 .node-optimizer { width: var(--node-l); }
 .pareto { cursor: crosshair; display: block; }
@@ -349,7 +362,7 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 /* Toolbar: each button carries the colour of its node type */
 .node-formula { width: var(--node-l); }
 .node-formula .var-name { width: 34px; font-family: ui-monospace, monospace; }
-.node-formula select.source { max-width: 250px; }
+.node-formula select.source { max-width: 100%; }
 .node-formula textarea.expr { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: var(--fs); resize: vertical; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
 .algo-settings { display: flex; flex-direction: column; gap: 4px; border-left: 2px solid var(--border); padding-left: 6px; }
 .algo-settings button.link { align-self: flex-start; background: none; border: none; color: var(--muted); text-decoration: underline; padding: 0; font-size: var(--fs-small); }
@@ -357,6 +370,10 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 .runs .run.chosen { outline: 1px solid var(--node-color); border-radius: 4px; }
 .node-info { min-width: 180px; min-height: 90px; box-sizing: border-box; background: color-mix(in srgb, var(--panel) 88%, var(--node-color)); }
 .node-info .title-input { flex: 1; font-weight: 600; background: transparent; border: none; color: var(--text); font-size: var(--fs-title); }
+/* one line of text that wraps (ui.tsx AutoText): the box grows with it */
+.node textarea.auto-text { resize: none; overflow: hidden; font: inherit; line-height: 1.35; min-width: 0; box-sizing: border-box; color: var(--text); background: var(--input); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+.node textarea.auto-text.mono, .node textarea.custom-expr { font-family: var(--mono, monospace); }
+.node-info textarea.title-input { border: none; background: transparent; font-weight: 600; font-size: var(--fs-title); }
 .node-info textarea { flex: 1; resize: none; background: transparent; color: var(--text); border: 1px dashed var(--border); border-radius: 4px; font: inherit; padding: 4px; }
 /* formatted notes: the text shown formatted (click to edit), the toolbar while editing, Combine notes' preview */
 .node-info .note-view { flex: 1; overflow: auto; padding: 4px; border: 1px solid transparent; border-radius: 4px; cursor: text; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -389,9 +406,15 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 .node-filter input.short-text { width: 90px; }
 .hist-stats { font-size: var(--fs-small); color: var(--muted); padding: 2px 4px; font-variant-numeric: tabular-nums; }
 .node-tolerance { width: var(--node-l); }
+.node-kinetics { width: var(--node-l); }
+.node-sensorgram { width: var(--node-l); }
+.protocol-table input.step-label { width: 120px; }
 .node-tolerance .indent { padding-left: 18px; }
 .node-tolerance .grow { flex: 1; }
 .node-tolerance .yield { font-weight: 600; }
+.node-tolerance .tol-table td { white-space: nowrap; }
+.node-tolerance .tol-table td:first-child { white-space: normal; font-size: var(--fs-small); }
+.node-tolerance .tol-table th { padding-top: 4px; }
 .ranking { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-small); }
 .rank-row { display: grid; grid-template-columns: 200px 1fr 56px; gap: 6px; align-items: center; }
 .rank-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -426,7 +449,7 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 .node-grating { width: var(--node-m); }
 .node-drawgrating { width: var(--node-l); }
 .node-rcwafield { width: var(--node-l); }
-.node-rcwafield .slider, .node-drawgrating .slider { display: grid; grid-template-columns: 90px 1fr 80px; gap: 6px; align-items: center; }
+.node-rcwafield .slider, .node-drawgrating .slider { display: grid; grid-template-columns: 90px 1fr auto; gap: 6px; align-items: center; }
 svg.plot.paint { cursor: crosshair; touch-action: none; }
 button.active { border-color: var(--accent); color: var(--accent); }
 .node .row.chart-head { justify-content: space-between; align-items: center; }
@@ -570,7 +593,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .custom-source { margin-top: 4px; font-size: var(--fs-small); }
 .custom-source input { width: 44px; font-family: var(--mono, monospace); }
 .custom-row { gap: 4px; }
-.custom-name { width: 70px; }
+.custom-name { width: 110px; }
 .custom-expr { flex: 1; min-width: 180px; font-family: var(--mono, monospace); }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .chips .chip { padding: 1px 6px; font-size: var(--fs-small); font-family: var(--mono, monospace); }

@@ -9,7 +9,7 @@ import { COMPLEX_FUNCTION_NAMES } from '../engine/expr.ts';
 import type { Dataset } from '../engine/types.ts';
 import { exportCsv } from '../plot/export.ts';
 import type { AppNode, CustomData, CustomNode, ExtractData, ExtractNode, MergeData, MergeNode } from '../types.ts';
-import { Messages, NumInput, OutPort, Port } from './ui.tsx';
+import { AutoText, Messages, NumInput, OutPort, Port } from './ui.tsx';
 
 const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '—');
 const PREVIEW = 12;
@@ -242,7 +242,7 @@ export function CustomNodeView({ id, data }: NodeProps<CustomNode>) {
         <div className="row custom-row" key={i}>
           <input className="nodrag custom-name" value={r.name} placeholder={`f${i + 1}`} onChange={(e) => setRow(i, { name: e.target.value })} title="Name of the new quantity" />
           <span>=</span>
-          <input className="nodrag custom-expr" value={r.expr} placeholder="e.g. a_FWHM1 / 2" onFocus={() => setFocus(i)} onChange={(e) => setRow(i, { expr: e.target.value })} />
+          <AutoText className="custom-expr" value={r.expr} placeholder="e.g. a_FWHM1 / 2" onFocus={() => setFocus(i)} onChange={(expr) => setRow(i, { expr })} />
           {data.rows.length > 1 && (
             <button className="nodrag" title="remove" onClick={() => set({ rows: data.rows.filter((_, j) => j !== i) })}>
               ×

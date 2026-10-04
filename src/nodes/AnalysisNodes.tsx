@@ -2,8 +2,8 @@ import type { ReactNode } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult, useProgress } from '../engine/engine.ts';
 import type { AnalysisInfo, SensitivityInfo } from '../engine/evaluate.ts';
-import type { LevelMethod } from '../engine/metrics.ts';
-import type { AppNode, ExtremumData, ExtremumNode, FwhmData, FwhmNode, Interval, SensitivityData, SensitivityNode } from '../types.ts';
+import type { LevelMethod, LocateMethod } from '../engine/metrics.ts';
+import type { AppNode, ExtremumData, ExtremumNode, FwhmData, FwhmNode, Interval, LocateFields, SensitivityData, SensitivityNode } from '../types.ts';
 import { ColorField, Messages, NumInput, Port } from './ui.tsx';
 
 type Common = { field: string; along: string; color: string };
@@ -157,6 +157,39 @@ function ZoneEditor({ value, info, along, onChange }: { value: Interval; info?: 
   );
 }
 
+// How the position of the dip / peak is found (engine/metrics.ts `locate`): the parabola follows the noise of three
+// points; a polynomial fit or the centroid of the dip average it over the points below the level.
+const LOCATE: [LocateMethod, string, string][] = [
+  ['parabola', '3-point parabola', 'A parabola through the lowest sample and its two neighbours: exact on smooth computed curves, but it follows the noise of those three points'],
+  ['poly', 'polynomial fit', 'Least-squares polynomial through the points of the dip below the level; its extreme is the position. Averages the noise over the dip'],
+  ['centroid', 'centroid', 'Centre of mass of the dip below the level, weights (level − y)·dx (Piliarik & Homola 2009). Robust to noise; on an asymmetric dip it is shifted from the minimum, but follows it'],
+];
+export function LocateControls({ data, set }: { data: LocateFields; set: (patch: LocateFields) => void }) {
+  const m = data.locate ?? 'parabola';
+  return (
+    <div className="row wrap">
+      <label className="radio" title={LOCATE.find((x) => x[0] === m)?.[2]}>
+        position by
+        <select className="nodrag" value={m} onChange={(e) => set({ locate: e.target.value as LocateMethod })}>
+          {LOCATE.map(([k, l, t]) => (
+            <option key={k} value={k} title={t}>{l}</option>
+          ))}
+        </select>
+      </label>
+      {m !== 'parabola' && (
+        <label className="radio" title="The points used: those below this fraction of the depth, measured from the bottom (0.5 = half depth)">
+          below <NumInput className="tiny" value={Math.round((data.locLevel ?? 0.5) * 100)} step={5} onChange={(v) => set({ locLevel: Math.min(100, Math.max(2, v)) / 100 })} /> % depth
+        </label>
+      )}
+      {m === 'poly' && (
+        <label className="radio" title="Degree of the polynomial (2 – 6)">
+          degree <NumInput className="tiny" value={data.locDeg ?? 2} step={1} onChange={(v) => set({ locDeg: Math.min(6, Math.max(2, Math.round(v))) })} />
+        </label>
+      )}
+    </div>
+  );
+}
+
 export function ExtremumNodeView({ id, data }: NodeProps<ExtremumNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const set = (patch: Partial<ExtremumData>) => updateNodeData(id, patch);
@@ -172,7 +205,8 @@ export function ExtremumNodeView({ id, data }: NodeProps<ExtremumNode>) {
         <IntervalInput value={data} unit={info?.unit} onChange={({ lo, hi }) => set({ lo, hi })} />
       </div>
       <ZoneEditor value={data} info={info} along={data.along} onChange={({ lo, hi, path }) => set({ lo, hi, path })} />
-      <div className="hint">Refined between samples with a parabola. Empty interval = whole range.</div>
+      <LocateControls data={data} set={set} />
+      <div className="hint">Empty interval = whole range. For noisy (measured or degraded) curves: polynomial fit or centroid.</div>
     </Frame>
   );
 }
@@ -203,6 +237,7 @@ export function FwhmNodeView({ id, data }: NodeProps<FwhmNode>) {
         </select>
         {data.method === 'absolute' && <NumInput className="short" value={data.level} step={0.01} placeholder="level" onChange={(level) => set({ level })} />}
       </div>
+      <LocateControls data={data} set={set} />
       {intervals.map((iv, j) => (
         <div key={j}>
           <div className="row">
@@ -247,6 +282,7 @@ export function SensitivityNodeView({ id, data }: NodeProps<SensitivityNode>) {
         <IntervalInput value={data} unit={info?.unit} onChange={({ lo, hi }) => set({ lo, hi })} />
       </div>
       <ZoneEditor value={data} info={info} along={data.along} onChange={({ lo, hi, path }) => set({ lo, hi, path })} />
+      <LocateControls data={data} set={set} />
       <div className="hint">Recomputes with Re(ñ) + Δn; S = Δ(position)/Δn, FOM = |S|/FWHM. The shifted curve is drawn dashed.</div>
       {info?.pendingPert && (
         <div className="msg busy">

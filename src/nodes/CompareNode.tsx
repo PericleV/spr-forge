@@ -205,7 +205,7 @@ export function CompareNodeView({ id, data }: NodeProps<CompareNode>) {
               <div className="row">
                 <input className="nodrag" type="checkbox" title="visible" checked={c.visible} onChange={(e) => setCurve(c.id, { visible: e.target.checked })} />
                 <input className="nodrag color" type="color" value={c.color} onChange={(e) => setCurve(c.id, { color: e.target.value })} />
-                <select className="nodrag" value={c.src} onChange={(e) => setCurve(c.id, { src: e.target.value })}>
+                <select className="nodrag src" value={c.src} title={src?.name} onChange={(e) => setCurve(c.id, { src: e.target.value })}>
                   {!src && <option value={c.src}>(disconnected)</option>}
                   {sources.map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>

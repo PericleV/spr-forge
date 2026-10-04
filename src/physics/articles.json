@@ -170,6 +170,19 @@
   "group": "From articles (examples)"
  },
  {
+  "id": "user-hydrogel",
+  "name": "hydrogel, collapsed (n = 1.50)",
+  "color": "#7fb3a8",
+  "model": {
+   "type": "constant",
+   "n": 1.5,
+   "k": 0
+  },
+  "source": "typical polymer (pNIPAAm-like) value",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
   "id": "user-au-hu2011",
   "name": "Au (Drude, Hu 2011)",
   "color": "#d4af37",

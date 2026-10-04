@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useReactFlow, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { FilterInfo } from '../engine/evaluate.ts';
@@ -7,14 +7,47 @@ import { LinePlot, type Series } from '../plot/LinePlot.tsx';
 import type { Overlay } from '../plot/overlays.ts';
 import type { AppNode, FilterBand, FilterData, FilterNode } from '../types.ts';
 import { useConnected } from './hooks.ts';
-import { Messages, NumInput, OutPort, Port } from './ui.tsx';
+import { AutoText, Messages, NumInput, OutPort, Port } from './ui.tsx';
 import { odOf, type SpecKind } from '../engine/spec.ts';
-import { MATERIAL_LETTERS } from '../engine/design.ts';
+import { layerSensitivity, MATERIAL_LETTERS } from '../engine/design.ts';
 import { CHART_W } from './sizes.ts';
 
 const LETTERS = MATERIAL_LETTERS;
 const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '—');
 const time = (s: number) => (s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
+
+const MAT_COLORS = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc948', '#9c755f'];
+
+function SensitivityBars({ rows, names }: { rows: ReturnType<typeof layerSensitivity>['rows']; names: string[] }) {
+  const W = CHART_W;
+  const H = 150;
+  const [l, r, t, b] = [60, 8, 8, 22];
+  const max = Math.max(1e-30, ...rows.map((x) => x.dmf));
+  const bw = (W - l - r) / Math.max(1, rows.length);
+  const mats = [...new Set(rows.map((x) => x.m))];
+  return (
+    <svg className="plot" width={W} height={H}>
+      <line x1={l} x2={W - r} y1={H - b} y2={H - b} stroke="var(--border)" />
+      <text x={l - 4} y={t + 8} textAnchor="end" className="draw-label">{+max.toPrecision(2)}</text>
+      <text x={l - 4} y={H - b} textAnchor="end" className="draw-label">0</text>
+      {rows.map((x, i) => {
+        const h = (Math.max(0, x.dmf) / max) * (H - t - b);
+        return (
+          <rect key={i} x={l + i * bw + bw * 0.1} y={H - b - h} width={Math.max(1, bw * 0.8)} height={h} fill={MAT_COLORS[x.m % MAT_COLORS.length]}>
+            <title>{`${x.side === 'back' ? 'back ' : ''}${x.j + 1}. ${names[x.m] ?? LETTERS[x.m]} ${x.d.toFixed(2)} nm: ΔMF = ${x.dmf.toPrecision(3)}`}</title>
+          </rect>
+        );
+      })}
+      <text x={(l + W - r) / 2} y={H - 6} textAnchor="middle" className="draw-label">layer (from the incident side{rows.some((x) => x.side === 'back') ? '; then the back coating' : ''})</text>
+      {mats.map((m, k) => (
+        <g key={m} transform={`translate(${l + 8 + k * 90}, ${t + 4})`}>
+          <rect width={9} height={9} fill={MAT_COLORS[m % MAT_COLORS.length]} />
+          <text x={13} y={8} className="draw-label">{names[m] ?? LETTERS[m]}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
 
 function MatPort({ id, label, name, hint }: { id: string; label: string; name?: string; hint: string }) {
   const connected = useConnected(id);
@@ -95,6 +128,15 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   const historyD = run?.status === 'running' ? run.historyD : (data.historyD ?? []);
   const byD = vsThickness && historyD.length === history.length;
   const nLayers = data.design.front.length + data.design.back.length;
+  const pinnedCount = [...data.design.front, ...data.design.back].filter((L) => L.fix || L.tie).length;
+  const setLayer = (side: 'front' | 'back', i: number, patch: Partial<FilterData['design']['front'][number]>) =>
+    set({ design: { ...data.design, [side]: data.design[side].map((L, k) => (k === i ? { ...L, ...patch } : L)) } });
+  const [sensOpen, setSensOpen] = useState(false);
+  const problem = info?.problem;
+  const sens = useMemo(
+    () => (sensOpen && problem && !running && nLayers ? layerSensitivity(problem, data.design, Math.max(1e-6, data.sensStep ?? 1), !!data.sensRel) : null),
+    [sensOpen, problem, running, nLayers, data.design, data.sensStep, data.sensRel],
+  );
 
   return (
     <div className="node node-filter">
@@ -201,6 +243,16 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
                 <option value="A">A</option>
                 <option value="OD">OD</option>
               </select>
+              <select
+                className="nodrag"
+                value={b.avg ?? ''}
+                title="The target applies at every wavelength of the band, or to its mean (trapezoid in λ), or to its photopic mean (weights V(λ)·D65, e.g. Rv ≤ 0.5 % on 380–780 nm). A mean counts as one target point: raise its weight to stress it."
+                onChange={(e) => setBand(i, { avg: (e.target.value || undefined) as FilterBand['avg'] })}
+              >
+                <option value="">at each λ</option>
+                <option value="mean">band mean</option>
+                <option value="photopic">photopic mean</option>
+              </select>
               <select className="nodrag" value={b.kind ?? 'eq'} title="Equal to the value, or only ≥ / ≤ it (no error when met)" onChange={(e) => setBand(i, { kind: e.target.value as SpecKind })}>
                 <option value="eq">=</option>
                 <option value="ge">≥</option>
@@ -243,6 +295,28 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
           merit p <NumInput className="tiny" value={data.p ?? 2} step={1} onChange={(p) => set({ p })} />
         </label>
       </div>
+      <div className="row wrap">
+        <label className="radio" title="A converging beam around each angle: the spectra are averaged over its rays (pupil filled uniformly; s / p in each ray's own plane of incidence — exact for unpolarized light)">
+          <input className="nodrag" type="checkbox" checked={!!data.cone} onChange={(e) => set({ cone: e.target.checked })} />
+          cone of light
+        </label>
+        {data.cone && (
+          <>
+            <select className="nodrag" value={data.coneBy ?? 'angle'} onChange={(e) => set({ coneBy: e.target.value as FilterData['coneBy'] })}>
+              <option value="angle">half-angle [°]</option>
+              <option value="f">f-number (in air)</option>
+            </select>
+            {(data.coneBy ?? 'angle') === 'angle' ? (
+              <NumInput className="tiny" value={data.coneHalf ?? 5} step={1} onChange={(coneHalf) => set({ coneHalf })} />
+            ) : (
+              <>
+                f/ <NumInput className="tiny" value={data.coneF ?? 4} step={0.5} onChange={(coneF) => set({ coneF })} />
+                <span className="muted">= ±{info?.cone !== undefined ? info.cone.toFixed(2) : '—'}°</span>
+              </>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="section">Constraints</div>
       <div className="row wrap">
@@ -251,6 +325,27 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
         <label className="radio" title="Per coating">max layers <NumInput className="tiny" value={data.maxLayers} step={1} onChange={(maxLayers) => set({ maxLayers })} /></label>
         <label className="radio" title="Per coating, nm (a penalty above it)">max total <NumInput className="short" value={data.maxTotal} step={100} onChange={(maxTotal) => set({ maxTotal })} /></label>
       </div>
+      <details className="nodrag" open={(data.matMin ?? []).some(Number.isFinite) || (data.matMax ?? []).some(Number.isFinite) || undefined}>
+        <summary>per material (min / max d)</summary>
+        <table className="zone-table">
+          <tbody>
+            {Array.from({ length: nm }, (_, k) => (
+              <tr key={k}>
+                <td>{LETTERS[k]}{info?.names[k] ? ` · ${info.names[k]}` : ''}</td>
+                <td>
+                  <NumInput className="tiny" value={data.matMin?.[k] ?? NaN} placeholder={String(data.minD)} step={1} onChange={(v) => set({ matMin: Array.from({ length: nm }, (_, i) => (i === k ? v : (data.matMin?.[i] ?? NaN))) })} />
+                </td>
+                <td>–</td>
+                <td>
+                  <NumInput className="tiny" value={data.matMax?.[k] ?? NaN} placeholder={String(data.maxD)} step={10} onChange={(v) => set({ matMax: Array.from({ length: nm }, (_, i) => (i === k ? v : (data.matMax?.[i] ?? NaN))) })} />
+                </td>
+                <td className="muted">nm</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="hint">Empty: the global min d / max d. Locked and tied layers are set in the layer list below.</div>
+      </details>
 
       <div className="section">Design</div>
       <div className="row wrap">
@@ -295,12 +390,12 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
           </select>
         </label>
         {data.start === 'formula' && (
-          <input
-            className="nodrag mono formula-input"
+          <AutoText
+            className="mono formula-input"
             value={data.formula ?? ''}
             placeholder="e.g. (1.92H 2.08L)^100"
             title={`Quarter waves at λ ref: a coefficient before a material letter (${LETTERS.slice(0, nm).join(', ')}), groups (…)^N`}
-            onChange={(e) => set({ formula: e.target.value })}
+            onChange={(formula) => set({ formula })}
           />
         )}
         {data.start === 'qw' && <label className="radio">N <NumInput className="tiny" value={data.startPeriods} step={1} onChange={(startPeriods) => set({ startPeriods })} /></label>}
@@ -362,17 +457,57 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
       )}
       {nLayers > 0 && (
         <details className="nodrag">
-          <summary>Layers ({nLayers})</summary>
-          <div className="stack-rows">
-            {data.thick && <div className="muted">front (from the incident side):</div>}
-            {data.design.front.map((L, i) => (
-              <div key={`f${i}`}>{i + 1}. {info?.names[L.m] ?? LETTERS[L.m]} {L.d.toFixed(2)} nm</div>
-            ))}
-            {data.thick && data.design.back.length > 0 && <div className="muted">back (from the substrate):</div>}
-            {data.design.back.map((L, i) => (
-              <div key={`b${i}`}>{i + 1}. {info?.names[L.m] ?? LETTERS[L.m]} {L.d.toFixed(2)} nm</div>
-            ))}
+          <summary>Layers ({nLayers}{pinnedCount ? `, ${pinnedCount} locked / tied` : ''})</summary>
+          <table className="zone-table design-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>material</th>
+                <th>d [nm]</th>
+                <th title="Locked: the thickness is kept (never refined, split or removed)">lock</th>
+                <th title="Tie: layers with the same name (e.g. a) have one thickness, refined together">tie</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(['front', 'back'] as const).flatMap((side) => [
+                ...(data.thick && data.design[side].length ? [<tr key={`h${side}`}><td colSpan={5} className="muted">{side === 'front' ? 'front (from the incident side)' : 'back (from the substrate)'}</td></tr>] : []),
+                ...data.design[side].map((L, i) => (
+                  <tr key={`${side}${i}`}>
+                    <td>{i + 1}</td>
+                    <td>{info?.names[L.m] ?? LETTERS[L.m]}</td>
+                    <td><NumInput className="short" value={+L.d.toFixed(3)} step={1} disabled={running} onChange={(d) => Number.isFinite(d) && d >= 0 && setLayer(side, i, { d })} /></td>
+                    <td><input className="nodrag" type="checkbox" checked={!!L.fix} disabled={running} onChange={(e) => setLayer(side, i, { fix: e.target.checked || undefined })} /></td>
+                    <td><input className="nodrag tie" value={L.tie ?? ''} disabled={running} placeholder="—" onChange={(e) => setLayer(side, i, { tie: e.target.value.trim() || undefined })} /></td>
+                  </tr>
+                )),
+              ])}
+            </tbody>
+          </table>
+        </details>
+      )}
+      {nLayers > 0 && info?.problem && (
+        <details className="nodrag" onToggle={(e) => setSensOpen((e.target as HTMLDetailsElement).open)}>
+          <summary>Layer sensitivity</summary>
+          <div className="row wrap">
+            <label className="radio" title="The thickness error of one layer">
+              δ <NumInput className="tiny" value={data.sensStep ?? 1} step={0.5} onChange={(sensStep) => set({ sensStep })} />
+              <select className="nodrag" value={data.sensRel ? 'rel' : 'abs'} onChange={(e) => set({ sensRel: e.target.value === 'rel' })}>
+                <option value="abs">nm</option>
+                <option value="rel">% of the layer</option>
+              </select>
+            </label>
           </div>
+          {sens && (
+            <>
+              <div className="nowheel chart">
+                <SensitivityBars rows={sens.rows} names={info.names} />
+              </div>
+              <div className="hint">
+                ΔMF = the mean increase of MF ({fmt(sens.mf0)}) when one layer is ± δ thicker; the larger, the more critical the layer.
+                Most critical: {[...sens.rows].sort((a, b) => b.dmf - a.dmf).slice(0, 3).map((x) => `${x.side === 'back' ? 'back ' : ''}${x.j + 1} (${info.names[x.m] ?? LETTERS[x.m]})`).join(', ')}.
+              </div>
+            </>
+          )}
         </details>
       )}
       <Messages result={result} />

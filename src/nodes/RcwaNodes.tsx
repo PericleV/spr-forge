@@ -230,6 +230,18 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
           outputs ±<NumInput className="tiny" value={data.show} min={0} step={1} onChange={(show) => set({ show: Math.round(show) })} />
         </label>
       </div>
+      <div className="row wrap">
+        <label
+          className="radio"
+          title="How trapezoid, sinus and blazed gratings are computed. Staircase: cut into the Nz slices of the Grating layer (as RETICOLO); in TM a metal profile converges slowly with N (the corners of the steps). Smooth (FFF): the true profile integrated through its depth with the normal-vector factorization (differential method, Popov & Nevière) — far fewer orders for metals in TM. Lamellar and pixel gratings are computed as drawn either way."
+        >
+          profiles
+          <select className="nodrag" value={data.profiles ?? 'staircase'} onChange={(e) => set({ profiles: e.target.value === 'fff' ? 'fff' : 'staircase' })}>
+            <option value="staircase">staircase slices</option>
+            <option value="fff">smooth (FFF)</option>
+          </select>
+        </label>
+      </div>
       {/* ASR hidden for now (the code stays): shown only where a saved project has it on, to turn it off */}
       {(SHOW_ASR || data.asr) && (
       <div className="row wrap">

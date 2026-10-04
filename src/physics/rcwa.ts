@@ -8,12 +8,20 @@ import * as X from './complex.ts';
 import { add, cmat, diag, diagMulLeft, diagMulRight, eig, eye, inv, mul, mulVec, scale, solve, type CMat } from './cmat.ts';
 import { nCos, type Polarization } from './tmm.ts';
 import { asrFourier, asrGeometry, asrKnots, asrT, type AsrGeometry } from './asr.ts';
+import { fffLayerS, fffMaxIndex, type FffPath, type FffProfile } from './rcwaFff.ts';
 
-export type Segment = { from: number; to: number; n: C }; // x in units of the period, [0, 1)
+// x in units of the period, [0, 1); eps: a diagonal anisotropic segment (εxx, εyy, εzz) instead of n² (n is then √εxx,
+// for display; validated against RETICOLO's diagonal anisotropy, planar and conical)
+export type Segment = { from: number; to: number; n: C; eps?: [C, C, C] };
+// The permittivity of a segment along x, y or z.
+export const segEps = (s: Segment, axis: 0 | 1 | 2): C => (s.eps ? s.eps[axis] : X.mul(s.n, s.n));
 // uniform (n), grating (segs) or homogeneous anisotropic (eps: 3×3 tensor, row-major; conical solver only); d in nm
 // eps: an anisotropic tensor (Berreman); helix: the director turns by `twist` degrees about z from the top face (where the
 // tensor is `eps`) to the bottom — solved exactly at normal incidence, else in `slices` uniform sublayers
-export type RcwaLayer = { d: number; n?: C; segs?: Segment[]; eps?: C[]; helix?: { twist: number; slices: number } };
+// fff: a smooth-profile grating layer, integrated through its true profile (rcwaFff.ts) instead of a staircase;
+// outline (drawing only, the field maps): its true outline, polylines [x0, t0, x1, t1, …] (x in periods, t: depth in the
+// layer of thickness d nm, 0 = its top)
+export type RcwaLayer = { d: number; n?: C; segs?: Segment[]; eps?: C[]; helix?: { twist: number; slices: number }; outline?: { d: number; lines: number[][] }; fff?: FffProfile };
 export type Factorization = 'li' | 'laurent';
 
 export type RcwaResult = {
@@ -80,6 +88,8 @@ export type AsrCtx = { geo: AsrGeometry; Wb: CMat; bRe: Float64Array; bIm: Float
 const bCache = new Map<string, { Wb: CMat; bRe: Float64Array; bIm: Float64Array }>();
 export function asrContext(layers: RcwaLayer[], kx: Float64Array, N: number, period: number, lam: number, eta: number, pol: Polarization): AsrCtx | undefined {
   if (!(eta > 0) || !N) return undefined;
+  // anisotropic segments and smooth (FFF) layers are not written in the ASR harmonics: plain RCWA
+  if (layers.some((L) => L.segs?.some((s) => s.eps) || L.fff)) return undefined;
   const segs = layers.slice(1, -1).flatMap((L) => (L.segs ? [L.segs] : []));
   if (!segs.length) return undefined;
   const pl = period / lam;
@@ -153,11 +163,14 @@ export function layerModes(L: RcwaLayer, kx: Float64Array, pol: Polarization, fa
     return { W, V: diag(vr, vi), kzRe, kzIm, uniform: L.n };
   }
   // grating layer: the eigenmodes depend on the profile, the orders and the polarization, not on the thickness
-  const key = `${pol}|${fact}|${asr ? `asr:${asr.geo.key}|` : ''}${Array.from(kx, (v) => v.toPrecision(15)).join(',')}|${L.segs!.map((s) => `${s.from},${s.to},${s.n.re},${s.n.im}`).join(';')}`;
+  const key = `${pol}|${fact}|${asr ? `asr:${asr.geo.key}|` : ''}${Array.from(kx, (v) => v.toPrecision(15)).join(',')}|${L.segs!.map((s) => `${s.from},${s.to},${s.n.re},${s.n.im}${s.eps ? `,${s.eps.map((e) => `${e.re},${e.im}`).join(',')}` : ''}`).join(';')}`;
   const hit = modeCache.get(key);
   if (hit) return hit;
-  const segsEps = L.segs!.map((s) => ({ from: s.from, to: s.to, v: X.mul(s.n, s.n) }));
-  const E = toeplitz(fourier(segsEps, M - 1), M);
+  // ε along x, y, z of every segment (equal for isotropic segments). TE: Ey sees εyy; TM: Ex (normal to the walls between
+  // segments) εxx by the inverse rule, Ez (along the walls) εzz by Laurent's rule
+  const epsAlong = (axis: 0 | 1 | 2) => L.segs!.map((s) => ({ from: s.from, to: s.to, v: segEps(s, axis) }));
+  const segsEps = epsAlong(pol === 's' ? 1 : 0);
+  const E = toeplitz(fourier(pol === 's' ? segsEps : epsAlong(2), M - 1), M);
   const Kx2 = diag(Array.from(kx, (v) => v * v));
   const zero = new Float64Array(M);
   const kxAkx = (A: CMat) => diagMulRight(diagMulLeft(kx, zero, A), kx, zero); // Kx A Kx
@@ -181,13 +194,14 @@ export function layerModes(L: RcwaLayer, kx: Float64Array, pol: Polarization, fa
       // [[1/ε]]⁻¹ [[f]]⁻¹ ([[f]] − Kx [[fε]]⁻¹ Kx)
       Om = mul(fact === 'li' ? inv(A) : E, mul(Ffi, add(Ff, kxAkx(inv(Ffe)), -1)));
     }
-  } else if (pol === 's') Om = add(E, Kx2, -1); // kz² = eig(E − Kx²)
+  } else if (pol === 's') Om = add(E, Kx2, -1); // kz² = eig([[εyy]] − Kx²)
   else {
-    // kz² = eig( [[1/ε]]⁻¹ (I − Kx [[ε]]⁻¹ Kx) ); Laurent rule: [[1/ε]]⁻¹ → [[ε]]
+    // kz² = eig( [[1/εxx]]⁻¹ (I − Kx [[εzz]]⁻¹ Kx) ); Laurent rule: [[1/εxx]]⁻¹ → [[εxx]] (E is [[εzz]]: Ez in the fields)
     const Ei = inv(E);
     const inner = add(eye(M), diagMulRight(diagMulLeft(kx, new Float64Array(M), Ei), kx, new Float64Array(M)), -1);
-    A = fact === 'li' ? toeplitz(fourier(segsEps.map((s) => ({ ...s, v: X.div(X.c(1), s.v) })), M - 1), M) : inv(E);
-    Om = mul(fact === 'li' ? inv(A) : E, inner);
+    const Exx = L.segs!.some((s) => s.eps) ? toeplitz(fourier(segsEps, M - 1), M) : E;
+    A = fact === 'li' ? toeplitz(fourier(segsEps.map((s) => ({ ...s, v: X.div(X.c(1), s.v) })), M - 1), M) : inv(Exx);
+    Om = mul(fact === 'li' ? inv(A) : Exx, inner);
   }
   const ev = eig(Om);
   const kzRe = new Float64Array(M);
@@ -310,6 +324,17 @@ function gapVinv(kx: Float64Array, pol: Polarization): [Float64Array, Float64Arr
   return [r, new Float64Array(M)];
 }
 
+// A smooth-profile (FFF) layer has no modes: placeholders here, its S-matrix from the integration (fff: true).
+const fffModes = (M: number): Modes => ({ W: eye(M), V: eye(M), kzRe: new Float64Array(M), kzIm: new Float64Array(M) });
+function fffPart(L: RcwaLayer, k0d: number, kx: Float64Array, pol: Polarization, vinv: [Float64Array, Float64Array]): LayerPart {
+  const I = eye(kx.length);
+  const z = new Float64Array(kx.length);
+  const { S, path } = fffLayerS(L.fff!, k0d, kx, pol, vinv, fffMaxIndex(L.fff!), star);
+  return { S, P: I, Mm: I, Xr: z, Xi: z, Dinv: I, Pinv: I, fff: path };
+}
+// fff: the integration of a smooth-profile layer (its slices and their S-matrices, for the fields)
+export type LayerPart = ReturnType<typeof layerS> & { fff?: FffPath };
+
 // S-matrix of a layer between two gap media. P = W + V₀⁻¹V, M = W − V₀⁻¹V, X = exp(i kz k₀ d).
 function layerS(md: Modes, k0d: number, vinv: [Float64Array, Float64Array]): { S: SMat; P: CMat; Mm: CMat; Xr: Float64Array; Xi: Float64Array; Dinv: CMat; Pinv: CMat } {
   const n = md.W.n;
@@ -402,7 +427,7 @@ export function waveVectors(n0: number, thetaDeg: number, lam: number, period: n
 export type Solved = {
   kx: Float64Array;
   modes: Modes[];
-  layerS: ReturnType<typeof layerS>[];
+  layerS: LayerPart[];
   Sref: SMat;
   Strn: SMat;
   vinv: [Float64Array, Float64Array];
@@ -420,10 +445,10 @@ export function rcwaSolve(layers: RcwaLayer[], period: number, lam: number, thet
   const M = kx.length;
   const vinv = gapVinv(kx, pol);
   const asr = asrContext(layers, kx, N, period, lam, eta, pol);
-  const modes = layers.map((L, i) => layerModes(i === 0 ? { ...L, n: inc } : L, kx, pol, fact, asr));
+  const modes = layers.map((L, i) => (L.fff ? fffModes(M) : layerModes(i === 0 ? { ...L, n: inc } : L, kx, pol, fact, asr)));
   const Sref = regionS(modes[0], vinv, 'ref');
   const Strn = regionS(modes[modes.length - 1], vinv, 'trn');
-  const ls = layers.slice(1, -1).map((L, i) => layerS(modes[i + 1], k0 * L.d, vinv));
+  const ls = layers.slice(1, -1).map((L, i) => (L.fff ? fffPart(L, k0 * L.d, kx, pol, vinv) : layerS(modes[i + 1], k0 * L.d, vinv)));
   // incident order m = 0, unit u-field amplitude
   let e0r: Float64Array = new Float64Array(M);
   let e0i: Float64Array = new Float64Array(M);
@@ -472,8 +497,8 @@ export function rcwaSMatrix(layers: RcwaLayer[], kx: Float64Array, lam: number, 
   const inc = X.c(layers[0].n!.re);
   const k0 = (2 * Math.PI) / lam;
   const vinv = gapVinv(kx, pol);
-  const modes = layers.map((L, i) => layerModes(i === 0 ? { ...L, n: inc } : L, kx, pol, fact, asr));
-  const all = [regionS(modes[0], vinv, 'ref'), ...layers.slice(1, -1).map((L, i) => layerS(modes[i + 1], k0 * L.d, vinv).S), regionS(modes[modes.length - 1], vinv, 'trn')];
+  const modes = layers.map((L, i) => (L.fff ? fffModes(kx.length) : layerModes(i === 0 ? { ...L, n: inc } : L, kx, pol, fact, asr)));
+  const all = [regionS(modes[0], vinv, 'ref'), ...layers.slice(1, -1).map((L, i) => (L.fff ? fffPart(L, k0 * L.d, kx, pol, vinv) : layerS(modes[i + 1], k0 * L.d, vinv)).S), regionS(modes[modes.length - 1], vinv, 'trn')];
   const seq = RCWA_FAST.on ? foldDiagonal(all) : all;
   let S = seq[0];
   for (let i = 1; i < seq.length; i++) S = star(S, seq[i]);

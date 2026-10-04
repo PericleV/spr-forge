@@ -7,15 +7,19 @@ import type { Polarization } from '../physics/tmm.ts';
 import { rng } from './optimize.ts';
 import { dOdOf, odOf, residualOf, type SpecKind } from './spec.ts';
 
-export type DesignLayer = { m: number; d: number }; // material index (into the problem's materials), thickness nm
+// material index (into the problem's materials), thickness nm; fix: the thickness is kept (never refined, split or
+// removed); tie: layers with the same tie name have one thickness (refined together)
+export type DesignLayer = { m: number; d: number; fix?: boolean; tie?: string };
 export type Design = { front: DesignLayer[]; back: DesignLayer[] };
 export type Side = 'front' | 'back';
 export type Quantity = 'R' | 'T' | 'A' | 'OD'; // OD = −log₁₀ T
 export type PolMode = 's' | 'p' | 'avg';
 
 // A target sample: at wavelength li and angle ai, quantity q (for pol s, p or their mean) should be equal to (kind 'eq',
-// default), ≥ or ≤ target, within tol (default 1); w = weight.
-export type Sample = { li: number; ai: number; pol: PolMode; q: Quantity; target: number; w: number; kind?: SpecKind; tol?: number };
+// default), ≥ or ≤ target, within tol (default 1); w = weight. avg: the quantity is instead the weighted mean over these
+// (λ, angle) points (weights summing to 1): a band average (flat or photopic), the rays of a cone, or both.
+export type Sample = { li: number; ai: number; pol: PolMode; q: Quantity; target: number; w: number; kind?: SpecKind; tol?: number; avg?: { li: number; ai: number; w: number }[] };
+const entriesOf = (s: Sample) => s.avg ?? [{ li: s.li, ai: s.ai, w: 1 }];
 
 export type DesignProblem = {
   lambdas: number[]; // nm
@@ -34,6 +38,9 @@ export type DesignProblem = {
   maxTotal: number; // nm per side (soft penalty above)
   p?: number; // exponent of the merit function (default 2); the designer minimizes MF^p (+ the thickness penalty)
   nRef?: number[]; // Re n of each coating material at the reference wavelength (quarter waves)
+  matMin?: number[]; // per coating material: its own minimum / maximum layer thickness (NaN: minD / maxD)
+  matMax?: number[];
+  rays?: { ai: number; w: number }[][]; // a cone of rays around nominal angle index i (angles: the nominal ones first)
 };
 
 export type Evaluation = {
@@ -48,14 +55,54 @@ export type Evaluation = {
 const wsum = (p: DesignProblem) => p.samples.reduce((s, x) => s + x.w, 0) || 1;
 // The designer needs a smooth merit: p in [2, 16].
 export const meritExponent = (p: DesignProblem) => Math.min(16, Math.max(2, p.p ?? 2));
-export const variablesOf = (p: DesignProblem, d: Design) => p.sides.flatMap((s) => d[s].map((_, j) => ({ side: s, j })));
+// The thickness limits of a layer of material m.
+export const minOf = (p: DesignProblem, m: number) => (Number.isFinite(p.matMin?.[m]) ? p.matMin![m] : p.minD);
+export const maxOf = (p: DesignProblem, m: number) => (Number.isFinite(p.matMax?.[m]) ? p.matMax![m] : p.maxD);
+// The free thicknesses: one per layer that is not fixed; tied layers (the same tie name, on any designed side) share one.
+export type Variable = { members: { side: Side; j: number }[] };
+export function variablesOf(p: DesignProblem, d: Design): Variable[] {
+  const out: Variable[] = [];
+  const byTie = new Map<string, Variable>();
+  for (const side of p.sides)
+    d[side].forEach((L, j) => {
+      if (L.fix) return;
+      const t = L.tie?.trim();
+      if (!t) return void out.push({ members: [{ side, j }] });
+      let v = byTie.get(t);
+      if (!v) {
+        byTie.set(t, (v = { members: [] }));
+        out.push(v);
+      }
+      v.members.push({ side, j });
+    });
+  return out;
+}
+const pinned = (L: DesignLayer) => !!L.fix || !!L.tie?.trim(); // not split, merged or removed by the algorithms
+// Sets the thickness of layer j and of the layers tied to it (each within its material's limits).
+function setThickness(p: DesignProblem, d: Design, side: Side, j: number, t: number) {
+  const tie = d[side][j].tie?.trim();
+  for (const s of ['front', 'back'] as Side[])
+    d[s].forEach((L, k) => {
+      if ((s === side && k === j) || (tie && L.tie?.trim() === tie && !L.fix)) L.d = Math.min(maxOf(p, L.m), Math.max(0, t));
+    });
+}
+// Tied layers brought to one thickness (their mean) before a refinement.
+function untangle(p: DesignProblem, d: Design): Design {
+  const n = clone(d);
+  for (const v of variablesOf(p, n))
+    if (v.members.length > 1) {
+      const mean = v.members.reduce((a, x) => a + n[x.side][x.j].d, 0) / v.members.length;
+      v.members.forEach((x) => (n[x.side][x.j].d = Math.min(maxOf(p, n[x.side][x.j].m), mean)));
+    }
+  return n;
+}
 const films = (p: DesignProblem, layers: DesignLayer[], li: number): Film[] => layers.map((L) => ({ n: p.mats[L.m][li], d: L.d }));
 
 // Needle probes of a side: every `step` nm inside each layer, plus the end of the stack.
 function probesOf(layers: DesignLayer[], step: number): NeedleProbe[] {
   const out: NeedleProbe[] = [];
   layers.forEach((L, j) => {
-    const n = Math.max(1, Math.round(L.d / step));
+    const n = pinned(L) ? 1 : Math.max(1, Math.round(L.d / step)); // fixed / tied layers are not split
     for (let k = 0; k < n; k++) out.push({ layer: j, z: (k * L.d) / n });
   });
   out.push({ layer: layers.length, z: 0 });
@@ -67,22 +114,27 @@ type Point = { R: number; T: number; dR: number[]; dT: number[]; nR?: number[][]
 export function evaluateDesign(p: DesignProblem, design: Design, opts: { grad?: boolean; needle?: { side: Side; step: number } } = {}): Evaluation {
   const vars = variablesOf(p, design);
   const nv = vars.length;
+  // the column of each designed layer's derivative (front then back, as the solvers return them): its variable, or −1
+  // for a fixed layer; tied layers share a column
+  const colOf = new Map<string, number>();
+  vars.forEach((v, i) => v.members.forEach((x) => colOf.set(`${x.side}|${x.j}`, i)));
+  const layerCol = (['front', 'back'] as Side[]).filter((s) => p.sides.includes(s)).flatMap((s) => design[s].map((_, j) => colOf.get(`${s}|${j}`) ?? -1));
   const W = wsum(p);
   const P = meritExponent(p);
   const candidates = p.mats.map((_, m) => m);
   const probes = opts.needle ? probesOf(design[opts.needle.side], opts.needle.step) : [];
-  // group the samples by (λ, angle) and polarizations needed
-  const groups = new Map<string, { li: number; ai: number; pols: Set<Polarization>; idx: number[] }>();
-  p.samples.forEach((s, k) => {
-    const key = `${s.li}|${s.ai}`;
-    let g = groups.get(key);
-    if (!g) groups.set(key, (g = { li: s.li, ai: s.ai, pols: new Set(), idx: [] }));
-    if (s.pol === 'avg') {
-      g.pols.add('s');
-      g.pols.add('p');
-    } else g.pols.add(s.pol);
-    g.idx.push(k);
-  });
+  // the (λ, angle) points of every sample (an averaged sample has several) and the polarizations needed there
+  const groups = new Map<string, { li: number; ai: number; pols: Set<Polarization> }>();
+  for (const s of p.samples)
+    for (const e of entriesOf(s)) {
+      const key = `${e.li}|${e.ai}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = { li: e.li, ai: e.ai, pols: new Set() }));
+      if (s.pol === 'avg') {
+        g.pols.add('s');
+        g.pols.add('p');
+      } else g.pols.add(s.pol);
+    }
 
   const X = new Array<number>(p.samples.length).fill(0);
   const residuals = new Array<number>(p.samples.length).fill(0);
@@ -90,13 +142,15 @@ export function evaluateDesign(p: DesignProblem, design: Design, opts: { grad?: 
   const nd = probes.length * candidates.length;
   const needleSum = opts.needle ? new Array<number>(nd).fill(0) : undefined;
 
-  for (const g of groups.values()) {
+  const points = new Map<string, Map<Polarization, Point>>();
+  for (const [key, g] of groups) {
     const lam = p.lambdas[g.li];
     const k0 = (2 * Math.PI) / lam;
     const n0 = c(p.n0[g.li].re);
     const kx = n0.re * Math.sin((p.angles[g.ai] * Math.PI) / 180);
     const cand = candidates.map((m) => p.mats[m][g.li]);
     const pts = new Map<Polarization, Point>();
+    points.set(key, pts);
     // at normal incidence s and p are the same wave (up to ~k/n of an absorbing exit): computed once
     const normal = p.angles[g.ai] === 0 && g.pols.size === 2;
     for (const pol of normal ? (['s'] as Polarization[]) : g.pols) {
@@ -141,50 +195,49 @@ export function evaluateDesign(p: DesignProblem, design: Design, opts: { grad?: 
       });
     }
     if (normal) pts.set('p', pts.get('s')!);
-    for (const k of g.idx) {
-      const s = p.samples[k];
-      const pols: Polarization[] = s.pol === 'avg' ? ['s', 'p'] : [s.pol];
-      const wt = 1 / pols.length;
-      const sw = Math.sqrt(s.w / W);
-      const base = s.q === 'OD' ? 'T' : s.q; // OD is computed from T (after the polarization mean)
-      let x = 0;
+  }
+
+  p.samples.forEach((s, k) => {
+    const entries = entriesOf(s);
+    const pols: Polarization[] = s.pol === 'avg' ? ['s', 'p'] : [s.pol];
+    const wt = 1 / pols.length;
+    const sw = Math.sqrt(s.w / W);
+    const base = s.q === 'OD' ? 'T' : s.q; // OD is computed from T (after the polarization and band means)
+    const val = (pt: Point) => (base === 'R' ? pt.R : base === 'T' ? pt.T : 1 - pt.R - pt.T);
+    let x = 0;
+    for (const e of entries) for (const pol of pols) x += e.w * wt * val(points.get(`${e.li}|${e.ai}`)!.get(pol)!);
+    // chain rule: residual r(value(x)), value = x or OD(x)
+    const chain = s.q === 'OD' ? dOdOf(x) : 1;
+    if (s.q === 'OD') x = odOf(x);
+    X[k] = x;
+    const res = residualOf(s.kind, x, s.target, s.tol ?? 1, sw, P);
+    residuals[k] = res.r;
+    const factor = res.g * chain;
+    if (factor === 0) return; // a met one-sided target: no Jacobian row, no needle contribution
+    for (const e of entries)
       for (const pol of pols) {
-        const pt = pts.get(pol)!;
-        x += wt * (base === 'R' ? pt.R : base === 'T' ? pt.T : 1 - pt.R - pt.T);
-      }
-      // chain rule: residual r(value(x)), value = x or OD(x)
-      const chain = s.q === 'OD' ? dOdOf(x) : 1;
-      if (s.q === 'OD') x = odOf(x);
-      X[k] = x;
-      const res = residualOf(s.kind, x, s.target, s.tol ?? 1, sw, P);
-      residuals[k] = res.r;
-      const factor = res.g * chain;
-      // the Jacobian row (zero for a met one-sided target)
-      if (J && factor !== 0) {
-        const row = J[k];
-        for (const pol of pols) {
-          const pt = pts.get(pol)!;
-          const f = factor * wt;
-          const n = Math.min(nv, pt.dR.length);
-          if (base === 'R') for (let v2 = 0; v2 < n; v2++) row[v2] += f * pt.dR[v2];
-          else if (base === 'T') for (let v2 = 0; v2 < n; v2++) row[v2] += f * pt.dT[v2];
-          else for (let v2 = 0; v2 < n; v2++) row[v2] -= f * (pt.dR[v2] + pt.dT[v2]);
+        const pt = points.get(`${e.li}|${e.ai}`)!.get(pol)!;
+        const f = factor * wt * e.w;
+        // the Jacobian row
+        if (J) {
+          const row = J[k];
+          const n = Math.min(layerCol.length, pt.dR.length);
+          for (let g = 0; g < n; g++) {
+            const col = layerCol[g];
+            if (col < 0) continue;
+            row[col] += f * (base === 'R' ? pt.dR[g] : base === 'T' ? pt.dT[g] : -(pt.dR[g] + pt.dT[g]));
+          }
         }
-      }
-      if (needleSum && factor !== 0) {
-        for (const pol of pols) {
-          const pt = pts.get(pol)!;
-          if (!pt.nR) continue;
+        if (needleSum && pt.nR) {
           let t = 0;
           for (let pi = 0; pi < probes.length; pi++)
             for (let m = 0; m < candidates.length; m++, t++) {
               const dv = base === 'R' ? pt.nR[pi][m] : base === 'T' ? pt.nT![pi][m] : -pt.nR[pi][m] - pt.nT![pi][m];
-              needleSum[t] += 2 * res.r * factor * wt * dv;
+              needleSum[t] += 2 * res.r * f * dv;
             }
         }
       }
-    }
-  }
+  });
   // soft penalty on the total thickness of each designed side
   let penalty = 0;
   for (const side of p.sides) {
@@ -192,11 +245,7 @@ export function evaluateDesign(p: DesignProblem, design: Design, opts: { grad?: 
     if (tot > p.maxTotal) {
       const e = (tot - p.maxTotal) / p.maxTotal;
       penalty += e * e;
-      if (J) {
-        const row = new Array<number>(nv).fill(0);
-        vars.forEach((v, i) => v.side === side && (row[i] = 1 / p.maxTotal));
-        J.push(row);
-      }
+      if (J) J.push(vars.map((v) => v.members.filter((x) => x.side === side).length / p.maxTotal));
       residuals.push(e);
     } else if (J) {
       J.push(new Array<number>(nv).fill(0));
@@ -219,20 +268,22 @@ export function evaluateDesign(p: DesignProblem, design: Design, opts: { grad?: 
 
 // ---- Design operations ----
 
-const clone = (d: Design): Design => ({ front: d.front.map((L) => ({ ...L })), back: d.back.map((L) => ({ ...L })) });
+function clone(d: Design): Design {
+  return { front: d.front.map((L) => ({ ...L })), back: d.back.map((L) => ({ ...L })) };
+}
 
 // Removes layers thinner than minD and merges neighbours of the same material.
 export function cleanup(p: DesignProblem, d: Design): Design {
   const out = clone(d);
   for (const side of ['front', 'back'] as Side[]) {
-    let L = out[side].filter((x) => x.d >= p.minD);
+    let L = out[side].filter((x) => x.fix || x.d >= minOf(p, x.m));
     let merged = true;
     while (merged) {
       merged = false;
       const next: DesignLayer[] = [];
       for (const x of L) {
         const last = next.at(-1);
-        if (last && last.m === x.m) {
+        if (last && last.m === x.m && !pinned(last) && !pinned(x)) {
           last.d += x.d;
           merged = true;
         } else next.push({ ...x });
@@ -261,7 +312,7 @@ export async function refine(
   ctl: Control = NO_CONTROL,
   watch?: (it: number, merit: number) => boolean,
 ): Promise<RefineResult> {
-  let d = clone(d0);
+  let d = untangle(p, d0);
   const vars = variablesOf(p, d);
   let ev = evaluateDesign(p, d, { grad: vars.length > 0 });
   const trajectory = [ev.merit];
@@ -270,7 +321,7 @@ export async function refine(
   const nv = vars.length;
   const set = (base: Design, x: number[]) => {
     const n = clone(base);
-    vars.forEach((v, i) => (n[v.side][v.j].d = Math.min(p.maxD, Math.max(0, x[i]))));
+    vars.forEach((v, i) => v.members.forEach((m) => (n[m.side][m.j].d = Math.min(maxOf(p, n[m.side][m.j].m), Math.max(0, x[i])))));
     return n;
   };
   for (let it = 0; it < iterations; it++) {
@@ -291,7 +342,7 @@ export async function refine(
         for (let b = a; b < nv; b++) JtJ[o + b] += ra * row[b];
       }
     }
-    const x0 = vars.map((v) => d[v.side][v.j].d);
+    const x0 = vars.map((v) => d[v.members[0].side][v.members[0].j].d);
     let improved = false;
     for (let tries = 0; tries < 12; tries++) {
       const step = dampedStep(JtJ, Jtr, nv, lambda);
@@ -577,11 +628,12 @@ function gradualCandidates(p: DesignProblem, cur: Current, s: DesignSettings, ct
     // thickness increases of every layer
     for (let j = 0; j < L.length; j++) {
       if (ctl.stopped()) return out;
+      if (L[j].fix) continue;
       const n = nAtRef(p, L[j].m, s.lambdaRef);
       const r = scan(
         (t) => {
           const d = clone(cur.design);
-          d[side][j].d = Math.min(p.maxD, t);
+          setThickness(p, d, side, j, t);
           return d;
         },
         L[j].d,
@@ -627,11 +679,11 @@ async function randomStep(p: DesignProblem, cur: Current, s: DesignSettings, ctl
   for (let k = 0; k < tries; k++) {
     if (ctl.stopped()) break;
     const d = clone(cur.design);
-    for (const side of p.sides)
-      for (const L of d[side]) {
-        const span = Math.max(amp * L.d, s.lambdaRef / 40 / nAtRef(p, L.m, s.lambdaRef));
-        L.d = Math.min(p.maxD, Math.max(0, L.d + (2 * rand() - 1) * span));
-      }
+    for (const v of variablesOf(p, d)) {
+      const L = d[v.members[0].side][v.members[0].j];
+      const span = Math.max(amp * L.d, s.lambdaRef / 40 / nAtRef(p, L.m, s.lambdaRef));
+      setThickness(p, d, v.members[0].side, v.members[0].j, L.d + (2 * rand() - 1) * span);
+    }
     const t = await settle(p, d, ctl, 80);
     if (t.merit < (best?.merit ?? cur.merit * (1 - GAIN))) best = t;
   }
@@ -647,6 +699,7 @@ async function cleanStep(p: DesignProblem, cur: Current, s: DesignSettings, ctl:
     const L = cur.design[side];
     if (L.length <= target) continue;
     for (let j = 0; j < L.length; j++) {
+      if (pinned(L[j])) continue;
       const d = clone(cur.design);
       const Ls = d[side];
       const opt = Ls[j].d * nAtRef(p, Ls[j].m, s.lambdaRef);
@@ -776,13 +829,29 @@ export async function runDesign(p: DesignProblem, start: Design, s: DesignSettin
 }
 
 // Spectrum of a design over the problem's wavelengths at one angle (R, T for s, p or their mean).
+// (A cone of rays around the angle: their mean.)
 export function spectrum(p: DesignProblem, d: Design, ai: number, pol: PolMode): { R: number[]; T: number[] } {
+  const rays = p.rays?.[ai];
+  const avg = (li: number) => (rays ? { avg: rays.map((r) => ({ li, ai: r.ai, w: r.w })) } : {});
   const samples: Sample[] = p.lambdas.flatMap((_, li) => [
-    { li, ai, pol, q: 'R' as const, target: 0, w: 1 },
-    { li, ai, pol, q: 'T' as const, target: 0, w: 1 },
+    { li, ai, pol, q: 'R' as const, target: 0, w: 1, ...avg(li) },
+    { li, ai, pol, q: 'T' as const, target: 0, w: 1, ...avg(li) },
   ]);
   const ev = evaluateDesign({ ...p, samples, maxTotal: Infinity }, d);
   return { R: p.lambdas.map((_, i) => ev.X[2 * i]), T: p.lambdas.map((_, i) => ev.X[2 * i + 1]) };
+}
+
+// Layer sensitivity: the increase of the merit function MF when one layer is made thicker or thinner by δ (the mean of
+// both, a second-order quantity: at an optimum the first derivative vanishes) — where the design is fragile.
+export function layerSensitivity(p: DesignProblem, design: Design, step: number, rel: boolean) {
+  const mf0 = evaluateDesign(p, design).mf;
+  const one = (side: 'front' | 'back', j: number) => {
+    const L = design[side][j];
+    const delta = rel ? (L.d * step) / 100 : step;
+    const at = (dd: number) => evaluateDesign(p, { ...design, [side]: design[side].map((x, k) => (k === j ? { ...x, d: Math.max(0, x.d + dd) } : x)) }).mf;
+    return { side, j, m: L.m, d: L.d, dmf: (at(delta) + at(-delta)) / 2 - mf0 };
+  };
+  return { mf0, rows: (['front', 'back'] as const).filter((sd) => p.sides.includes(sd)).flatMap((sd) => design[sd].map((_, j) => one(sd, j))) };
 }
 
 // ---- Start designs from a formula ----

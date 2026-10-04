@@ -227,6 +227,96 @@ export function solve(a: CMat, br: ArrayLike<number>, bi: ArrayLike<number>): [F
   return [xr, xi];
 }
 
+// Solution of A X = B for a matrix B (Gaussian elimination with partial pivoting): A⁻¹B in about half the work of
+// inv(A) then a product. A and B are not modified.
+export function solveMat(a: CMat, b: CMat): CMat {
+  const n = a.n;
+  const R = a.re.slice();
+  const I = a.im.slice();
+  const XR = b.re.slice();
+  const XI = b.im.slice();
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    let best = -1;
+    for (let i = c; i < n; i++) {
+      const v = R[i * n + c] ** 2 + I[i * n + c] ** 2;
+      if (v > best) [best, p] = [v, i];
+    }
+    if (!(best > 0)) throw new Error('singular matrix');
+    if (p !== c) {
+      for (let j = c; j < n; j++) {
+        const kc = c * n + j;
+        const kp = p * n + j;
+        let t = R[kc];
+        R[kc] = R[kp];
+        R[kp] = t;
+        t = I[kc];
+        I[kc] = I[kp];
+        I[kp] = t;
+      }
+      for (let j = 0; j < n; j++) {
+        const kc = c * n + j;
+        const kp = p * n + j;
+        let t = XR[kc];
+        XR[kc] = XR[kp];
+        XR[kp] = t;
+        t = XI[kc];
+        XI[kc] = XI[kp];
+        XI[kp] = t;
+      }
+    }
+    const pr = R[c * n + c];
+    const pi = I[c * n + c];
+    const d = pr * pr + pi * pi;
+    const oc = c * n;
+    for (let i = c + 1; i < n; i++) {
+      const ar = R[i * n + c];
+      const ai = I[i * n + c];
+      if (ar === 0 && ai === 0) continue;
+      const fr = (ar * pr + ai * pi) / d;
+      const fi = (ai * pr - ar * pi) / d;
+      const oi = i * n;
+      for (let j = c + 1; j < n; j++) {
+        const yr = R[oc + j];
+        const yi = I[oc + j];
+        R[oi + j] -= fr * yr - fi * yi;
+        I[oi + j] -= fr * yi + fi * yr;
+      }
+      for (let j = 0; j < n; j++) {
+        const yr = XR[oc + j];
+        const yi = XI[oc + j];
+        XR[oi + j] -= fr * yr - fi * yi;
+        XI[oi + j] -= fr * yi + fi * yr;
+      }
+    }
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    const oi = i * n;
+    for (let k = i + 1; k < n; k++) {
+      const rr = R[oi + k];
+      const ri = I[oi + k];
+      if (rr === 0 && ri === 0) continue;
+      const ok = k * n;
+      for (let j = 0; j < n; j++) {
+        const yr = XR[ok + j];
+        const yi = XI[ok + j];
+        XR[oi + j] -= rr * yr - ri * yi;
+        XI[oi + j] -= rr * yi + ri * yr;
+      }
+    }
+    const pr = R[oi + i];
+    const pi = I[oi + i];
+    const d = pr * pr + pi * pi;
+    for (let j = 0; j < n; j++) {
+      const sr = XR[oi + j];
+      const si = XI[oi + j];
+      XR[oi + j] = (sr * pr + si * pi) / d;
+      XI[oi + j] = (si * pr - sr * pi) / d;
+    }
+  }
+  return { n, re: XR, im: XI };
+}
+
 // Matrix × complex vector.
 export function mulVec(a: CMat, xr: ArrayLike<number>, xi: ArrayLike<number>): [Float64Array, Float64Array] {
   const n = a.n;

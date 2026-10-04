@@ -6,10 +6,12 @@ import type { AppNode } from '../types.ts';
 import { metaOfSpec } from './run.ts';
 import { evaluateGraph, type JobState } from './evaluate.ts';
 import { runJob } from './computePool.ts';
-import type { Fields, NodeResult, TmmJob } from './types.ts';
+import type { Dataset, Fields, NodeResult, TmmJob } from './types.ts';
 
-const MAX_CACHE_POINTS = 8_000_000;
+// The results kept (to go back to an earlier input without recomputing), by their memory: every array of every result
+const MAX_CACHE_BYTES = 768e6;
 const MAX_CACHE_ENTRIES = 40;
+const bytesOf = (d: Dataset) => Object.values(d.fields).reduce((a, f) => a + f.byteLength, 0);
 
 export type JobProgress = { p: number; seconds: number };
 // reset: a project was loaded (its node ids may repeat: no "previous result" of another project)
@@ -72,12 +74,12 @@ function store(s: JobState, job: TmmJob, fields: Fields, seconds: number) {
   // Evict oldest entries, never ones currently shown by a node.
   const pinned = new Set(s.lastDone.values());
   let total = 0;
-  for (const d of s.cache.values()) total += d.size;
+  for (const d of s.cache.values()) total += bytesOf(d);
   for (const [k, d] of s.cache) {
-    if (total <= MAX_CACHE_POINTS && s.cache.size <= MAX_CACHE_ENTRIES) break;
+    if (total <= MAX_CACHE_BYTES && s.cache.size <= MAX_CACHE_ENTRIES) break;
     if (pinned.has(k)) continue;
     s.cache.delete(k);
-    total -= d.size;
+    total -= bytesOf(d);
   }
 }
 

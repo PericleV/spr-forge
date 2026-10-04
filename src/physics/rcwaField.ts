@@ -5,7 +5,8 @@
 import * as X from './complex.ts';
 import type { C } from './complex.ts';
 import { add, eye, inv, mul, mulVec, type CMat } from './cmat.ts';
-import { star, type RcwaLayer, type SMat, type Solved } from './rcwa.ts';
+import { segEps, star, type RcwaLayer, type SMat, type Solved } from './rcwa.ts';
+import { fffFieldAt, fffMarch, type FffE } from './rcwaFff.ts';
 import type { Polarization } from './tmm.ts';
 
 export type FieldQuantity = 'E2' | 'H2' | 'Ex' | 'Ey' | 'Ez' | 'Hx' | 'Hy' | 'Hz';
@@ -57,15 +58,28 @@ export type FieldMap = {
   zs: number[]; // nm, 0 = top of the first layer
   values: Float64Array; // row-major [z][x]
   boundaries: number[]; // z of the interfaces
-  outlines: { z0: number; z1: number; xs: number[] }[]; // x (nm, within one period) of the material walls of each slice
+  // x (nm, within one period) of the material walls of each slice; lines: the true outline of a smooth (FFF) profile,
+  // polylines [x0, z0, x1, z1, …] (nm, one period)
+  outlines: { z0: number; z1: number; xs: number[]; lines?: number[][] }[];
 };
+
+// The outlines of the map: the walls of every staircase slice; a smooth (FFF) profile's true outline.
+export function mapOutlines(layers: RcwaLayer[], bounds: number[], period: number): FieldMap['outlines'] {
+  const outlines: FieldMap['outlines'] = [];
+  layers.slice(1, -1).forEach((L, j) => {
+    if (L.outline) outlines.push({ z0: bounds[j], z1: bounds[j] + L.outline.d, xs: [], lines: L.outline.lines.map((p) => p.map((v, i) => (i % 2 ? bounds[j] + v * L.outline!.d : v * period))) });
+    else if (L.segs) outlines.push({ z0: bounds[j], z1: bounds[j + 1], xs: L.segs.map((s) => s.from * period).filter((x) => x > 0) });
+  });
+  return outlines;
+}
 
 type Vec = [Float64Array, Float64Array];
 const addV = (a: Vec, b: Vec, s = 1): Vec => [a[0].map((v, i) => v + s * b[0][i]), a[1].map((v, i) => v + s * b[1][i])];
 const scaleV = (a: Vec, k: number): Vec => [a[0].map((v) => v * k), a[1].map((v) => v * k)];
 
-// Harmonic amplitudes (u, v) of every region at local depth z (normalized, k₀z).
-type Region = { d: number; at: (z: number) => { u: Vec; v: Vec } };
+// Harmonic amplitudes (u, v) of every region at local depth z (normalized, k₀z); w: the third component when the region
+// gives it itself (a smooth FFF layer: TM Ez, TE Hz).
+type Region = { d: number; at: (z: number) => { u: Vec; v: Vec; w?: Vec; e?: FffE } };
 
 function diagPhase(kzRe: Float64Array, kzIm: Float64Array, z: number): Vec {
   // exp(i kz z)
@@ -119,9 +133,46 @@ export function fieldMap(
       return { u: addV(f, b), v: mulDiag(V0d, addV(f, b, -1)) };
     },
   });
+  // V₀ of the gap (the amplitudes c± of a slice boundary: u = c⁺ + c⁻, v = V₀(c⁺ − c⁻))
+  const v0 = Array.from(sol.vinv[0], (r, m) => X.div(X.c(1), X.c(r, sol.vinv[1][m])));
   for (let j = 0; j < nIn; j++) {
     const L = ls[j];
     const md = modes[j + 1];
+    const path = L.fff;
+    if (path) {
+      // a smooth (FFF) layer: at the top of each slice the amplitudes from the S-matrices above and below it, then the
+      // state integrated through the slice (marched once, when first needed)
+      const n = path.slices.length;
+      const SL: SMat[] = [left[j]];
+      for (let k = 0; k < n - 1; k++) SL.push(star(SL[k], path.slices[k].S));
+      const SR: SMat[] = new Array(n);
+      SR[n - 1] = star(path.slices[n - 1].S, right[j + 1]);
+      for (let k = n - 2; k >= 0; k--) SR[k] = star(path.slices[k].S, SR[k + 1]);
+      const states: (Vec[] | undefined)[] = new Array(n);
+      const statesOf = (k: number) => {
+        if (states[k]) return states[k]!;
+        const aP = mulVec(mul(inv(add(I, mul(SL[k].S22, SR[k].S11), -1)), SL[k].S21), e0[0], e0[1]);
+        const aM = mulVec(SR[k].S11, aP[0], aP[1]);
+        const u: Vec = [aP[0].map((a, m) => a + aM[0][m]), aP[1].map((a, m) => a + aM[1][m])];
+        const dr = aP[0].map((a, m) => a - aM[0][m]);
+        const di = aP[1].map((a, m) => a - aM[1][m]);
+        const v: Vec = [dr.map((a, m) => a * v0[m].re - di[m] * v0[m].im), dr.map((a, m) => a * v0[m].im + di[m] * v0[m].re)];
+        const top: Vec = [Float64Array.from([...u[0], ...v[0]]), Float64Array.from([...u[1], ...v[1]])];
+        return (states[k] = fffMarch(path, k, top));
+      };
+      const d = layers[j + 1].d * k0;
+      regions.push({
+        d,
+        at: (z) => {
+          const t = Math.min(1, Math.max(0, z / d));
+          const step = t * path.steps;
+          let k = path.slices.findIndex((s) => step < s.j1);
+          if (k < 0) k = n - 1;
+          return fffFieldAt(path, k, statesOf(k), t);
+        },
+      });
+      continue;
+    }
     // a⁺ at the left of layer j, b⁻ at its right
     const SL = left[j];
     const SR = right[j];
@@ -165,14 +216,12 @@ export function fieldMap(
   const phase = xs.map((x) => Array.from(kx, (k, m) => X.mul(X.c(sig[m]), X.exp(X.c(0, k * k0 * x)))));
   const eps0 = X.mul(X.c(layers[0].n!.re), X.c(layers[0].n!.re));
   const values = new Float64Array(opts.nx * opts.nz);
-  const outlines: FieldMap['outlines'] = [];
-  layers.slice(1, -1).forEach((L, j) => {
-    if (L.segs) outlines.push({ z0: bounds[j], z1: bounds[j + 1], xs: L.segs.map((s) => s.from * period).filter((x) => x > 0) });
-  });
+  const outlines = mapOutlines(layers, bounds, period);
 
   // per-layer helpers for the TM Ex / Ez and the ε(x) profile
   const aux = layers.map((L, idx) => {
     const md = modes[idx];
+    if (L.fff) return { eps: () => X.c(1), Ainv: null as CMat | null, EinvKx: null as CMat | null, epsU: null }; // its own Ez, Ex direct
     if (!L.segs) {
       const eps = X.mul(L.n!, L.n!);
       return { eps: () => eps, Ainv: null as CMat | null, EinvKx: null as CMat | null, epsU: eps };
@@ -180,7 +229,7 @@ export function fieldMap(
     const epsAt = (x: number): C => {
       const f = ((x / period) % 1 + 1) % 1;
       const s = L.segs!.find((q) => f >= q.from && f < q.to) ?? L.segs![L.segs!.length - 1];
-      return X.mul(s.n, s.n);
+      return segEps(s, 0); // Ex = Dx / εxx
     };
     if (pol === 's' || !md.E || !md.A) return { eps: epsAt, Ainv: null, EinvKx: null, epsU: null };
     const Einv = inv(md.E);
@@ -212,7 +261,7 @@ export function fieldMap(
       reg = j < nIn ? j + 1 : nIn + 1;
       zl = (z - bounds[Math.min(j, nIn)]) * k0;
     }
-    const { u, v } = regions[reg].at(zl);
+    const { u, v, w, e: fe } = regions[reg].at(zl);
     const lay = layers[reg === 0 ? 0 : reg === nIn + 1 ? layers.length - 1 : reg];
     const a = aux[reg === 0 ? 0 : reg === nIn + 1 ? layers.length - 1 : reg];
     // harmonics of the other components
@@ -220,7 +269,8 @@ export function fieldMap(
     let hz: Vec | null = null; // TE: Hz = Kx Ey
     let ez: Vec | null = null; // TM: Ez = −[[ε]]⁻¹ Kx Hy
     let dx: Vec | null = null; // TM: Dx harmonics (grating) for Ex = Dx / ε
-    if (pol === 's') hz = kxV(u);
+    if (pol === 's') hz = w ?? kxV(u);
+    else if (w) ez = w;
     else {
       if (a.EinvKx) {
         const e = mulVec(a.EinvKx, u[0], u[1]);
@@ -234,7 +284,9 @@ export function fieldMap(
     }
     for (let ix = 0; ix < xs.length; ix++) {
       const U = sumX(u, ix);
-      const Vv = dx ? X.div(sumX(dx, ix), a.eps(xs[ix])) : sumX(v, ix);
+      // a smooth (FFF) layer, TM: E = E_T + N D_N / ε at the point
+      const epsF = fe ? fe.eps(xs[ix] / period) : null;
+      const Vv = fe ? X.add(sumX(fe.xT, ix), X.div(sumX(fe.xN, ix), epsF!)) : dx ? X.div(sumX(dx, ix), a.eps(xs[ix])) : sumX(v, ix);
       let val: number;
       if (pol === 's') {
         // Ey = U, Hx = V, Hz
@@ -247,7 +299,7 @@ export function fieldMap(
         else val = 0;
       } else {
         // Hy = U, Ex = V, Ez
-        const Ez = sumX(ez!, ix);
+        const Ez = fe ? X.add(sumX(fe.zT, ix), X.div(sumX(fe.zN, ix), epsF!)) : sumX(ez!, ix);
         if (opts.quantity === 'E2') val = (X.abs2(Vv) + X.abs2(Ez)) * eps0.re;
         else if (opts.quantity === 'H2') val = X.abs2(U);
         else if (opts.quantity === 'Hy') val = comp(U, opts.part);

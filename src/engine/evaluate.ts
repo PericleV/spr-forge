@@ -39,21 +39,26 @@ import type {
   SweepNode,
   TargetNode,
   VariableNode,
-  ZonesNode, AnisoNode, NotesNode, Interval, ExtractNode, MergeNode, CustomNode } from '../types.ts';
+  ZonesNode, AnisoNode, NotesNode, Interval, ExtractNode, MergeNode, CustomNode, LocateFields, FilterBand, KineticsNode, KineticsData, SensorgramNode } from '../types.ts';
 import { axisValueText, forEachLine, hash, line, metaOf, otherIndex, strides, TMM_META } from './dataset.ts';
 import { branches, COMPONENTS, coupledRates, crossingOf, dispersionParams, energyWidth, HBAR_EVS, mode2At, modelAt, paramUnit, values as fitValues, type ParamKind } from './fitmodels.ts';
 import { paramId } from './fitrun.ts';
-import { layersOwned, phiAt, polAt } from './run.ts';
+import { layersAt, layersOwned, metaOfSpec, phiAt, polAt, specSize } from './run.ts';
+import { ANALYTES, blocking, equilibrium, MODEL_TEXT, simulate, surfaceOf, type Analyte, type KineticModel, type KineticParams, type KineticResult, type Surface } from './kinetics.ts';
+import { tmmPoint } from '../physics/tmm.ts';
 import { berremanProfile } from '../physics/berremanField.ts';
 import type { NoteDoc } from '../notes/markup.ts';
 import { fieldProfile, layerOfZ, profileGrid, type Complexes, type Profile } from '../physics/field.ts';
 import { penetrationDepth, type DepthResult } from './depth.ts';
 import { customData, extract, fracStep, lambdaAt, merge, type CustomExtra, type CustomVar } from './dataOps.ts';
-import { extremum, halfWidth, inWindow, windowOf, zoneAt } from './metrics.ts';
+import { bandWeights } from './photopic.ts';
+import { coneRays, halfAngleOfF } from './cone.ts';
+import { blurs, blurWarnings, degrade, instrumentOf, noisy } from './instrument.ts';
+import { halfWidth, inWindow, locate, windowOf, zoneAt, type Locate } from './metrics.ts';
 import { formulaStat, metricCost, statOf, zonesCost, type Outside, type Zone, type ZoneGoal } from './objectives.ts';
 import { bandTerms, effectiveSlice, odOf, pMerit, sliceCurves, sliceInfo, sliceLines, sliceValues, termText, type MeritPoint, type Slice, type SliceInfo, type SpecTerm, type TargetSpec } from './spec.ts';
 import { interp, parseSpectrum } from './match.ts';
-import { gratingSlices, smallestFeature, type GratingParams } from './grating.ts';
+import { FFF_PROFILES, gratingSlices, smallestFeature, type GratingParams } from './grating.ts';
 import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type PlanItem } from './rough.ts';
 import { fieldResults, type FieldJob } from './rcwaFieldRun.ts';
 import { MAX_ORDERS, rcwaLayerList, rcwaLayersAt, rcwaRegionsAt } from './runRcwa.ts';
@@ -89,6 +94,13 @@ import type {
 } from './types.ts';
 
 export const MAX_POINTS = 2_000_000;
+// Memory of a result: every quantity of every point as a 64-bit number (13 quantities for TMM with a λ range, up to ~50
+// for conical RCWA with orders shown). Above MAX_JOB_BYTES a job is refused (a browser tab would run out of memory),
+// above LARGE_JOB_BYTES it is computed with a warning.
+export const MAX_JOB_BYTES = 512e6;
+const LARGE_JOB_BYTES = 128e6;
+export const jobBytes = (spec: TmmSpec) => specSize(spec) * metaOfSpec(spec).length * 8;
+const megabytes = (b: number) => `${Math.round(b / 1e6).toLocaleString('en')} MB`;
 export const ASR_ETA = 0.9; // default strength of the adaptive spatial resolution
 const LARGE_JOB = 1_000_000;
 const MAX_AXIS = 20_001;
@@ -280,6 +292,12 @@ function evalNode(ctx: Ctx, id: string): NodeResult {
         break;
       case 'rcwafield':
         r = evalRcwaField(ctx, node);
+        break;
+      case 'kinetics':
+        r = evalKinetics(ctx, node);
+        break;
+      case 'sensorgram':
+        r = evalSensorgram(ctx, node);
         break;
       case 'frame':
         r = ok(undefined);
@@ -919,9 +937,11 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
         if (nMin < info.asrMinN)
           warnings.add(`ASR: the narrowest part between two edges is ${(100 * dMin).toFixed(1)} % of the period; use N ≥ ${info.asrMinN} for the mapping to be resolved (below that ASR can be worse than no ASR).`);
         if (stack.substrate) warnings.add('ASR is not used with a thick substrate (plain RCWA there).');
+        if (rd.profiles === 'fff' && gratings.some((L) => FFF_PROFILES.includes(L.grating!.profile))) warnings.add('ASR is not used with smooth (FFF) profiles (plain RCWA there).');
       }
-      // the orders must resolve the smallest feature of the profiles
+      // the orders must resolve the smallest feature of the profiles (the staircase's: smooth FFF profiles have none)
       for (const L of gratings) {
+        if (rd.profiles === 'fff' && FFF_PROFILES.includes(L.grating!.profile)) continue;
         const w = smallestFeature(gratingSlices(L.grating!));
         if (nMin < Math.min(40, Math.ceil(1.5 / w))) {
           warnings.add(`${L.label || 'Grating'}: its smallest feature is ${(100 * w).toFixed(1)} % of the period; N ≥ ${Math.min(40, Math.ceil(1.5 / w))} orders are needed to resolve it.`);
@@ -1036,6 +1056,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   if (back && [layers[layers.length - 1], back.layers[back.layers.length - 1]].some((L) => keysOf(L).some(isAniso)))
     errors.push('A thick substrate and its back medium must be isotropic.');
   let jonesT: { psi: number; delta: number } | undefined;
+  let coneHalf = 0;
   if (method === 'tmm') {
     const cd = d as ComputeNode['data'];
     const ph = numberSweep(ctx, node.id, 'phi', 'azimuth φ', errors);
@@ -1047,6 +1068,13 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     }
     if (!anisoUsed && (ph || phi0 !== 0)) warnings.add('The azimuth φ has no effect on isotropic films (it matters with anisotropic layers).');
     info.berreman = anisoUsed || !!jonesT;
+    if (cd.cone) {
+      const h = cd.coneHalf ?? 5;
+      if (!(h > 0 && h < 60)) errors.push('Cone: the half-angle must be in (0, 60)°.');
+      else if (info.berreman) warnings.add('The cone of light is computed for isotropic stacks only (not with anisotropic layers or a Jones polarization): it is ignored.');
+      else if (theta.some((t) => t + h >= 90)) errors.push('Cone: θ plus the half-angle reaches grazing incidence.');
+      else coneHalf = h;
+    }
   }
   if (method === 'rcwa') {
     const rd = d as RcwaNode['data'];
@@ -1159,6 +1187,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     polSweep: polIdx,
     sweeps: sweeps.map((s) => s.values.length),
     ...(back ? { back } : {}),
+    ...(coneHalf > 0 ? { cone: coneHalf } : {}),
     ...(method === 'tmm' && info.berreman ? { b4: { phi: phi0, ...(jonesT ? { jones: jonesT } : {}) }, ...(phiBind ? { phiBind } : {}) } : {}),
     ...(method === 'rcwa'
       ? (() => {
@@ -1170,6 +1199,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
               ...(rd.asr && !conical && !roughAll.length ? { asr: rd.eta ?? ASR_ETA } : {}),
               ...(conical ? { conical: true, phi: phi0 } : {}),
               ...(rd.polMix && !polSweep ? { jones: { psi: rd.polMix.psi, delta: rd.polMix.delta } } : {}),
+              ...(rd.profiles === 'fff' ? { profiles: 'fff' as const } : {}),
             },
             ...(phiBind ? { phiBind } : {}),
             ...(ordersBind ? { ordersBind } : {}),
@@ -1178,6 +1208,8 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       : {}),
   };
   if (method === 'rcwa') info.spec = spec;
+  const bytes = jobBytes(spec);
+  if (bytes > LARGE_JOB_BYTES && bytes <= MAX_JOB_BYTES) warnings.add(`Large result: about ${megabytes(bytes)} of memory (${metaOfSpec(spec).length} quantities per point).`);
   // Compute RCWA in the app waits for Run (the optimizer outputs, evaluated with a tag, run by themselves)
   const manual = method === 'rcwa' && !ctx.tag && ctx.armed ? ctx.armed : undefined;
   const out = requestDataset(ctx, `${ctx.tag ?? ''}${node.id}`, spec, axes, manual);
@@ -1238,6 +1270,14 @@ function requestDataset(ctx: Ctx, requester: string, spec: TmmSpec, axes: Axis[]
   const prev = ctx.lastDone.get(requester);
   const dataset = (prev && ctx.cache.get(prev)) || null;
   if (armed && armed.get(requester) !== key) return { key, dataset, pending: false, idle: true };
+  const bytes = jobBytes(spec);
+  if (bytes > MAX_JOB_BYTES)
+    return {
+      key,
+      dataset: null,
+      pending: false,
+      error: `Too large for the browser's memory: ${specSize(spec).toLocaleString('en')} points × ${metaOfSpec(spec).length} quantities ≈ ${megabytes(bytes)} (limit ${megabytes(MAX_JOB_BYTES)}). Reduce the ranges or the sweeps${spec.rcwa ? ', or the orders shown' : ''}.`,
+    };
   ctx.jobs.push({ requester, key, spec, axes });
   return { key, dataset, pending: true };
 }
@@ -1512,6 +1552,9 @@ const passThrough = (value: DataValue, errors: string[], info: AnalysisInfo): No
   pending: value.pending,
 });
 
+// How an analysis node finds the position of its dip / peak (absent: the 3-point parabola)
+const locOf = (d: LocateFields): Locate => ({ method: d.locate ?? 'parabola', level: d.locLevel ?? 0.5, deg: d.locDeg ?? 2 });
+
 function evalExtremum(ctx: Ctx, node: ExtremumNode): NodeResult {
   const d = node.data;
   const errors: string[] = [];
@@ -1527,7 +1570,7 @@ function evalExtremum(ctx: Ctx, node: ExtremumNode): NodeResult {
   const Y = new Float64Array(n).fill(NaN);
   forEachLine(ds, meta.key, along, (k, ys) => {
     if (!okWindow(win[k])) return;
-    const e = extremum(xs, ys, win[k][0], win[k][1], d.mode);
+    const e = locate(xs, ys, win[k][0], win[k][1], d.mode, locOf(d));
     X[k] = e.x;
     Y[k] = e.y;
   });
@@ -1540,7 +1583,7 @@ function evalExtremum(ctx: Ctx, node: ExtremumNode): NodeResult {
     value,
     ds,
     along,
-    `ext:${node.id}:${d.mode}:${meta.key}:${d.lo}:${d.hi}:${JSON.stringify(d.path ?? null)}`,
+    `ext:${node.id}:${d.mode}:${meta.key}:${d.lo}:${d.hi}:${JSON.stringify(d.path ?? null)}:${JSON.stringify(locOf(d))}`,
     `${value.name} · ${label}`,
     [
       { key: 'x', label: `${axis.label} at ${label}`, short: `${axis.label}(${label})`, unit: axis.unit, of: axis.id },
@@ -1581,7 +1624,7 @@ function evalFwhm(ctx: Ctx, node: FwhmNode): NodeResult {
     const [C, W, X1, X2, L, E] = Array.from({ length: 6 }, () => new Float64Array(n).fill(NaN));
     forEachLine(ds, meta.key, along, (k, ys) => {
       if (!okWindow(win[k])) return;
-      const w = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, d.method, d.level);
+      const w = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, d.method, d.level, locOf(d));
       C[k] = w.center;
       W[k] = w.width;
       X1[k] = w.x1;
@@ -1631,7 +1674,7 @@ function perturbTargets(spec: TmmSpec, lib: Library) {
   const matLabel = (k: string) => (count.get(name(k))! > 1 ? `${name(k)} (${k})` : name(k));
   const last = spec.layers.length - 1;
   return [
-    ...Object.keys(spec.instances).map((k) => ({ value: `mat:${k}`, label: `Material ${matLabel(k)} — every layer using it` })),
+    ...Object.keys(spec.instances).map((k) => ({ value: `mat:${k}`, label: `Material ${matLabel(k)} (all its layers)` })),
     ...spec.layers.map((L, i) => ({
       value: `layer:${i}`,
       label:
@@ -1667,7 +1710,9 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
       : { ...spec, layers: spec.layers.map((L, i) => (i === Number(id) ? { ...L, dn: L.dn + d.dn } : L)) };
   const req = requestDataset(ctx, `${ctx.tag ?? ''}${node.id}:pert`, pert, ds.axes);
   if (req.error) return passThrough(value, [req.error], info);
-  const pds = req.dataset && sameGrid(req.dataset, ds) ? req.dataset : null;
+  const pds0 = req.dataset && sameGrid(req.dataset, ds) ? req.dataset : null;
+  // samples of a Tolerance analysis as measured: the n + Δn curves through the same instrument, their own noise
+  const pds = pds0 && ds.instrument ? degrade(pds0, ds.instrument.inst, ds.instrument.stream + 1) : pds0;
   info.pendingPert = req.pending;
   if (!pds) return { errors: [], warnings: [], outs: { out: value }, pending: true, info };
 
@@ -1676,14 +1721,14 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
   const mode = d.kind === 'dip' ? 'min' : 'max';
   forEachLine(ds, meta.key, along, (k, ys) => {
     if (!okWindow(win[k])) return;
-    const e = extremum(xs, ys, win[k][0], win[k][1], mode);
+    const e = locate(xs, ys, win[k][0], win[k][1], mode, locOf(d));
     X0[k] = e.x;
     Y0[k] = e.y;
-    W[k] = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, 'local').width;
+    W[k] = halfWidth(xs, ys, win[k][0], win[k][1], d.kind, 'local', NaN, locOf(d)).width;
   });
   forEachLine(pds, meta.key, along, (k, ys) => {
     if (!okWindow(win[k])) return;
-    const e = extremum(xs, ys, win[k][0], win[k][1], mode);
+    const e = locate(xs, ys, win[k][0], win[k][1], mode, locOf(d));
     X1[k] = e.x;
     Y1[k] = e.y;
   });
@@ -3349,6 +3394,7 @@ export type FilterInfo = {
   thick: boolean;
   mf: number; // merit function (without the thickness penalty)
   usesOD: boolean;
+  cone?: number; // half-angle of the beam (°)
 };
 
 function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
@@ -3381,7 +3427,7 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   const tins = inputs(ctx, node.id, 'target');
   info.targetConnected = tins.length > 0;
   let lambdas = typeof grid === 'string' ? [] : grid;
-  let terms: SpecTerm[] = [];
+  let terms: (SpecTerm & { avg?: FilterBand['avg'] })[] = [];
   if (tins.length) {
     for (const tin of tins) {
       const tv = tin.connected ? tin.value : undefined;
@@ -3416,7 +3462,8 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
     });
     terms = d.bands.flatMap((b, i) => {
       const x = b.weight > 0 ? lambdas.filter((l) => l >= b.lo && l <= b.hi) : [];
-      return x.length ? [{ label: `band ${i + 1}`, q: b.q, pol: 'all' as const, angle: NaN, kind: b.kind ?? 'eq', x, v: x.map(() => b.value), tol: x.map(() => b.tol ?? 1), w: x.map(() => b.weight) }] : [];
+      if (b.avg === 'photopic' && x.length && !bandWeights(x, true)) errors.push(`Band ${i + 1}: a photopic mean needs wavelengths in 380–780 nm.`);
+      return x.length ? [{ label: `band ${i + 1}`, q: b.q, pol: 'all' as const, angle: NaN, kind: b.kind ?? 'eq', x, v: x.map(() => b.value), tol: x.map(() => b.tol ?? 1), w: x.map(() => b.weight), avg: b.avg }] : [];
     });
   }
   const QS: Quantity[] = ['R', 'T', 'A', 'OD'];
@@ -3439,11 +3486,35 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   for (const t of terms) if (Number.isFinite(t.angle) && !allAngles.some((a) => Math.abs(a - t.angle) < 1e-9)) allAngles.push(t.angle);
   if (allAngles.some((a) => !(a >= 0 && a < 89))) errors.push('Angles must be in [0, 89)°.');
   if (errors.length) return fail(errors, warnings, info);
+  // a converging beam: the rays around each nominal angle (added after the nominal angles), weights summing to 1
+  const half = d.coneBy === 'f' ? halfAngleOfF(d.coneF ?? 4) : (d.coneHalf ?? 5);
+  if (d.cone && !(half > 0 && half < 60)) errors.push('Cone: the half-angle must be in (0, 60)° (f-number > 0.58).');
+  if (d.cone && allAngles.some((a) => a + half >= 89)) errors.push('Cone: an angle plus the half-angle reaches grazing incidence (89°).');
+  if (errors.length) return fail(errors, warnings, info);
+  const nominal = allAngles.length;
+  const rays = d.cone
+    ? allAngles.slice(0, nominal).map((a) =>
+        coneRays(a, half).map((r) => {
+          let k = allAngles.findIndex((x) => Math.abs(x - r.theta) < 1e-9);
+          if (k < 0) k = allAngles.push(r.theta) - 1;
+          return { ai: k, w: r.w };
+        }),
+      )
+    : undefined;
+  const at = (lis: { li: number; w: number }[], ai: number) => (rays ? lis.flatMap((e) => rays[ai].map((r) => ({ li: e.li, ai: r.ai, w: e.w * r.w }))) : lis.map((e) => ({ li: e.li, ai, w: e.w })));
   const samples: Sample[] = terms.flatMap((t) => {
     const ais = Number.isFinite(t.angle) ? [allAngles.findIndex((a) => Math.abs(a - t.angle) < 1e-9)] : angles.map((_, ai) => ai);
     const tp: PolMode[] = t.pol === 'all' ? pols : [t.pol];
     const q = (t.q || d.targetQ) as Quantity;
-    return t.x.flatMap((l, i) => ais.flatMap((ai) => tp.map((pol) => ({ li: li.get(l)!, ai, pol, q, target: t.v[i], w: t.w[i], kind: t.kind, tol: t.tol[i] }))));
+    // a band average: one sample per angle and polarization, the mean over its wavelengths (and rays)
+    if (t.avg) {
+      const bw = bandWeights(t.x, t.avg === 'photopic') ?? t.x.map(() => 1 / t.x.length);
+      const lis = t.x.map((l, i) => ({ li: li.get(l)!, w: bw[i] }));
+      return ais.flatMap((ai) => tp.map((pol) => ({ li: lis[0].li, ai, pol, q, target: t.v[0], w: t.w[0], kind: t.kind, tol: t.tol[0], avg: at(lis, ai) })));
+    }
+    return t.x.flatMap((l, i) =>
+      ais.flatMap((ai) => tp.map((pol) => ({ li: li.get(l)!, ai, pol, q, target: t.v[i], w: t.w[i], kind: t.kind, tol: t.tol[i], ...(rays ? { avg: at([{ li: li.get(l)!, w: 1 }], ai) } : {}) }))),
+    );
   });
   info.usesOD = samples.some((s) => s.q === 'OD');
   const problem: DesignProblem = {
@@ -3463,6 +3534,9 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
     maxD: d.maxD,
     maxLayers: d.maxLayers,
     maxTotal: d.maxTotal,
+    matMin: mats.map((_, k) => d.matMin?.[k] ?? NaN),
+    matMax: mats.map((_, k) => d.matMax?.[k] ?? NaN),
+    ...(rays ? { rays } : {}),
   };
   info.problem = problem;
   if (d.start === 'formula') {
@@ -3472,13 +3546,15 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
 
   // the current design (layers of materials that are no longer connected are dropped)
   const keep = (L: DesignLayer[]) => L.filter((x) => x.m < nm && x.d >= 0);
+  if (mats.some((_, k) => Number.isFinite(d.matMin?.[k]) && Number.isFinite(d.matMax?.[k]) && !(d.matMin![k] < d.matMax![k])))
+    warnings.push('A material’s own min d is not below its max d.');
   const design: Design = { front: keep(d.design.front), back: d.thick ? keep(d.design.back) : [] };
   const ev = evaluateDesign(problem, design);
   info.merit = ev.merit;
   info.mf = ev.mf;
   const pm: PolMode = pols.length === 1 ? pols[0] : 'avg';
   const sp = spectrum(problem, design, 0, pm);
-  Object.assign(info, { lambdas, R: sp.R, T: sp.T, pol: pm === 'avg' ? (d.pol === 'both' ? 'mean of s and p' : 'unpolarized') : pm, angle: angles[0] });
+  Object.assign(info, { lambdas, R: sp.R, T: sp.T, pol: pm === 'avg' ? (d.pol === 'both' ? 'mean of s and p' : 'unpolarized') : pm, angle: angles[0], cone: d.cone ? half : undefined });
   info.total = { front: design.front.reduce((s, L) => s + L.d, 0), back: design.back.reduce((s, L) => s + L.d, 0) };
 
   const layer = (L: DesignLayer, i: number, side: string): StackLayer => ({ key: `${node.id}:${side}${i}`, label: '', mat: mats[L.m]!, d: L.d });
@@ -3497,7 +3573,10 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
 export type ToleranceLayer = { index: number; name: string; side: 'front' | 'back'; d: number; grating?: boolean };
 export type ToleranceInfo = AnalysisInfo & {
   layers: ToleranceLayer[]; // finite layers of the structure (for per-layer σ)
+  materials: { key: string; name: string }[]; // materials of the finite layers (systematic errors)
   samples: number;
+  // the measured signal: the nominal ideal, as seen by the instrument (blur), and one sample as measured
+  preview?: { sample: number; ideal: number[]; instrument: number[]; measured: number[] };
   pendingMC?: boolean;
   along?: string;
   xs: number[];
@@ -3537,6 +3616,19 @@ function evalOnData(ctx: Ctx, node: AppNode, value: DataValue, tag: string): Nod
   return evalNode(sub, node.id);
 }
 
+// The nominal curves repeated for every sample (the sample axis at `sIdx`): Monte Carlo of the instrument alone.
+function replicate(ds: Dataset, N: number, sIdx: number, axes: Axis[], spec: TmmSpec): Dataset {
+  const outer = ds.axes.slice(0, sIdx).reduce((p, a) => p * a.values.length, 1);
+  const inner = ds.size / outer;
+  const fields: Record<string, Float64Array> = {};
+  for (const [k, f] of Object.entries(ds.fields)) {
+    const out = new Float64Array(ds.size * N);
+    for (let sp = 0; sp < outer; sp++) for (let s = 0; s < N; s++) out.set(f.subarray(sp * inner, (sp + 1) * inner), (sp * N + s) * inner);
+    fields[k] = out;
+  }
+  return { key: `${ds.key}|x${N}@${sIdx}`, axes, fields, meta: ds.meta, size: ds.size * N, spec };
+}
+
 // Seeded errors: normal (truncated at ±clip σ) or uniform with the same σ.
 function errorSource(seed: number, dist: 'normal' | 'uniform', clip: number) {
   const rand = rng(seed);
@@ -3566,7 +3658,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const d = node.data;
   const errors: string[] = [];
   const value = dataInput(ctx, node.id, errors);
-  const info: ToleranceInfo = { axes: [], fields: [], rows: [], layers: [], samples: 0, xs: [], nominal: [], mean: [], lo: [], hi: [], dev: [], yieldPct: NaN, pass: [], ranking: [], stats: [] };
+  const info: ToleranceInfo = { axes: [], fields: [], rows: [], layers: [], materials: [], samples: 0, xs: [], nominal: [], mean: [], lo: [], hi: [], dev: [], yieldPct: NaN, pass: [], ranking: [], stats: [] };
   if (!value) return fail(errors, [], info);
   const ds = value.dataset;
   if (!ds) return { ...fail([], [], info), pending: value.pending };
@@ -3578,7 +3670,22 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const gOn = !!d.grating && !!spec.rcwa;
   // the azimuth φ of an RCWA computation (a plane of incidence turned from the grating vector: conical incidence)
   const phOn = !!d.azimuth && !!spec.rcwa && (d.phiSigma ?? 0) > 0;
-  if (!d.thickness && !d.index && !d.angle && !gOn && !phOn) errors.push('Choose at least one kind of error (thickness, index, angle, azimuth or grating).');
+  const F = d.field;
+  // the axis of the limits and of the chart: the chosen one, else the target curve's, else λ (spectral bands), else θ
+  // (before: θ whenever it was a range — λ bands were then compared with angles, and every sample passed)
+  const tin = input(ctx, node.id, 'target');
+  const freeAx = (id?: string) => (id ? ds.axes.findIndex((a) => a.id === id && a.values.length > 1) : -1);
+  const tAxisId = tin.connected && tin.value?.type === 'data' ? tin.value.dataset?.axes.find((a) => a.values.length > 1 && freeAx(a.id) >= 0)?.id : undefined;
+  let along = freeAx(d.along);
+  if (along < 0) along = freeAx(tAxisId);
+  if (along < 0) along = freeAx('lambda');
+  if (along < 0) along = freeAx('theta');
+  if (along < 0) along = ds.axes.findIndex((a) => a.values.length > 1);
+  const axis = along >= 0 ? ds.axes[along] : null;
+  info.axes = ds.axes.filter((a) => a.values.length > 1).map((a) => ({ id: a.id, label: a.label, unit: a.unit, min: Math.min(...a.values), max: Math.max(...a.values) }));
+  // the instrument: blur (angular spread, source bandwidth) and detector noise of the measured curves
+  const inst = instrumentOf(d, axis?.id ?? ds.axes[0]?.id ?? '', d.seed);
+  if (!d.thickness && !d.index && !d.angle && !gOn && !phOn && !inst) errors.push('Choose at least one kind of error (thickness, index, angle, azimuth, grating or the instrument).');
   const inner = spec.lambda.length * spec.theta.length;
   const outer = spec.sweeps.reduce((p, n) => p * n, 1);
   if (outer * inner * N > MAX_POINTS) errors.push(`Too many points (${(outer * inner * N).toLocaleString('en')} > ${MAX_POINTS.toLocaleString('en')}): fewer samples or a coarser grid.`);
@@ -3590,18 +3697,25 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     ...(spec.back?.layers.slice(1, -1).map((L, i) => ({ L, side: 'back' as const, i })) ?? []),
   ];
   info.layers = refs.map((r, k) => ({ index: k, name: r.L.grating ? `grating (${r.L.grating.mats.map((m) => ctx.lib.get(spec.instances[m]?.lib)?.name ?? m).join('/')})` : nameOf(r.L), side: r.side, d: r.L.d, grating: !!r.L.grating }));
-  if (!refs.length && !d.angle) errors.push('The structure has no layers to perturb.');
+  if (!refs.length && !d.angle && !inst) errors.push('The structure has no layers to perturb.');
   if (errors.length) return passThrough(value, errors, info);
 
   // ---- the errors of every sample ----
   const draw = errorSource(d.seed, d.dist, d.clip);
   const mats = [...new Set(refs.map((r) => r.L.mat))];
+  info.materials = mats.map((key) => ({ key, name: ctx.lib.get(spec.instances[key]?.lib)?.name ?? key }));
+  // which layers / materials get errors, and their σ (the global one unless set)
+  const dOn = (k: number) => d.thickness && !(d.dSkip ?? []).includes(k);
+  const nOn = (k: number) => d.index && !(d.nSkip ?? []).includes(k);
   const sigmaD = (k: number) => d.dOverride[String(k)] ?? d.dSigma;
+  const sigmaN = (k: number) => d.nOverride?.[String(k)] ?? d.nSigma;
+  const sysD = (m: number) => (!d.thickness || (d.sysSkipD ?? []).includes(mats[m]) ? 0 : (d.dSysOverride?.[mats[m]] ?? d.dSys));
+  const sysN = (m: number) => (!d.index || (d.sysSkipN ?? []).includes(mats[m]) ? 0 : (d.nSysOverride?.[mats[m]] ?? d.nSys));
   const E = Array.from({ length: N }, () => ({
-    d: refs.map((_, k) => (d.thickness ? draw(sigmaD(k)) : 0)),
-    n: refs.map(() => (d.index ? draw(d.nSigma) : 0)),
-    sd: mats.map(() => (d.thickness ? draw(d.dSys) : 0)),
-    sn: mats.map(() => (d.index ? draw(d.nSys) : 0)),
+    d: refs.map((_, k) => (dOn(k) ? draw(sigmaD(k)) : 0)),
+    n: refs.map((_, k) => (nOn(k) ? draw(sigmaN(k)) : 0)),
+    sd: mats.map((_, m) => draw(sysD(m))),
+    sn: mats.map((_, m) => draw(sysN(m))),
     a: d.angle ? draw(d.aSigma) : 0,
     gf: refs.map((r) => (gOn && r.L.grating ? draw(d.fillSigma ?? 0) : 0)),
     gp: gOn ? draw(d.periodSigma ?? 0) : 0,
@@ -3609,18 +3723,18 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   }));
   const sIdx = spec.sweeps.length;
   const thick = (base: number, k: number, s: number) => {
-    if (!(base > 0)) return base; // empty slots stay empty
+    if (!(base > 0) || !dOn(k)) return base; // empty slots stay empty; layers left out keep their thickness
     const m = mats.indexOf(refs[k].L.mat);
     const e = E[s].d[k] + E[s].sd[m];
     return Math.max(0, d.dMode === 'rel' ? base * (1 + e / 100) : base + e);
   };
   const perturb = (L: LayerSpec, k: number): LayerSpec => {
     const out: LayerSpec = { ...L, bind: { ...L.bind } };
-    if (d.thickness) {
+    if (dOn(k)) {
       const b = L.bind.d;
       out.bind.d = b ? { s: [...b.s, sIdx], v: b.v.flatMap((v) => E.map((_, s) => thick(v, k, s))) } : { s: [sIdx], v: E.map((_, s) => thick(L.d, k, s)) };
     }
-    if (d.index && d.nSigma > 0) out.bind.dn = { s: [sIdx], v: E.map((e) => e.n[k]) };
+    if (nOn(k) && sigmaN(k) > 0) out.bind.dn = { s: [sIdx], v: E.map((e) => e.n[k]) };
     if (gOn && L.grating) {
       // grating geometry: fill factor(s) per layer, period shared by the layers of a sample
       const per = (b: Bound<number> | undefined, base: number, f: (v: number, s: number) => number): Bound<number> =>
@@ -3637,7 +3751,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const front = spec.layers.slice(1, -1).map((L, i) => perturb(L, i));
   const nf = front.length;
   const instances = { ...spec.instances };
-  if (d.index && d.nSys > 0) for (const [m, key] of mats.entries()) instances[key] = { ...instances[key], dnS: { s: [sIdx], v: E.map((e) => e.sn[m]) } };
+  for (const [m, key] of mats.entries()) if (sysN(m) > 0) instances[key] = { ...instances[key], dnS: { s: [sIdx], v: E.map((e) => e.sn[m]) } };
   const mc: TmmSpec = {
     ...spec,
     instances,
@@ -3655,12 +3769,25 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   };
   const sampleAxis: Axis = { id: 'sample', label: 'sample', unit: '', values: E.map((_, s) => s + 1) };
   const mcAxes = [...ds.axes.slice(0, sIdx), sampleAxis, ...ds.axes.slice(sIdx)];
-  const req = requestDataset(ctx, `${ctx.tag ?? ''}${node.id}:mc`, mc, mcAxes);
+  // nothing changes the structure (only the instrument): the nominal curves stand for every sample
+  const structural =
+    refs.some((r, k) => (dOn(k) && (sigmaD(k) > 0 || sysD(mats.indexOf(r.L.mat)) > 0)) || (nOn(k) && sigmaN(k) > 0)) ||
+    mats.some((_, m) => sysN(m) > 0) ||
+    (d.angle && d.aSigma > 0) ||
+    (gOn && ((d.fillSigma ?? 0) > 0 || (d.periodSigma ?? 0) > 0)) ||
+    phOn;
+  const req: { pending: boolean; dataset?: Dataset | null; error?: string } = structural
+    ? requestDataset(ctx, `${ctx.tag ?? ''}${node.id}:mc`, mc, mcAxes)
+    : { pending: false, dataset: replicate(ds, N, sIdx, mcAxes, mc) };
   if (req.error) return passThrough(value, [req.error], info);
-  const mds = req.dataset && sameGrid(req.dataset, { ...ds, axes: mcAxes, size: ds.size * N }) ? req.dataset : null;
+  const raw = req.dataset && sameGrid(req.dataset, { ...ds, axes: mcAxes, size: ds.size * N }) ? req.dataset : null;
   info.pendingMC = req.pending;
   info.samples = N;
-  if (!mds) return { errors: [], warnings: [], outs: {}, pending: true, info };
+  if (!raw) return { errors: [], warnings: [], outs: {}, pending: true, info };
+  // as measured: every sample with its own noise; the nominal through the instrument blur (no noise)
+  const mds = inst ? degrade(raw, inst, 1) : raw;
+  const nom = inst ? degrade(ds, inst, 0, false) : ds;
+  const instWarn = inst && blurs(inst) ? blurWarnings(ds, inst) : [];
 
   // ---- statistics over the samples at every point ----
   const fieldsIn = ['R', 'T', 'A'];
@@ -3689,8 +3816,8 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
         arrs.plo[p] = quantile(buf, qlo);
         arrs.phi[p] = quantile(buf, qhi);
       }
-    statFields[f] = ds.fields[f];
-    statMeta.push({ ...base, label: `${base.short} nominal` });
+    statFields[f] = nom.fields[f];
+    statMeta.push({ ...base, label: `${base.short} nominal${inst && blurs(inst) ? ' (instrument)' : ''}` });
     const lab: Record<string, string> = { mean: 'mean', median: 'median', std: 'standard deviation', min: 'minimum', max: 'maximum', plo: `p${d.pLo}`, phi: `p${d.pHi}` };
     for (const [k, a] of Object.entries(arrs)) {
       statFields[`${f}_${k}`] = a;
@@ -3700,22 +3827,9 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const stats: Dataset = { key: `mc:${node.id}:${mds.key}:${d.pLo}:${d.pHi}`, axes: ds.axes, fields: statFields, meta: statMeta, size: ds.size };
 
   // ---- deviation, specification, ranking (on the chosen field) ----
-  const F = d.field;
-  // the axis of the limits and of the chart: the chosen one, else the target curve's, else λ (spectral bands), else θ
-  // (before: θ whenever it was a range — λ bands were then compared with angles, and every sample passed)
-  const tin = input(ctx, node.id, 'target');
-  const freeAx = (id?: string) => (id ? ds.axes.findIndex((a) => a.id === id && a.values.length > 1) : -1);
-  const tAxisId = tin.connected && tin.value?.type === 'data' ? tin.value.dataset?.axes.find((a) => a.values.length > 1 && freeAx(a.id) >= 0)?.id : undefined;
-  let along = freeAx(d.along);
-  if (along < 0) along = freeAx(tAxisId);
-  if (along < 0) along = freeAx('lambda');
-  if (along < 0) along = freeAx('theta');
-  if (along < 0) along = ds.axes.findIndex((a) => a.values.length > 1);
-  const axis = along >= 0 ? ds.axes[along] : null;
-  info.axes = ds.axes.filter((a) => a.values.length > 1).map((a) => ({ id: a.id, label: a.label, unit: a.unit, min: Math.min(...a.values), max: Math.max(...a.values) }));
   const dev = E.map((_, s) => {
     let ss = 0;
-    for (let sp = 0; sp < outer; sp++) for (let r = 0; r < inner; r++) ss += (val(F, sp, s, r) - ds.fields[F][sp * inner + r]) ** 2;
+    for (let sp = 0; sp < outer; sp++) for (let r = 0; r < inner; r++) ss += (val(F, sp, s, r) - nom.fields[F][sp * inner + r]) ** 2;
     return Math.sqrt(ss / (outer * inner));
   });
   // pass / fail: every curve of the sample within the limits (bands along the analysed axis, or ± around a target)
@@ -3860,7 +3974,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     if (a.values.length === 1) return `${a.label} = ${a.labels?.[0] ?? +lo.toPrecision(6)}${a.labels ? '' : u}`;
     return a.labels ? `${a.label}: ${a.values.length} steps` : `${a.label} ${+lo.toPrecision(6)}–${+hi.toPrecision(6)}${u} (${a.values.length} points)`;
   };
-  info.where = `Deviation, shaded range and critical errors: ${F} of every sample against the nominal, at every point of the computed grid — ${ds.axes.map(axText).join(' × ')}; the deviation of a sample is the RMS over all ${(outer * inner).toLocaleString('en')} points.`;
+  info.where = `Deviation, shaded range and critical errors: ${F} of every sample against the nominal, at every point of the computed grid — ${ds.axes.map(axText).join(' × ')}; the deviation of a sample is the RMS over all ${(outer * inner).toLocaleString('en')} points.${inst ? ` The samples are as measured (${[blurs(inst) && 'blurred by the instrument', noisy(inst) && 'with detector noise'].filter(Boolean).join(', ')}); the nominal is seen through the instrument${noisy(inst) ? ' without noise' : ''}.` : ''}`;
   const tests: string[] = [];
   if (d.spec && axis) tests.push(tin.connected ? `${F} within ±${d.specTol} of the target curve at every point of it` : `${F} inside the limits of each band (along ${axis.label}, on every curve)`);
   for (const c of info.criteria) for (const row of c.rows) {
@@ -3873,13 +3987,13 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const vars: { label: string; e: number[] }[] = [];
   refs.forEach((r, k) => {
     const nm = `${r.side === 'back' ? 'back ' : ''}${k - (r.side === 'back' ? nf : 0) + 1} ${nameOf(r.L)}`;
-    if (d.thickness && sigmaD(k) > 0) vars.push({ label: `d ${nm}`, e: E.map((x) => x.d[k]) });
-    if (d.index && d.nSigma > 0) vars.push({ label: `n ${nm}`, e: E.map((x) => x.n[k]) });
+    if (dOn(k) && sigmaD(k) > 0) vars.push({ label: `d ${nm}`, e: E.map((x) => x.d[k]) });
+    if (nOn(k) && sigmaN(k) > 0) vars.push({ label: `n ${nm}`, e: E.map((x) => x.n[k]) });
   });
   mats.forEach((key, m) => {
     const nm = ctx.lib.get(spec.instances[key]?.lib)?.name ?? key;
-    if (d.thickness && d.dSys > 0) vars.push({ label: `d ${nm} (systematic)`, e: E.map((x) => x.sd[m]) });
-    if (d.index && d.nSys > 0) vars.push({ label: `n ${nm} (systematic)`, e: E.map((x) => x.sn[m]) });
+    if (sysD(m) > 0) vars.push({ label: `d ${nm} (systematic)`, e: E.map((x) => x.sd[m]) });
+    if (sysN(m) > 0) vars.push({ label: `n ${nm} (systematic)`, e: E.map((x) => x.sn[m]) });
   });
   if (d.angle && d.aSigma > 0) vars.push({ label: 'angle', e: E.map((x) => x.a) });
   if (phOn) vars.push({ label: 'azimuth φ', e: E.map((x) => x.ph) });
@@ -3923,13 +4037,13 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   if (pass.length) add('pass', 'passes the specification (1 / 0)', '', pass);
   refs.forEach((r, k) => {
     const nm = `${r.side === 'back' ? 'back ' : ''}${k - (r.side === 'back' ? nf : 0) + 1} ${nameOf(r.L)}`;
-    if (d.thickness) add(`d${k}`, `d ${nm}`, 'nm', E.map((_, s) => thick(r.L.d, k, s)));
-    if (d.index && d.nSigma > 0) add(`n${k}`, `Δn ${nm}`, '', E.map((e) => e.n[k]));
+    if (dOn(k)) add(`d${k}`, `d ${nm}`, 'nm', E.map((_, s) => thick(r.L.d, k, s)));
+    if (nOn(k) && sigmaN(k) > 0) add(`n${k}`, `Δn ${nm}`, '', E.map((e) => e.n[k]));
   });
   mats.forEach((key, m) => {
     const nm = ctx.lib.get(spec.instances[key]?.lib)?.name ?? key;
-    if (d.thickness && d.dSys > 0) add(`sd${m}`, `d error ${nm} (systematic, ${d.dMode === 'rel' ? '%' : 'nm'})`, d.dMode === 'rel' ? '%' : 'nm', E.map((e) => e.sd[m]));
-    if (d.index && d.nSys > 0) add(`sn${m}`, `Δn ${nm} (systematic)`, '', E.map((e) => e.sn[m]));
+    if (sysD(m) > 0) add(`sd${m}`, `d error ${nm} (systematic, ${d.dMode === 'rel' ? '%' : 'nm'})`, d.dMode === 'rel' ? '%' : 'nm', E.map((e) => e.sd[m]));
+    if (sysN(m) > 0) add(`sn${m}`, `Δn ${nm} (systematic)`, '', E.map((e) => e.sn[m]));
   });
   if (d.angle && d.aSigma > 0) add('dtheta', 'angle error', '°', E.map((e) => e.a));
   if (phOn) add('dphi', 'azimuth error', '°', E.map((e) => e.ph));
@@ -3947,6 +4061,16 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     const ln = (key: string) => Array.from(line(stats, key, along, idx0));
     Object.assign(info, { along: axis.id, xs: axis.values, nominal: ln(F), mean: ln(`${F}_mean`), lo: ln(`${F}_plo`), hi: ln(`${F}_phi`) });
     info.unit = axis.unit;
+    if (inst) {
+      const s = Math.min(N - 1, Math.max(0, Math.round(d.preview ?? 1) - 1));
+      const mIdx = [...idx0.slice(0, sIdx), s, ...idx0.slice(sIdx)];
+      info.preview = {
+        sample: s + 1,
+        ideal: Array.from(line(ds, F, along, idx0)),
+        instrument: Array.from(line(nom, F, along, idx0)),
+        measured: Array.from(line(mds, F, along >= sIdx ? along + 1 : along, mIdx)),
+      };
+    }
   }
   info.dev = dev;
   info.pass = pass;
@@ -3967,13 +4091,690 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   const pending = value.pending || req.pending || critPending;
   return {
     errors: [],
-    warnings: specWarn,
+    warnings: [...instWarn, ...specWarn],
     outs: {
       out: { type: 'data', dataset: stats, pending, name: `${value.name} · tolerance`, annotations },
       samples: { type: 'data', dataset: mds, pending, name: `${value.name} · MC samples`, annotations: [] },
       errors: { type: 'data', dataset: errorsDs, pending, name: `${value.name} · MC errors`, annotations: [] },
     },
     pending,
+    info,
+  };
+}
+
+// ---- Binding kinetics and Sensorgram ----
+
+export type KineticsInfo = {
+  model: KineticModel;
+  analyte: Analyte;
+  surface?: Surface; // of the nominal values (the first series)
+  rsa?: boolean; // the free surface: Rmax = the jamming capacity
+  rmax?: number; // RU, the nominal Rmax used
+  steady?: string[]; // the steady-state (equilibrium) analysis of the injections
+  t: number[];
+  curves: { label: string; y: number[] }[]; // R (RU) or swelling, one per value of a connected sweep
+  unit: string;
+  steps: { t0: number; t1: number; label: string; c: number }[];
+  swept?: string;
+};
+
+const SWEEP_OF: Record<KineticsData['sweepOf'], [string, string]> = {
+  c: ['c', 'nM'],
+  ka: ['ka', 'M⁻¹s⁻¹'],
+  kd: ['kd', 's⁻¹'],
+  rmax: ['Rmax', 'RU'],
+  kt: ['kt', 'RU M⁻¹s⁻¹'],
+  ka2: ['ka2', ''],
+  kd2: ['kd2', 's⁻¹'],
+  tau: ['τ', 's'],
+  ionic: ['I', 'mM'],
+  zeta: ['ζ', 'mV'],
+};
+
+// The analyte of a Binding kinetics node: a preset or the node's own values.
+export const analyteOf = (d: KineticsData): Analyte => {
+  if (d.analyte !== 'custom' && ANALYTES[d.analyte]) return ANALYTES[d.analyte];
+  const size = (d as { size?: number }).size ?? 10; // saved with one size (a sphere)
+  return { name: 'custom analyte', mw: d.mw, dndc: d.dndc, rho: d.rho, dims: d.dims ?? [size, size, size] };
+};
+// The 1:1 models can take the free surface (random sequential adsorption).
+export const rsaModel = (m: KineticModel) => m === 'langmuir' || m === 'transport';
+
+function evalKinetics(ctx: Ctx, node: KineticsNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const swelling = d.model === 'swelling';
+  const analyte = analyteOf(d);
+  const rsa = d.surface === 'rsa' && rsaModel(d.model) && !swelling;
+  const orient = d.orient ?? 'side';
+  const ionic = d.ionic ?? 150;
+  const zeta = d.zeta ?? 0;
+  const info: KineticsInfo = { model: d.model, analyte, t: [], curves: [], unit: swelling ? 'swelling' : 'RU', steps: [], rsa };
+  if (!d.steps.length) errors.push('Add the steps of the protocol.');
+  d.steps.forEach((s, i) => {
+    if (!(s.t >= 0)) errors.push(`Step ${i + 1}: the duration must be ≥ 0 s.`);
+    if (!swelling && !(s.c >= 0)) errors.push(`Step ${i + 1}: the concentration must be ≥ 0.`);
+  });
+  const total = d.steps.reduce((a, s) => a + Math.max(0, s.t), 0);
+  if (!(total > 0)) errors.push('The protocol lasts 0 s.');
+  if (!(d.dt > 0)) errors.push('The time step must be > 0.');
+  else if (total / d.dt > 20000) errors.push(`Too many time points (${Math.round(total / d.dt)}): a larger time step (at most 20 000 points).`);
+  const pos = (v: number, what: string) => !(v > 0) && errors.push(`${what} must be > 0.`);
+  if (swelling) pos(d.tau, 'τ');
+  else {
+    if (!(d.ka >= 0) || !(d.kd >= 0)) errors.push('ka and kd must be ≥ 0.');
+    if (!rsa) pos(d.rmax, 'Rmax');
+    if (d.model === 'transport') pos(d.kt, 'kt');
+    if (d.model === 'hetero') pos(d.rmax2, 'Rmax2');
+    if ((d.model === 'bivalent' || d.model === 'hetero' || d.model === 'twostate') && (!(d.ka2 >= 0) || !(d.kd2 >= 0))) errors.push('ka2 and kd2 must be ≥ 0.');
+  }
+  if (!(analyte.mw > 0 && analyte.dndc > 0 && analyte.rho > 0 && analyte.dims.every((v) => v > 0))) errors.push('The analyte needs MW, dn/dc, density and dimensions > 0.');
+  if (!swelling && !(ionic > 0)) errors.push('The ionic strength must be > 0.');
+  const sw = numberSweep(ctx, node.id, 'sweep', 'kinetics', errors);
+  const cRef = Math.max(0, ...d.steps.map((s) => s.c));
+  if (sw && d.sweepOf === 'c' && !swelling && !(cRef > 0)) errors.push('A concentration sweep scales the injections: give a step a concentration.');
+  if (sw && d.sweepOf === 'ionic' && sw.values.some((v) => !(v > 0))) errors.push('The ionic strength must be > 0.');
+  if (sw && d.sweepOf === 'rmax' && rsa) errors.push('On a free surface Rmax is the jamming capacity: sweep the ionic strength or ζ instead.');
+  if (errors.length) return fail(errors, [], info);
+
+  // the surface of every series (a swept I or ζ changes the repulsion)
+  const vals = sw ? sw.values : [NaN];
+  const swept = (key: KineticsData['sweepOf'], v: number, def: number) => (Number.isFinite(v) && d.sweepOf === key ? v : def);
+  const surfaces = vals.map((v) => surfaceOf(analyte, orient, swept('ionic', v, ionic), swept('zeta', v, zeta)));
+  const warnings: string[] = [];
+  // the constants and the protocol of series k (a swept constant, or the concentrations scaled)
+  const setup = (v: number, k: number) => {
+    const p: KineticParams = { model: d.model, ka: d.ka, kd: d.kd, rmax: d.rmax, kt: d.kt, ka2: d.ka2, kd2: d.kd2, rmax2: d.rmax2, tau: d.tau, drift: 0, rsa };
+    let steps = d.steps.map((s) => ({ label: s.label, t: s.t, c: s.c * 1e-9, regen: s.regen, swell: s.swell }));
+    if (Number.isFinite(v)) {
+      if (d.sweepOf === 'c') steps = steps.map((s) => ({ ...s, c: (s.c * v) / cRef }));
+      else if (d.sweepOf !== 'ionic' && d.sweepOf !== 'zeta') p[d.sweepOf] = v;
+    }
+    if (rsa) p.rmax = surfaces[k].capacity * 1000;
+    return { p, steps };
+  };
+  const setups = vals.map(setup);
+  const runs = setups.map(({ p, steps }) => simulate(p, steps, d.dt));
+  if (!swelling) {
+    info.surface = surfaces[0];
+    info.rmax = rsa ? surfaces[0].capacity * 1000 : d.model === 'hetero' ? d.rmax + d.rmax2 : d.rmax;
+    if (runs.some((r, k) => Math.max(...r.R) > surfaces[k].capacity * 1000 * 1.0001))
+      warnings.push(
+        `More bound than a random ${orient === 'end' ? 'end-on' : 'side-on'} monolayer holds (${+(surfaces[0].capacity * 1000).toPrecision(3)} RU): the molecules must ${orient === 'end' ? 'pack in order' : 'stand (end-on) or pack in order'}, or form a multilayer (the Sensorgram's binding layer then grows).`,
+      );
+  }
+  const t = runs[0].t;
+  const nT = t.length;
+  const [sym, unit] = SWEEP_OF[d.sweepOf];
+  const axes: Axis[] = [...(sw ? [{ id: 'kin', label: sym, unit, values: sw.values }] : []), { id: 'time', label: 't', unit: 's', values: t }];
+  const size = vals.length * nT;
+  const flat = (f: (r: KineticResult) => number[], k = 1) => Float64Array.from({ length: size }, (_, q) => f(runs[Math.floor(q / nT)])[q % nT] * k);
+  const fields: Record<string, Float64Array> = swelling
+    ? { swell: flat((r) => r.s) }
+    : {
+        RU: flat((r) => r.R),
+        conc: flat((r) => r.c, 1e9),
+        Gamma: flat((r) => r.R, 1e-3),
+        jam: Float64Array.from({ length: size }, (_, q) => runs[Math.floor(q / nT)].R[q % nT] / (1000 * surfaces[Math.floor(q / nT)].capacity)),
+      };
+  const meta: FieldMeta[] = swelling
+    ? [{ key: 'swell', label: 's — swelling (relative thickness increase)', short: 's', unit: '' }]
+    : [
+        { key: 'RU', label: 'R — bound response', short: 'R', unit: 'RU' },
+        { key: 'conc', label: 'c — analyte concentration', short: 'c', unit: 'nM' },
+        { key: 'Gamma', label: 'Γ — bound mass (1000 RU = 1 ng/mm²)', short: 'Γ', unit: 'ng/mm²' },
+        { key: 'jam', label: 'Γ / Γ∞ — fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
+      ];
+  let t0 = 0;
+  info.steps = d.steps.map((s) => {
+    const st = { t0, t1: t0 + Math.max(0, s.t), label: s.label, c: s.c };
+    t0 = st.t1;
+    return st;
+  });
+  const dataset: Dataset = {
+    key: `kin:${node.id}:${hash(JSON.stringify([d, vals]))}`,
+    axes,
+    fields,
+    meta,
+    size,
+    kinetics: { model: d.model, analyte, swelling, steps: info.steps, surfaces, ...(rsaModel(d.model) ? { rates: setups[0].p } : {}) },
+  };
+  const steady = swelling ? null : steadyState(setups, runs, rsaModel(d.model), rsa);
+  info.steady = steady?.rows;
+  info.t = t;
+  info.swept = sw ? `${sym}${unit ? ` [${unit}]` : ''}` : undefined;
+  info.curves = runs.map((r, k) => ({ label: sw ? `${sym} = ${+vals[k].toPrecision(4)}${unit ? ` ${unit}` : ''}` : swelling ? 's' : 'R', y: swelling ? r.s : r.R }));
+  const name = d.name || MODEL_TEXT[d.model];
+  const res = ok({ type: 'data', dataset, pending: false, name, annotations: [] }, info, warnings);
+  if (steady?.dataset) res.outs.steady = { type: 'data', dataset: { ...steady.dataset, key: `${dataset.key}:steady` }, pending: false, name: `${name} · steady state`, annotations: [] };
+  return res;
+}
+
+// Steady-state (equilibrium) analysis: the response at the end of every injection (all series) against its
+// concentration, a Langmuir isotherm R = Rmax c / (KD + c) fitted by least squares (Rmax solved, KD by a golden search on
+// log KD); for the 1:1 models also how close each injection came to its own equilibrium.
+function steadyState(setups: { p: KineticParams; steps: { t: number; c: number }[] }[], runs: KineticResult[], oneToOne: boolean, rsa: boolean) {
+  const pts = new Map<number, { R: number[]; reached: number[] }>();
+  setups.forEach(({ p, steps }, k) => {
+    const r = runs[k];
+    let t1 = 0;
+    for (const s of steps) {
+      t1 += Math.max(0, s.t);
+      if (!(s.c > 0)) continue;
+      let j = 0;
+      while (j + 1 < r.t.length && r.t[j + 1] <= t1 + 1e-9) j++;
+      const cn = +(s.c * 1e9).toPrecision(9);
+      const e = pts.get(cn) ?? { R: [], reached: [] };
+      e.R.push(r.R[j]);
+      if (oneToOne) e.reached.push(r.R[j] / equilibrium(p, s.c));
+      pts.set(cn, e);
+    }
+  });
+  const cs = [...pts.keys()].sort((a, b) => a - b);
+  if (cs.length < 2) return null;
+  const mean = (v: number[]) => v.reduce((a, x) => a + x, 0) / v.length;
+  const y = cs.map((c) => mean(pts.get(c)!.R));
+  const rows: string[] = [];
+  const fmt = (v: number) => `${+v.toPrecision(3)}`;
+  let fit: number[] | null = null;
+  if (cs.length >= 3) {
+    const sse = (lk: number) => {
+      const K = 10 ** lk;
+      const g = cs.map((c) => c / (K + c));
+      const rm = g.reduce((a, v, i) => a + v * y[i], 0) / g.reduce((a, v) => a + v * v, 0);
+      return { rm, K, e: g.reduce((a, v, i) => a + (rm * v - y[i]) ** 2, 0) };
+    };
+    let a = Math.log10(cs[0]) - 4;
+    let b = Math.log10(cs[cs.length - 1]) + 4;
+    const gr = (Math.sqrt(5) - 1) / 2;
+    for (let it = 0; it < 120; it++) {
+      const x1 = b - gr * (b - a);
+      const x2 = a + gr * (b - a);
+      if (sse(x1).e < sse(x2).e) b = x2;
+      else a = x1;
+    }
+    const best = sse((a + b) / 2);
+    fit = cs.map((c) => (best.rm * c) / (best.K + c));
+    const p0 = setups[0].p;
+    const model = oneToOne && p0.kd > 0 && !rsa ? ` (the model: KD ${fmt((p0.kd / p0.ka) * 1e9)} nM, Rmax ${fmt(p0.rmax)} RU)` : '';
+    rows.push(`steady state (end of each injection, ${cs.length} concentrations): KD ${fmt(best.K)} nM, Rmax ${fmt(best.rm)} RU${model}`);
+    if (best.K > 3 * cs[cs.length - 1]) rows.push('the highest concentration is far below KD: the isotherm does not bend, KD and Rmax are poorly defined (inject higher concentrations)');
+  }
+  if (oneToOne) {
+    const reached = cs.map((c) => mean(pts.get(c)!.reached));
+    const i = reached.reduce((m, v, k) => (v < reached[m] ? k : m), 0);
+    rows.push(
+      reached[i] < 0.95
+        ? `${fmt(cs[i])} nM reached only ${fmt(100 * reached[i])} % of its equilibrium: a steady-state KD is biased (longer injections, or fit the kinetics)`
+        : `every injection reached ≥ ${fmt(100 * reached[i])} % of its equilibrium`,
+    );
+  }
+  const fields: Record<string, Float64Array> = { Req: Float64Array.from(y) };
+  const meta: FieldMeta[] = [{ key: 'Req', label: 'R at the end of the injection', short: 'R end', unit: 'RU' }];
+  if (fit) {
+    fields.fit = Float64Array.from(fit);
+    meta.push({ key: 'fit', label: 'Langmuir isotherm fitted, Rmax c / (KD + c)', short: 'fit', unit: 'RU' });
+  }
+  if (oneToOne) {
+    fields.reached = Float64Array.from(cs, (c) => mean(pts.get(c)!.reached));
+    meta.push({ key: 'reached', label: 'fraction of its equilibrium reached', short: 'reached', unit: '', domain: [0, 1] });
+  }
+  const dataset: Dataset = { key: '', axes: [{ id: 'conc', label: 'c', unit: 'nM', values: cs }], fields, meta, size: cs.length };
+  return { rows, dataset };
+}
+
+export type SensorgramInfo = {
+  targets: { value: string; label: string }[];
+  axes: { id: string; label: string }[]; // axes the dip can be followed along (θ, λ)
+  along?: string;
+  unit?: string;
+  readUnit: string;
+  t: number[];
+  steps: { t0: number; t1: number; label: string; c: number }[];
+  nP?: number; // index of the analyte (protein) at λ₀
+  lam0?: number;
+  swelling?: boolean;
+  analyte?: string;
+  layer?: string; // the binding layer in words
+  exact?: boolean;
+  seeds?: number; // series of the detector noise (a swept seed)
+  cal?: { perG?: number; perN: number; sigma?: number; lodG?: number }; // read-out per ng/mm² and per RIU; baseline noise, 3σ in ng/mm²
+  rows: string[];
+};
+
+// Golden-section minimum of f on [a, b].
+function goldenMin(f: (x: number) => number, a: number, b: number, tol: number) {
+  const g = (Math.sqrt(5) - 1) / 2;
+  let c1 = b - g * (b - a);
+  let c2 = a + g * (b - a);
+  let f1 = f(c1);
+  let f2 = f(c2);
+  for (let it = 0; it < 200 && Math.abs(b - a) > tol; it++) {
+    if (f1 < f2) {
+      b = c2;
+      c2 = c1;
+      f2 = f1;
+      c1 = b - g * (b - a);
+      f1 = f(c1);
+    } else {
+      a = c1;
+      c1 = c2;
+      f1 = f2;
+      c2 = a + g * (b - a);
+      f2 = f(c2);
+    }
+  }
+  const x = (a + b) / 2;
+  return { x, y: f(x) };
+}
+
+function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
+  const d = node.data;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const info: SensorgramInfo = { targets: [], axes: [], readUnit: '', t: [], steps: [], rows: [] };
+  const value = dataInput(ctx, node.id, errors);
+  const kin = input(ctx, node.id, 'kinetics');
+  let K: Dataset | null = null;
+  if (!kin.connected) errors.push('Connect a Binding kinetics node.');
+  else if (kin.value?.type !== 'data' || !kin.value.dataset?.kinetics) errors.push(missingInput(ctx, kin.source) ?? 'The kinetics input must come from a Binding kinetics node.');
+  else K = kin.value.dataset;
+  const seedSw = numberSweep(ctx, node.id, 'seed', 'seed', errors);
+  if (seedSw?.values.some((v) => !Number.isInteger(v))) errors.push('The seeds must be integers.');
+  if (!value) return fail(errors, [], info);
+  const ds = value.dataset;
+  if (!ds) return { ...fail(errors, [], info), pending: value.pending };
+  const spec = ds.spec;
+  if (!spec) return fail(['Sensorgram needs the output of a Compute TMM node.'], [], info);
+  if (spec.rcwa || spec.b4) errors.push('Sensorgram works with isotropic multilayers (Compute TMM without anisotropic layers or a Jones polarization).');
+  if (spec.back) errors.push('Sensorgram: a thick incoherent substrate is not supported (the sensing medium is the exit medium).');
+  if (ds.axes.length !== spec.sweeps.length + 2) errors.push('Sensorgram needs the output of a Compute TMM node (not a processed dataset).');
+  const nameOf = (key: string) => ctx.lib.get(spec.instances[key]?.lib)?.name ?? key;
+  const last = spec.layers.length - 1;
+  info.targets = [
+    { value: '', label: `Exit medium (${nameOf(spec.layers[last].mat)}): a binding layer on it` },
+    ...spec.layers.slice(1, -1).map((L, i) => ({ value: `layer:${i + 1}`, label: `Layer ${i + 1}: ${nameOf(L.mat)}, ${+L.d.toFixed(2)} nm` })),
+  ];
+  const free = ds.axes.map((a, i) => ({ a, i })).filter(({ a }) => (a.id === 'theta' || a.id === 'lambda') && a.values.length > 2);
+  info.axes = free.map(({ a }) => ({ id: a.id, label: a.label }));
+  const pick = free.find(({ a }) => a.id === (d.along || 'theta')) ?? free[0];
+  if (!pick) errors.push('The Compute must scan θ or λ (a range of at least 3 points): the signal is read along it.');
+  if (errors.length || !K || !pick) return fail(errors, warnings, info);
+  const along = pick.a;
+  info.along = along.id;
+  info.unit = along.unit;
+  const km = K.kinetics!;
+  Object.assign(info, { steps: km.steps, swelling: km.swelling, analyte: km.analyte.name });
+
+  // the target: the exit medium (a binding layer is inserted on it) or a layer (takes up the analyte, or swells)
+  const tgt = d.target ? Number(d.target.split(':')[1]) : last;
+  if (!(tgt >= 1 && tgt <= last)) return fail(['Choose the target (it is no longer in the structure).'], warnings, info);
+  const toExit = tgt === last;
+  if (km.swelling && toExit) errors.push('Polymer swelling: choose the polymer layer of the structure as the target.');
+  const L = spec.layers[tgt];
+  const exitL = spec.layers[last];
+  if (!toExit && (L.bind.mat || L.bind.d || L.grating || L.lc || L.rough?.length)) errors.push('The target layer must be a plain layer (not swept, rough or a grating).');
+  if (exitL.bind.mat) errors.push('The sensing (exit) medium must not be a Material sweep.');
+  if (errors.length) return fail(errors, warnings, info);
+
+  // the times computed (at most maxTimes, the last one kept)
+  const tAx = K.axes.find((a) => a.id === 'time')!;
+  const kAx = K.axes.find((a) => a.id === 'kin');
+  const nK = kAx?.values.length ?? 1;
+  const ntAll = tAx.values.length;
+  const maxT = Math.max(2, Math.min(5000, Math.round(d.maxTimes || 400)));
+  const stride = Math.max(1, Math.ceil((ntAll - 1) / (maxT - 1)));
+  const tIdx: number[] = [];
+  for (let j = 0; j < ntAll; j += stride) tIdx.push(j);
+  if (tIdx[tIdx.length - 1] !== ntAll - 1) tIdx.push(ntAll - 1);
+  const nT = tIdx.length;
+  const kVal = (f: string, k: number, j: number) => K!.fields[f]?.[k * ntAll + j] ?? 0;
+
+  // the analyte index (constant, at λ₀): the buffer + dn/dc · ρ (dry protein, de Feijter)
+  const lam0 = along.id === 'lambda' ? (Math.min(...spec.lambda) + Math.max(...spec.lambda)) / 2 : spec.lambda[Math.floor(spec.lambda.length / 2)];
+  const idx0 = spec.sweeps.map(() => 0);
+  const nb0 = layersAt(spec, idx0, lam0)[last].n.re;
+  const an = km.analyte;
+  const nP = nb0 + an.dndc * an.rho;
+  Object.assign(info, { nP, lam0 });
+
+  // per (series, time): the layer thickness, the guest volume fraction (protein; solvent when swelling), the change of
+  // the buffer index (the flowing analyte solution, the baseline drift)
+  const N2 = nK * nT;
+  const dArr = new Array<number>(N2);
+  const fArr = new Array<number>(N2);
+  const bulkArr = new Array<number>(N2);
+  const compact = d.thick === 'compact';
+  const surf = (k: number) => km.surfaces[k] ?? km.surfaces[0];
+  const drift = Number.isFinite(d.drift) ? d.drift : 0;
+  const driftAt = (t: number) => (drift * 1e-6 * t) / 60; // µRIU/min
+  let overfull = false;
+  for (let k = 0; k < nK; k++)
+    for (let jj = 0; jj < nT; jj++) {
+      const j = tIdx[jj];
+      const q = k * nT + jj;
+      const tv = tAx.values[j];
+      if (km.swelling) {
+        const s = Math.max(-0.99, kVal('swell', k, j));
+        dArr[q] = L.d * (1 + s);
+        fArr[q] = Math.max(0, s / (1 + s));
+        bulkArr[q] = driftAt(tv);
+        continue;
+      }
+      const G = Math.max(0, kVal('RU', k, j)) / 1000; // ng/mm²
+      bulkArr[q] = (d.bulk ? (an.dndc * kVal('conc', k, j) * 1e-9 * an.mw) / 1000 : 0) + driftAt(tv); // (mL/g)·(g/mL)
+      let thick = L.d;
+      if (toExit) {
+        // auto: a monolayer as high as the molecule up to its jamming capacity, then thicker with the extra mass
+        const S = surf(k);
+        thick = compact ? G / an.rho : G > S.capacity ? (S.height * G) / S.capacity : S.height;
+      }
+      const f = thick > 0 ? (toExit && compact ? (G > 0 ? 1 : 0) : G / an.rho / thick) : 0;
+      if (f > 1 + 1e-9) overfull = true;
+      dArr[q] = Math.max(0, thick);
+      fArr[q] = Math.min(1, f);
+    }
+  if (overfull) warnings.push('More bound mass than fits in the target layer (analyte volume fraction > 1, clipped).');
+  if (toExit && !km.swelling) {
+    const S = km.surfaces[0];
+    info.layer = compact
+      ? `compact: all the bound mass as a dense layer of the analyte, d = Γ/ρ`
+      : `a monolayer ${+S.height.toPrecision(3)} nm high (the molecule), full at Γ∞ = ${+S.capacity.toPrecision(3)} ng/mm² (random packing); beyond, it thickens (multilayer)`;
+  }
+
+  // the structure at every (series, time): two new sweeps after those of the Compute
+  const sK = spec.sweeps.length;
+  const bound = (v: number[]): Bound<number> => ({ s: [sK, sK + 1], v });
+  const PROT = `__sg_analyte:${node.id}`;
+  const MIX = `__sg_mix:${node.id}`;
+  const method = d.mixing;
+  const exitInst = spec.instances[exitL.mat];
+  // the structure for arrays over two new sweeps of n1 × n2 steps (layer thickness, guest fraction, buffer Δn)
+  const make = (dA: number[], fA: number[], bA: number[], n1: number, n2: number, useBulk: boolean): TmmSpec => {
+    const models: Models = { ...spec.models };
+    const instances = { ...spec.instances };
+    const layers = spec.layers.map((x) => ({ ...x, bind: { ...x.bind } }));
+    const bulkInst = { ...exitInst, ...(useBulk ? { dnS: bound(bA) } : {}) };
+    if (toExit) {
+      models[PROT] = { type: 'constant', n: nP, k: 0 };
+      models[MIX] = { type: 'ema', method, host: PROT, filler: exitInst.lib, porosity: 1 };
+      // the sensing medium on its own instance: the bulk shift of the flowing solution also fills the pores of the layer
+      instances.__sg_bulk = bulkInst;
+      instances.__sg_layer = { lib: MIX, fill: 'next', p: bound(fA.map((f) => 1 - f)) };
+      layers.splice(last, 1, { mat: '__sg_layer', d: 0, dn: 0, bind: { d: bound(dA) } }, { ...exitL, mat: '__sg_bulk', bind: { ...exitL.bind } });
+    } else {
+      if (!km.swelling) models[PROT] = { type: 'constant', n: nP, k: 0 };
+      models[MIX] = { type: 'ema', method, host: spec.instances[L.mat].lib, filler: km.swelling ? exitInst.lib : PROT, porosity: 0 };
+      instances.__sg_layer = { lib: MIX, p: bound(fA) };
+      layers[tgt] = { ...L, mat: '__sg_layer', bind: { ...L.bind, ...(km.swelling ? { d: bound(dA) } : {}) } };
+      if (useBulk) {
+        instances.__sg_bulk = bulkInst;
+        layers[last] = { ...exitL, mat: '__sg_bulk', bind: { ...exitL.bind } };
+      }
+    }
+    return { ...spec, models, instances, layers, sweeps: [...spec.sweeps, n1, n2] };
+  };
+  const spec2 = make(dArr, fArr, bulkArr, nK, nT, (d.bulk && !km.swelling) || drift !== 0);
+  const times = tIdx.map((j) => tAx.values[j]);
+  const axes2: Axis[] = [...ds.axes.slice(0, sK), kAx ?? { id: 'kin', label: 'series', unit: '', values: [0] }, { id: 'time', label: 't', unit: 's', values: times }, ...ds.axes.slice(sK)];
+  const nSeeds = seedSw?.values.length ?? 1;
+  if (specSize(spec2) * nSeeds > MAX_POINTS) return fail([`Too many points (${(specSize(spec2) * nSeeds).toLocaleString('en')} > ${MAX_POINTS.toLocaleString('en')}): fewer time points (max times), a coarser scan, fewer series or seeds.`], warnings, info);
+  const req = requestDataset(ctx, `${ctx.tag ?? ''}${node.id}:sg`, spec2, axes2);
+  if (req.error) return fail([req.error], warnings, info);
+  const grid = req.dataset && sameGrid(req.dataset, { ...ds, axes: axes2, size: specSize(spec2) }) ? req.dataset : null;
+  info.t = times;
+  if (!grid) return { errors: [], warnings, outs: {}, pending: true, info };
+
+  // as measured (the instrument of Tolerance: blur along the scan, the noise of every scan); a swept seed gives one
+  // realization of the noise per seed (a new first axis)
+  const inst = instrumentOf(d, along.id, d.seed ?? 1);
+  if (inst && blurs(inst)) warnings.push(...blurWarnings(grid, inst));
+  let seeds = seedSw ? seedSw.values : null;
+  if (seeds && !(inst && noisy(inst))) {
+    warnings.push('The seed sweep needs detector noise (a seed is one realization of the noise): ignored.');
+    seeds = null;
+  }
+  const one = (sd: number) => {
+    const i = instrumentOf(d, along.id, sd);
+    return i ? degrade(grid, i, 1) : grid;
+  };
+  let meas: Dataset;
+  if (seeds) {
+    const parts = seeds.map(one);
+    const fields: Record<string, Float64Array> = {};
+    for (const key of Object.keys(parts[0].fields)) {
+      const f = new Float64Array(grid.size * parts.length);
+      parts.forEach((p, i) => f.set(p.fields[key], i * grid.size));
+      fields[key] = f;
+    }
+    meas = { ...parts[0], key: `${parts[0].key}|seeds:${seeds.join(',')}`, axes: [{ id: 'seed', label: 'seed', unit: '', values: seeds }, ...grid.axes], fields, size: grid.size * parts.length };
+  } else meas = one(d.seed ?? 1);
+  if (inst && grid.fields.R) {
+    // the exact curves next to the measured ones
+    const f = new Float64Array(meas.size);
+    for (let i = 0; i < meas.size / grid.size; i++) f.set(grid.fields.R, i * grid.size);
+    meas = { ...meas, fields: { ...meas.fields, Rexact: f }, meta: [...meas.meta, { key: 'Rexact', label: 'R exact (without the instrument)', short: 'R exact', unit: '', domain: [0, 1] }] };
+  }
+  info.seeds = seeds?.length;
+  const off = seeds ? 1 : 0; // the seed axis before those of the grid
+  const exact = d.readout === 'dip' && d.track && !(inst && noisy(inst)) && !spec.cone;
+  info.exact = exact;
+  if (d.readout === 'dip' && d.track && !exact) warnings.push('The dip is not refined exactly with detector noise (or a cone of light): it is located on the measured curves.');
+  const aIdx = off + (along.id === 'lambda' ? sK + 2 : sK + 3);
+  const xs = along.values;
+  const nOut = meas.size / xs.length;
+  const sizes = meas.axes.map((a, i) => (i === aIdx ? 1 : a.values.length));
+  const POS = new Float64Array(nOut).fill(NaN);
+  const RMIN = new Float64Array(nOut).fill(NaN);
+  const lo = Math.min(xs[0], xs[xs.length - 1]);
+  const hi = Math.max(xs[0], xs[xs.length - 1]);
+  const atX = Number.isFinite(d.at) ? d.at : (lo + hi) / 2;
+  if (d.readout === 'value' && !(atX >= lo && atX <= hi)) warnings.push(`The readout point ${atX} lies outside the scan (${lo}–${hi}).`);
+  const idx = sizes.map(() => 0);
+  let edge = false;
+  forEachLine(meas, 'R', aIdx, (k, ys) => {
+    for (let i = sizes.length - 1, rem = k; i >= 0; i--) {
+      idx[i] = rem % sizes[i];
+      rem = Math.floor(rem / sizes[i]);
+    }
+    if (d.readout === 'value') {
+      POS[k] = interp(xs, ys, atX);
+      return;
+    }
+    const e = locate(xs, ys, 0, xs.length - 1, 'min', locOf(d));
+    POS[k] = e.x;
+    RMIN[k] = e.y;
+    if (e.i <= 0 || e.i >= xs.length - 1) edge = true;
+    if (!exact || e.i <= 0 || e.i >= xs.length - 1) return;
+    // the exact dip between the grid points
+    const sw = idx.slice(off, off + sK + 2);
+    const pol = polAt(spec2, sw);
+    const fR =
+      along.id === 'theta'
+        ? (() => {
+            const lam = spec2.lambda[idx[off + sK + 2]];
+            const ls = layersAt(spec2, sw, lam);
+            return (th: number) => tmmPoint(ls, lam, th, pol).R;
+          })()
+        : (() => {
+            const th = spec2.theta[idx[off + sK + 3]];
+            return (lam: number) => tmmPoint(layersAt(spec2, sw, lam), lam, th, pol).R;
+          })();
+    const [a, b] = [xs[e.i - 1], xs[e.i + 1]].sort((p, q) => p - q);
+    const m = goldenMin(fR, a, b, 1e-9 * Math.max(1, Math.abs(b)));
+    POS[k] = m.x;
+    RMIN[k] = m.y;
+  });
+  if (edge) warnings.push(`The dip reaches the end of the ${along.label} scan at some times: widen the scan of the Compute.`);
+  // the change from the first time of each curve
+  const outAxes = meas.axes.filter((_, i) => i !== aIdx);
+  const st = strides(outAxes);
+  const kPos = off + sK; // the series and time axes among the output axes
+  const tPos = kPos + 1;
+  const SHIFT = Float64Array.from(POS, (v, k) => v - POS[k - (Math.floor(k / st[tPos]) % nT) * st[tPos]]);
+  // the layer at λ₀ (thickness, Re n, volume fraction of the guest), the bound mass and how it covers the surface
+  const binding = toExit && !km.swelling;
+  const DL = new Float64Array(nOut);
+  const NL = new Float64Array(nOut);
+  const FV = new Float64Array(nOut);
+  const GAM = new Float64Array(nOut);
+  const DEQ = new Float64Array(nOut);
+  const COV = new Float64Array(nOut);
+  const JAM = new Float64Array(nOut);
+  const NUM = new Float64Array(nOut);
+  const SPC = new Float64Array(nOut);
+  const atQ = Array.from({ length: N2 }, (_, q) => layersAt(spec2, [...idx0, Math.floor(q / nT), q % nT], lam0)[tgt]);
+  const kOf = (o: number) => Math.floor(o / st[kPos]) % nK;
+  const jOf = (o: number) => Math.floor(o / st[tPos]) % nT;
+  for (let o = 0; o < nOut; o++) {
+    const k = kOf(o);
+    const jj = jOf(o);
+    const Lq = atQ[k * nT + jj];
+    DL[o] = Lq.d;
+    NL[o] = Lq.n.re;
+    FV[o] = fArr[k * nT + jj];
+    if (km.swelling) continue;
+    const G = Math.max(0, kVal('RU', k, tIdx[jj])) / 1000;
+    GAM[o] = G;
+    const S = surf(k);
+    const n = (G * 1e-21) / S.mass; // molecules per nm²
+    DEQ[o] = G / an.rho;
+    COV[o] = (n * Math.PI * S.foot * S.foot) / 4;
+    JAM[o] = G / S.capacity;
+    NUM[o] = n * 1e6;
+    SPC[o] = n > 0 ? 1 / Math.sqrt(n) : NaN;
+  }
+  const readU = d.readout === 'value' ? '' : along.unit;
+  info.readUnit = readU;
+  const posLabel = d.readout === 'value' ? `R at ${along.label} = ${+atX.toPrecision(6)}${along.unit === '°' ? '°' : ` ${along.unit}`}` : `${along.label} of the dip`;
+  const what = toExit ? 'binding' : 'target';
+  const fields: Record<string, Float64Array> = { pos: POS, shift: SHIFT, dL: DL, nL: NL, fV: FV };
+  const meta: FieldMeta[] = [
+    { key: 'pos', label: posLabel, short: d.readout === 'value' ? 'R' : `${along.label}dip`, unit: readU, ...(d.readout === 'value' ? {} : { of: along.id }) },
+    { key: 'shift', label: d.readout === 'value' ? 'ΔR (from the start)' : `Δ${along.label} of the dip (from the start)`, short: d.readout === 'value' ? 'ΔR' : `Δ${along.label}`, unit: readU },
+    { key: 'dL', label: `height (thickness) of the ${what} layer`, short: 'd layer', unit: 'nm' },
+    { key: 'nL', label: `index of the ${what} layer at ${+lam0.toFixed(1)} nm`, short: 'n layer', unit: '' },
+    { key: 'fV', label: km.swelling ? 'solvent volume fraction in the layer' : `analyte volume fraction in the ${what} layer`, short: 'f', unit: '', domain: [0, 1] },
+  ];
+  if (d.readout === 'dip') {
+    fields.Rmin = RMIN;
+    meta.push({ key: 'Rmin', label: 'R at the dip', short: 'Rmin', unit: '', domain: [0, 1] });
+  }
+  if (!km.swelling) {
+    fields.Gamma = GAM;
+    meta.push({ key: 'Gamma', label: 'Γ — bound mass', short: 'Γ', unit: 'ng/mm²' });
+  }
+  if (binding) {
+    Object.assign(fields, { deq: DEQ, cover: COV, jam: JAM, num: NUM, spacing: SPC });
+    meta.push(
+      { key: 'deq', label: 'equivalent compact thickness d = Γ/ρ (what an SPR fit at the protein index reports)', short: 'd eq', unit: 'nm' },
+      { key: 'cover', label: 'coverage — fraction of the surface under the molecules (footprints)', short: 'coverage', unit: '' },
+      { key: 'jam', label: 'Γ / Γ∞ — fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
+      { key: 'num', label: 'molecules per µm²', short: 'N', unit: 'µm⁻²' },
+      { key: 'spacing', label: 'mean distance between the molecules (1/√N)', short: 'spacing', unit: 'nm' },
+    );
+  }
+  const sens: Dataset = { key: `sg:${node.id}:${meas.key}:${hash(JSON.stringify([d.readout, d.at, d.track, locOf(d)]))}`, axes: outAxes, fields, meta, size: nOut };
+
+  // the read-out of the structure at the start of the first series, exact (transfer matrices, the dip refined), with a
+  // little bound mass and a little buffer index added: the calibration
+  const calibrate = (): NonNullable<SensorgramInfo['cal']> | null => {
+    if (spec.cone) return null;
+    const dG = 0.01; // ng/mm²
+    const dN = 1e-5;
+    const h = toExit ? (compact ? 0 : surf(0).height) : L.d;
+    const hG = toExit && compact ? dG / an.rho : h;
+    const fG = toExit && compact ? 1 : dG / an.rho / Math.max(1e-12, hG);
+    const spec3 = make([h, hG, h], [0, km.swelling ? 0 : fG, 0], [0, 0, dN], 1, 3, true);
+    const aG = along.id === 'lambda' ? sK + 2 : sK + 3;
+    const ys = line(grid, 'R', aG, grid.axes.map(() => 0));
+    let i0 = 0;
+    for (let i = 1; i < ys.length; i++) if (ys[i] < ys[i0]) i0 = i;
+    if (d.readout === 'dip' && (i0 < 1 || i0 > xs.length - 2)) return null;
+    const [a, b] = [xs[Math.max(0, i0 - 2)], xs[Math.min(xs.length - 1, i0 + 2)]].sort((p, q) => p - q);
+    const read = (j: number) => {
+      const s = [...idx0, 0, j];
+      const pol = polAt(spec3, s);
+      const f =
+        along.id === 'theta'
+          ? (() => {
+              const lam = spec3.lambda[0];
+              const ls = layersAt(spec3, s, lam);
+              return (th: number) => tmmPoint(ls, lam, th, pol).R;
+            })()
+          : (th0 => (lam: number) => tmmPoint(layersAt(spec3, s, lam), lam, th0, pol).R)(spec3.theta[0]);
+      return d.readout === 'value' ? f(atX) : goldenMin(f, a, b, 1e-10 * Math.max(1, Math.abs(b))).x;
+    };
+    const r0 = read(0);
+    return { ...(km.swelling ? {} : { perG: (read(1) - r0) / dG }), perN: (read(2) - r0) / dN };
+  };
+
+  // the summary: the change of every series (the first value of the other axes), the surface at the end
+  const at = (k: number, jj: number) => k * st[kPos] + jj * st[tPos];
+  const fin = Array.from({ length: nK }, (_, k) => SHIFT[at(k, nT - 1)]);
+  const peak = Array.from({ length: nK }, (_, k) => Array.from({ length: nT }, (_, jj) => SHIFT[at(k, jj)]).reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0));
+  const fmtS = (v: number) => `${+v.toPrecision(4)}${readU === '°' ? '°' : readU ? ` ${readU}` : ''}`;
+  const p3 = (v: number) => `${+v.toPrecision(3)}`;
+  info.rows = [`largest change ${peak.map(fmtS).join(', ')}; at the end ${fin.map(fmtS).join(', ')}`];
+  if (binding) {
+    const kB = Array.from({ length: nK }, (_, k) => k).reduce((b, k) => (GAM[at(k, nT - 1)] > GAM[at(b, nT - 1)] ? k : b), 0);
+    const o = at(kB, nT - 1);
+    const mx = Array.from({ length: nT }, (_, jj) => GAM[at(kB, jj)]).reduce((m, v) => Math.max(m, v), 0);
+    const om = at(kB, Array.from({ length: nT }, (_, jj) => GAM[at(kB, jj)]).indexOf(mx));
+    info.rows.push(
+      `${nK > 1 ? `${kAx ? `${kAx.label} = ${p3(kAx.values[kB])}${kAx.unit ? ` ${kAx.unit}` : ''}` : ''}, ` : ''}most bound: Γ ${p3(mx)} ng/mm² = ${p3(100 * JAM[om])} % of a random monolayer, coverage ${p3(100 * COV[om])} %, ${p3(NUM[om])} molecules/µm², ${p3(SPC[om])} nm apart; layer ${p3(DL[om])} nm (d eq ${p3(DEQ[om])} nm)${o !== om ? `; at the end Γ ${p3(GAM[o])} ng/mm²` : ''}`,
+    );
+  }
+  // calibration (the read-out per ng/mm² bound and per RIU of the buffer, exact transfer matrices at the start of the
+  // first series) and the detection limit (3σ of the read-out over the first, analyte-free step, with detector noise)
+  const cal = calibrate();
+  info.cal = cal ?? undefined;
+  if (cal) {
+    const per = (v: number) => `${+v.toPrecision(3)}${readU === '°' ? '°' : readU ? ` ${readU}` : ''}`;
+    info.rows.push(`calibration: ${cal.perG !== undefined ? `1 ng/mm² (1000 RU) → ${per(cal.perG)}${toExit ? '' : ' (in the layer)'}, ` : ''}buffer index: ${per(cal.perN)} per RIU`);
+    const st0 = km.steps[0];
+    if (inst && noisy(inst) && st0 && !(st0.c > 0)) {
+      const base: number[][] = [];
+      for (let o = 0; o < nOut; o++) {
+        let rest = 0;
+        for (let i = 0; i < outAxes.length; i++) if (i !== tPos && !(off && i === 0)) rest += Math.floor(o / st[i]) % outAxes[i].values.length;
+        if (rest || times[jOf(o)] > st0.t1 + 1e-9 || !Number.isFinite(POS[o])) continue;
+        const sd = off ? Math.floor(o / st[0]) % outAxes[0].values.length : 0;
+        (base[sd] ??= []).push(POS[o]);
+      }
+      const dev = base.flatMap((v) => {
+        const m = v.reduce((a, x) => a + x, 0) / v.length;
+        return v.map((x) => x - m);
+      });
+      if (dev.length >= 5) {
+        const sigma = Math.sqrt(dev.reduce((a, x) => a + x * x, 0) / (dev.length - base.filter((v) => v.length).length));
+        cal.sigma = sigma;
+        const parts = [`noise σ ${per(sigma)} (first step, ${dev.length} points)`, `3σ: ${((3 * sigma) / Math.abs(cal.perN)).toExponential(1)} RIU`];
+        if (cal.perG !== undefined && toExit) {
+          const G = (3 * sigma) / Math.abs(cal.perG);
+          cal.lodG = G;
+          parts.push(`${+G.toPrecision(2)} ng/mm² = ${+(G * 1000).toPrecision(2)} RU`);
+          const p = km.rates;
+          if (p && G * 1000 < 0.99 * p.rmax) {
+            const R = G * 1000;
+            const free = p.rsa ? p.rmax * blocking(R / p.rmax) : p.rmax - R;
+            parts.push(p.kd > 0 ? `${+(((p.kd * R) / (p.ka * free)) * 1e9).toPrecision(2)} nM at equilibrium` : 'any concentration, given time (irreversible)');
+          }
+        }
+        info.rows.push(`detection limit: ${parts.join(' · ')}`);
+      } else info.rows.push('detection limit: the first (analyte-free) step is too short for the noise (≥ 5 times)');
+    } else if (!(inst && noisy(inst))) info.rows.push('detection limit: turn on the detector noise (and start with an analyte-free step)');
+  }
+  info.rows.push(`${nT} times × ${xs.length} points of ${along.label}${nK > 1 ? ` × ${nK} series` : ''}${seeds ? ` × ${seeds.length} seeds` : ''}${km.swelling ? '' : `; analyte n = ${nP.toFixed(4)} at ${+lam0.toFixed(1)} nm`}`);
+  const name = d.name || 'sensorgram';
+  return {
+    errors: [],
+    warnings,
+    outs: {
+      out: { type: 'data', dataset: meas, pending: req.pending, name: `${name} · R(t)`, annotations: [] },
+      sensorgram: { type: 'data', dataset: sens, pending: req.pending, name, annotations: [] },
+    },
+    pending: req.pending,
     info,
   };
 }

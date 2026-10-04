@@ -7,8 +7,8 @@ import { download } from '../plot/export.ts';
 
 const fmt = (d: number | null) => (d === null ? '—' : String(+d.toFixed(2)));
 
-export function LayerListView({ stack, name }: { stack: StackValue; name: string }) {
-  const list = useMemo(() => layerList(stack), [stack]);
+export function LayerListView({ stack, name, names }: { stack: StackValue; name: string; names?: Record<string, string> }) {
+  const list = useMemo(() => layerList(stack, names), [stack, names]);
   const [copied, setCopied] = useState<'' | 'ok' | 'failed'>('');
   const copy = () =>
     navigator.clipboard.writeText(layerListTsv(list)).then(

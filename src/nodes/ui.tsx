@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode, MapView } from '../types.ts';
@@ -146,7 +147,7 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
   };
   const lim = (a: number, b: number) => ([a, b].some(Number.isFinite) ? ([a, b] as [number, number]) : undefined);
   return (
-    // two fixed lines: the colour scale (map, range, log), then how the picture is drawn (cap, smooth, blur)
+    // two fixed lines: the colour scale (map, range, log), then how the picture is drawn (cap, interpolate, blur)
     <div className="map-view">
       <div className="row wrap">
         <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0 — for Re / Im of a field)">
@@ -175,9 +176,9 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
             </select>
           )}
         </span>
-        <label className="radio" title="Bilinear interpolation between the computed points">
+        <label className="radio" title="Bilinear interpolation of the picture between the computed points (display only)">
           <input className="nodrag" type="checkbox" checked={!!v.smooth} onChange={(e) => set({ smooth: e.target.checked || undefined })} />
-          smooth
+          interpolate
         </label>
         <label className="radio" title="Gaussian blur of the picture (σ in grid cells; 0 = none). The data are not changed.">
           blur
@@ -230,5 +231,31 @@ export function SliceControls(props: {
           </span>
         ))}
     </>
+  );
+}
+
+// One line of text that wraps instead of scrolling (a long title, expression or formula): the box grows with the text;
+// Enter does not break the line.
+export function AutoText({ value, onChange, className, placeholder, title, onFocus }: { value: string; onChange: (v: string) => void; className?: string; placeholder?: string; title?: string; onFocus?: () => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const t = ref.current;
+    if (!t) return;
+    t.style.height = 'auto';
+    t.style.height = `${t.scrollHeight + t.offsetHeight - t.clientHeight}px`;
+  });
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      className={`nodrag nowheel auto-text ${className ?? ''}`}
+      value={value}
+      placeholder={placeholder}
+      title={title}
+      spellCheck={false}
+      onFocus={onFocus}
+      onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
+      onChange={(e) => onChange(e.target.value.replace(/\s*\n\s*/g, ' '))}
+    />
   );
 }

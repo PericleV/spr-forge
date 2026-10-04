@@ -5,6 +5,8 @@ import type { RoughParams, RoughSpec } from './rough.ts';
 import type { Models } from '../physics/materials.ts';
 import type { Polarization } from '../physics/tmm.ts';
 import type { TargetSpec } from './spec.ts';
+import type { Instrument } from './instrument.ts';
+import type { Analyte, KineticModel, KineticParams, Surface } from './kinetics.ts';
 
 export type Quantity = 'theta' | 'lambda';
 export type SweepKind = 'number' | 'polarization';
@@ -55,10 +57,12 @@ export type TmmSpec = {
   // Thick incoherent substrate (the last entry of `layers`): back coating and exit medium, substrate thickness in nm.
   back?: { d: number; layers: LayerSpec[] }; // layers: substrate, back coating…, out medium
   thetaOffset?: Bound<number>; // added to every θ (tolerance analysis: angle error)
+  cone?: number; // half-angle (°) of a converging beam: every θ is the mean over its rays (isotropic TMM; phases NaN)
   // computed by RCWA (N orders each side, orders shown); asr = strength η of the adaptive spatial resolution (absent = off)
   // conical: φ ≠ 0 somewhere (the TE / TM parts of the efficiencies are output); phi: the azimuth in degrees (constant)
   // jones: an incident Jones state (ψ, δ in degrees) instead of `pol` (computed by the conical solver, TE / TM parts output)
-  rcwa?: { orders: number; show: number; fact?: 'li' | 'laurent'; asr?: number; conical?: boolean; phi?: number; jones?: { psi: number; delta: number } };
+  // profiles 'fff': trapezoid / sinus / blazed gratings integrated through their true profile (absent: the staircase)
+  rcwa?: { orders: number; show: number; fact?: 'li' | 'laurent'; asr?: number; conical?: boolean; phi?: number; jones?: { psi: number; delta: number }; profiles?: 'fff' };
   phiBind?: Bound<number>; // swept azimuth φ (RCWA, Berreman)
   ordersBind?: Bound<number>; // swept orders N (RCWA: convergence figures); else rcwa.orders
   // Berreman 4×4 (Compute TMM with anisotropic layers or a Jones polarization): the azimuth φ (degrees) and the state
@@ -82,6 +86,12 @@ export type Dataset = {
   size: number;
   spec?: TmmSpec;
   seconds?: number; // time the worker took (a computation in the app)
+  // the curves as measured (Tolerance: blur and noise of realization `stream`); an analysis that recomputes the
+  // structure (Sensitivity) measures its curves with the same instrument
+  instrument?: { inst: Instrument; stream: number };
+  // a Binding kinetics result: the model, the analyte, the protocol steps (start times), the surface of every series
+  // (footprint, height, jamming capacity; one per value of a swept constant)
+  kinetics?: { model: KineticModel; analyte: Analyte; swelling: boolean; steps: { t0: number; t1: number; label: string; c: number }[]; surfaces: Surface[]; rates?: KineticParams };
 };
 
 // Marks added to a curve by the analysis nodes. Per-curve arrays are indexed by the combination of
