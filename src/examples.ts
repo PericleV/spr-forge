@@ -2656,7 +2656,7 @@ export const roughSprExample = (): Project =>
       material('water', 'user-n133', -300, 460),
       { id: 'au', type: 'layer', position: { x: -300, y: 200 }, data: { label: 'Au film', thickness: 50, layers2D: 1 } },
       { id: 'seeds', type: 'sweep', position: { x: -300, y: 640 }, data: { name: 'seed', kind: 'number', mode: 'list', min: 1, max: 3, step: 1, list: '1, 2, 3' } },
-      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', size: 3, cl: 20, cell: 500, px: 500 } },
+      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', size: 3, cl: 20, cell: 500, px: 500, tmm: 'profile', ema: 'bruggeman' } },
       { id: 'stack', type: 'combine', position: { x: 420, y: 120 }, data: { name: 'Rough Kretschmann', count: 1 } },
       { id: 'flat', type: 'combine', position: { x: 60, y: -260 }, data: { name: 'Flat film', count: 1 } },
       { id: 'tmmF', type: 'compute', position: { x: 780, y: -420 }, data: compute('Flat film (reference)') },
@@ -2710,6 +2710,68 @@ export const roughSprExample = (): Project =>
 // staircase slices (as the article and RETICOLO) and as its smooth profile (FFF). The staircase puts a sharp gold corner
 // at every step; their fields are the hot spots of its map.
 export const ROUGH_FFF_THETA = { min: 70, max: 76, step: 0.1 };
+// A dielectric film rough on both faces (the second face partly replicating the first): TMM with the statistics of the
+// heights (ensemble, Bruggeman) against RCWA of the smooth profiles (mean of seeds); see scripts/bench-rough.ts.
+export const roughFilmExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -660, y: -320 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'A film rough on both faces',
+          text: 'A 120 nm TiO₂ film on glass, in air, at normal incidence. Both faces are rough: two Roughness nodes in a row on the same Layer — the top (RMS 4 nm) and the bottom (RMS 3 nm), which follows the top with a correlation of 0.7 (a film that partly replicates its substrate). Correlation length 20 nm.\n\nCompute TMM takes the statistics of the heights (“ensemble”: no seed) and, per slice, a Bruggeman medium shaped by the features (σ high, cl wide: between the two Wiener bounds), and runs at once. Compute RCWA takes the smooth profiles themselves (FFF) for three seeds (press Run, a few minutes); Extract data averages them. Compare: the flat film, TMM and RCWA. The roughness lowers the reflectance in the blue; TMM follows RCWA within 0.0015 in R (at 450 nm: flat 0.144, RCWA 0.1342, TMM 0.1344). Switch the TMM medium to plain Bruggeman to see it overstate the change by half.\n\nOn metals, gentle roughness is another story: the effective-medium slices overstate it many times (Help → Roughness).',
+          width: 460,
+          height: 300,
+        },
+      },
+      material('air', 'Air', -330, -40),
+      material('tim', 'TiO2', -660, 200),
+      material('bk7', 'BK7', -330, 460),
+      { id: 'film', type: 'layer', position: { x: -330, y: 200 }, data: { label: 'TiO₂ film', thickness: 120, layers2D: 1 } },
+      { id: 'rT', type: 'rough', position: { x: 30, y: 60 }, data: { ...ROUGH_DEFAULTS, label: 'top face', side: 'top', size: 4, cl: 20, cell: 300, px: 600, slices: 20, tmm: 'ensemble', ema: 'shape', surf: '1d' } },
+      { id: 'rB', type: 'rough', position: { x: 30, y: 560 }, data: { ...ROUGH_DEFAULTS, label: 'bottom face', side: 'bottom', size: 3, cl: 20, cell: 300, px: 600, slices: 20, seed: 11, tmm: 'ensemble', ema: 'shape', surf: '1d', corr: 0.7 } },
+      { id: 'seeds', type: 'sweep', position: { x: -330, y: 700 }, data: { name: 'seed', kind: 'number', mode: 'list', min: 1, max: 3, step: 1, list: '1, 2, 3' } },
+      { id: 'stack', type: 'combine', position: { x: 420, y: 160 }, data: { name: 'Rough film', count: 1 } },
+      { id: 'flat', type: 'combine', position: { x: 420, y: -260 }, data: { name: 'Flat film', count: 1 } },
+      { id: 'wl', type: 'param', position: { x: 420, y: -60 }, data: param('lambda', 'range', 550, 400, 900, 5) },
+      { id: 'wlR', type: 'param', position: { x: 420, y: 560 }, data: param('lambda', 'range', 550, 400, 900, 25) },
+      { id: 'th', type: 'param', position: { x: 420, y: 360 }, data: param('theta', 'constant', 0, 0, 89, 1) },
+      { id: 'tmmF', type: 'compute', position: { x: 780, y: -320 }, data: compute('Flat film') },
+      { id: 'tmm', type: 'compute', position: { x: 780, y: 20 }, data: compute('TMM, ensemble') },
+      { id: 'rc', type: 'rcwa', position: { x: 780, y: 380 }, data: { ...RCWA_DEFAULTS, name: 'RCWA, smooth profiles', orders: 30, show: 0, profiles: 'fff' } },
+      { id: 'mR', type: 'extract', position: { x: 1160, y: 380 }, data: { name: 'RCWA, mean of 3 seeds', fields: ['R'], fixed: {}, mean: ['sweep:seeds'] } },
+      { id: 'cmp', type: 'compare', position: { x: 1520, y: 0 }, data: COMPARE_DEFAULTS },
+    ] as AppNode[],
+    [
+      edge('tim', 'film', 'mat'),
+      edge('film', 'rT', 'in'),
+      edge('rT', 'rB', 'in'),
+      edge('seeds', 'rT', 'seed'),
+      edge('air', 'stack', 'incident'),
+      edge('rB', 'stack', 'item-0'),
+      edge('bk7', 'stack', 'exit'),
+      edge('air', 'flat', 'incident'),
+      edge('film', 'flat', 'item-0'),
+      edge('bk7', 'flat', 'exit'),
+      edge('flat', 'tmmF', 'stack'),
+      edge('wl', 'tmmF', 'lambda'),
+      edge('th', 'tmmF', 'theta'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('th', 'tmm', 'theta'),
+      edge('stack', 'rc', 'stack'),
+      edge('wlR', 'rc', 'lambda'),
+      edge('th', 'rc', 'theta'),
+      edge('rc', 'mR', 'in'),
+      edge('tmmF', 'cmp', 'in'),
+      edge('tmm', 'cmp', 'in'),
+      edge('mR', 'cmp', 'in'),
+    ],
+  );
+
 export const roughFieldsExample = (): Project =>
   project(
     [
@@ -2732,7 +2794,7 @@ export const roughFieldsExample = (): Project =>
       { id: 'aum', type: 'material', position: { x: -660, y: 200 }, data: { ...materialData('user-au-treebu'), color: '#d4af37' } },
       material('water', 'user-n133', -300, 460),
       { id: 'au', type: 'layer', position: { x: -300, y: 200 }, data: { label: 'Au film', thickness: 45.5, layers2D: 1 } },
-      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', kind: 'pp', size: 9, cl: 8, cell: 500, px: 500, seed: 1, slices: 9 } },
+      { id: 'rough', type: 'rough', position: { x: 60, y: 200 }, data: { ...ROUGH_DEFAULTS, label: '', side: 'bottom', kind: 'pp', size: 9, cl: 8, cell: 500, px: 500, seed: 1, slices: 9, tmm: 'profile', ema: 'bruggeman' } },
       { id: 'stack', type: 'combine', position: { x: 420, y: 120 }, data: { name: 'Rough Kretschmann', count: 1 } },
       { id: 'flat', type: 'combine', position: { x: 60, y: -260 }, data: { name: 'Flat film', count: 1 } },
       { id: 'tmmF', type: 'compute', position: { x: 780, y: -420 }, data: compute('Flat film (reference)') },
@@ -2982,6 +3044,7 @@ export const EXAMPLES: ExampleEntry[] = [
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
   { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },
+  { group: EXAMPLE_GROUPS[3], name: 'A film rough on both faces: TMM statistics vs RCWA', make: roughFilmExample, desc: 'A TiO₂ film with a rough top and a partly replicated rough bottom: TMM with the statistics of the heights against RCWA of the smooth profiles.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR fields: staircase vs smooth profile (FFF) (after Treebupachatsakul et al. 2023)', make: roughFieldsExample, desc: 'The same rough gold surface computed as staircase slices and as its smooth profile (differential method, FFF): dips and field maps.' },
   { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys3 (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(3), desc: 'Ag / Si₃N₄ / graphene on BK7: the resonance shift and sensitivity for three malaria stages, and the performance metrics from Custom data.' },
   { group: EXAMPLE_GROUPS[0], name: 'Graphene SPR biosensor for malaria, Sys4 with ssDNA (Tene et al. 2025, benchmark)', make: () => teneMalariaExample(4), desc: 'The same sensor with a thiol-tethered ssDNA layer.' },

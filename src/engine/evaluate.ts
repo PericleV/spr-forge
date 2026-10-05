@@ -59,7 +59,7 @@ import { formulaStat, metricCost, statOf, zonesCost, type Outside, type Zone, ty
 import { bandTerms, effectiveSlice, odOf, pMerit, sliceCurves, sliceInfo, sliceLines, sliceValues, termText, type MeritPoint, type Slice, type SliceInfo, type SpecTerm, type TargetSpec } from './spec.ts';
 import { interp, parseSpectrum } from './match.ts';
 import { FFF_PROFILES, gratingSlices, smallestFeature, type GratingParams } from './grating.ts';
-import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type PlanItem } from './rough.ts';
+import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, tensorEma, type PlanItem } from './rough.ts';
 import { fieldResults, type FieldJob } from './rcwaFieldRun.ts';
 import { MAX_ORDERS, rcwaLayerList, rcwaLayersAt, rcwaRegionsAt } from './runRcwa.ts';
 import type { FieldMap, FieldQuantity } from '../physics/rcwaField.ts';
@@ -1067,7 +1067,9 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       jonesT = { psi: cd.polMix.psi, delta: cd.polMix.delta };
     }
     if (!anisoUsed && (ph || phi0 !== 0)) warnings.add('The azimuth φ has no effect on isotropic films (it matters with anisotropic layers).');
-    info.berreman = anisoUsed || !!jonesT;
+    // an anisotropic effective medium of a rough zone: a tensor, through Berreman
+    const roughAniso = [...layers, ...(back?.layers ?? [])].some((L) => L.rough?.some((r) => tensorEma(r.ema)));
+    info.berreman = anisoUsed || !!jonesT || roughAniso;
     if (cd.cone) {
       const h = cd.coneHalf ?? 5;
       if (!(h > 0 && h < 60)) errors.push('Cone: the half-angle must be in (0, 60)°.');
@@ -1163,11 +1165,28 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       if (nMin < need) warnings.add(`Roughness: N ≥ ${need} orders are advised for cl = ${clMin} nm over the ${cell} nm cell (2 per cl; check the convergence).`);
       if (rd.asr) warnings.add('ASR is not used with rough interfaces (plain RCWA).');
     }
+    // gentle roughness on a metal (RMS below the correlation length): slices of an effective medium overstate it by far
+    // (measured against RCWA with the smooth profile, see ROADMAP); Compute RCWA is the check
+    if (method === 'tmm' && roughAll.some((r) => r.bind.seed && r.tmm && r.tmm !== 'profile'))
+      warnings.add('Roughness: TMM takes the statistics of the heights (ensemble / ramp), so the swept seed repeats the same result (it shapes the profiles of Compute RCWA only).');
+    if (method === 'tmm') {
+      const lam0 = lambda[Math.floor(lambda.length / 2)];
+      const metal = (L: LayerSpec | undefined) => !!L && keysOf(L).some((k) => {
+        const nn = refractiveIndex(instances[k].lib, ctx.models, lam0);
+        return nn.re * nn.re - nn.im * nn.im < 0;
+      });
+      for (const list of roughLists)
+        list.forEach((L, i) => {
+          for (const r of L.rough ?? [])
+            if (r.ema !== 'shape' && r.ema !== 'wiener' && r.size < r.cl && (metal(L) || metal(list[r.side === 'top' ? i - 1 : i + 1])))
+              warnings.add(`${nameOf(list, i)}: gentle roughness on a metal (height below the correlation length): an isotropic effective medium per slice overstates its effect on a plasmon many times (an SPR dip moved 1.5–2.6° instead of 0.2° for RMS 1 nm); the medium “Bruggeman, shape of the features” follows RCWA within ~0.1°.`);
+        });
+    }
     if (!errors.length)
       try {
         const idx0 = sweeps.map(() => 0);
         for (const list of roughLists)
-          for (const n of roughPlan(list, sweeps.map((s) => s.values.length), idx0, method === 'rcwa' ? gp : undefined)?.notes ?? [])
+          for (const n of roughPlan(list, sweeps.map((s) => s.values.length), idx0, method === 'rcwa' ? gp : undefined, method !== 'rcwa')?.notes ?? [])
             warnings.add(`Roughness${n.layer !== undefined ? ` (${nameOf(list, n.layer)})` : ''}: ${n.text}.`);
       } catch (e) {
         errors.push(`Roughness: ${e instanceof Error ? e.message : String(e)}.`);
@@ -1375,7 +1394,7 @@ function evalRough(ctx: Ctx, node: RoughNode): NodeResult {
   if (Math.min(d.cl, ...(sweeps.cl?.values ?? [])) < 2 * cellPx) warnings.push(`The correlation length is below 2 points of the profile (${cellPx.toFixed(2)} nm each): more points or a smaller cell.`);
   if (Math.max(d.cl, ...(sweeps.cl?.values ?? [])) > d.cell / 10) warnings.push('The correlation length is above a tenth of the cell: few features per cell, the statistics of one seed vary much (a longer cell or several seeds).');
   const name = L0.label || L0.mat.name;
-  const params = { kind: d.kind, size: d.size, cl: d.cl, cell: d.cell, px: d.px, seed: d.seed, slices: d.slices, ema: d.ema };
+  const params = { kind: d.kind, size: d.size, cl: d.cl, cell: d.cell, px: d.px, seed: d.seed, slices: d.slices, ema: d.ema, tmm: d.tmm ?? ('profile' as const), ...(Number.isFinite(d.corr) ? { corr: d.corr } : {}), ...(d.surf ? { surf: d.surf } : {}) };
   const vary = (sw: SweepValue | undefined, label: string, unit: string): VaryAxis | undefined => sw && { sweep: sw, label: `${label}[${name}]`, unit };
   const layer: StackLayer = {
     ...L0,
@@ -2624,6 +2643,14 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
   else if (failed.length) errors.push(`${failed.length} objective input(s) have errors.`);
   if (!variables.length) errors.push('No Design variable feeds the objectives.');
   if (seen.has(node.id)) return fail(['The optimizer output feeds its own objectives (cycle).'], [], info);
+  // a rough interface computed by TMM through one random profile: the optimum would fit that realization
+  const tmmUsed = [...seen].some((id) => ctx.nodes.get(id)?.type === 'compute');
+  const oneProfile = [...seen].flatMap((id) => {
+    const n = ctx.nodes.get(id);
+    return n?.type === 'rough' && (n.data.tmm ?? 'profile') === 'profile' ? [n.data.label || 'Roughness'] : [];
+  });
+  if (tmmUsed && oneProfile.length)
+    warnings.push(`${oneProfile.join(', ')}: Compute TMM sees one random profile (“this profile (seed)”), so the optimum fits that realization; choose “ensemble” in the Roughness node for its statistics (no seed, smooth for the optimizer).`);
 
   // Outputs: the chosen solution (a run's best, or a point of its Pareto front; the live best during a run with
   // preview), re-simulated with the Compute node that feeds the objectives.

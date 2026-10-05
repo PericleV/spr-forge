@@ -32,7 +32,7 @@ export const layersAt = (spec: TmmSpec, idx: number[], lam: number, list = spec.
 // effective medium (the most abundant material owns a slice), the rest of the layers around them stays flat.
 export function layersOwned(spec: TmmSpec, idx: number[], lam: number, list = spec.layers): { layers: Layer[]; owner: number[] } {
   const base = plainLayersAt(spec, idx, lam, list);
-  const plan = roughPlan(list, spec.sweeps, idx);
+  const plan = roughPlan(list, spec.sweeps, idx, undefined, true);
   if (!plan) return { layers: base, owner: base.map((_, j) => j) };
   const layers: Layer[] = [];
   const owner: number[] = [];

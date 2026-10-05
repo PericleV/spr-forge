@@ -6,6 +6,20 @@
 // Several rough interfaces: the zones that overlap (a thin film) are cut together, three or more materials per slice. A
 // film thinner than the sum of the RMS heights of its two interfaces follows the interface on its incident side (the
 // second interface copies the shape of the first, with its own height); a thicker film has its own profile.
+// Compute TMM (and Berreman) can describe a zone by its statistics instead of one realization: `tmm` = 'ensemble' takes
+// the heights of a Gaussian distribution (its quantiles: the fraction of a material at depth z is Φ(z/σ), no seed, the
+// limit of an infinite cell), 'ramp' a uniform distribution (fractions linear in z over 2√3 σ); RCWA always computes
+// the profile of the seed. A slice mixes its materials by Bruggeman, Maxwell-Garnett, Looyenga, linearly in n, or
+// anisotropically (a tensor, through Berreman). The two Wiener bounds: 'wiener' = horizontal laminae (a very gentle
+// surface: ε_xx = ε_yy = Σ f ε, ε_zz = (Σ f/ε)⁻¹ — to first order the roughness is invisible) and 'aniso' = vertical walls
+// (columnar roughness, the quasi-static limit of RCWA's staircase: ε_xx = (Σ f/ε)⁻¹ across the profile, ε_yy = ε_zz =
+// Σ f ε). 'shape': between them, a Bruggeman medium per axis with the depolarization factors of the features, height σ
+// (the RMS) and half-width cl: Σ f (ε_i − ε)/(ε + L (ε_i − ε)) = 0 (L = 0: the arithmetic mean, L = 1: the harmonic one,
+// 1/3: Bruggeman). A 1D profile has ridges (elliptic cylinders along y, q = σ/cl: L_x = q/(1 + q), L_y = 0,
+// L_z = 1/(1 + q)); a 2D surface bumps (spheroids, L_z of a spheroid of axis ratio q, L_x = L_y = (1 − L_z)/2). Against
+// RCWA of the smooth 1D profile (scripts/bench-rough.ts) the 1D shape medium gives the SPR dip of rough gold within
+// 0.1° (0.6° at RMS 5 nm), a rough TiO₂ film within 2·10⁻³ in R, with no fitted parameter; the dip is too shallow on
+// gold (R min 2–3× too high); plain Bruggeman overstates gentle roughness on metals 2–7×.
 import * as X from '../physics/complex.ts';
 import { c, type C } from '../physics/complex.ts';
 import type { EmaMethod } from '../physics/materials.ts';
@@ -22,8 +36,17 @@ export type RoughParams = {
   px: number; // points of the profile over the cell
   seed: number; // the random realization
   slices: number; // slices of the rough zone
-  ema: EmaMethod; // effective medium of a slice (TMM, Berreman)
+  ema: RoughEma; // effective medium of a slice (TMM, Berreman)
+  tmm?: RoughTmm; // how TMM sees the zone (absent: the profile of the seed)
+  // correlation with the rough interface before it (incident side; e.g. a film replicating its substrate): 0 … 1, the
+  // shape ρ·(that one) + √(1 − ρ²)·(own); absent: automatic (a film thinner than RMS₁ + RMS₂ is conformal, ρ = 1)
+  corr?: number;
+  surf?: '1d' | '2d'; // 'shape' medium: the features of a 1D profile (ridges, absent) or of a 2D surface (bumps)
 };
+export type RoughEma = EmaMethod | 'aniso' | 'wiener' | 'shape';
+// slice media that are tensors (Compute TMM then runs Berreman)
+export const tensorEma = (e: RoughEma | undefined) => e === 'aniso' || e === 'wiener' || e === 'shape';
+export type RoughTmm = 'profile' | 'ensemble' | 'ramp';
 // On a layer: its top or bottom interface is rough; per-step values of the swept parameters.
 export type RoughSpec = RoughParams & { side: 'top' | 'bottom'; bind: { size?: Bound<number>; cl?: Bound<number>; seed?: Bound<number> } };
 
@@ -112,6 +135,54 @@ export const statsOf = (h: ArrayLike<number>) => {
   return { rms: Math.sqrt(ss / h.length), pp: hi - lo, min: lo, max: hi };
 };
 
+// The inverse of the standard normal distribution function (P. J. Acklam's rational approximation, relative error
+// 1.15e-9).
+export function normInv(p: number): number {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const cc = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const dd = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const lo = 0.02425;
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((cc[0] * q + cc[1]) * q + cc[2]) * q + cc[3]) * q + cc[4]) * q + cc[5]) / ((((dd[0] * q + dd[1]) * q + dd[2]) * q + dd[3]) * q + 1);
+  }
+  if (p > 1 - lo) return -normInv(1 - p);
+  const q = p - 0.5;
+  const r = q * q;
+  return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+// The heights of a distribution as a profile (unit RMS, zero mean): its n quantiles, in an order fixed by `k` (a
+// permutation; interfaces with different k are uncorrelated). Gaussian ('ensemble') or uniform ('ramp').
+export const STAT_POINTS = 4096;
+const statShapes = new Map<string, Float64Array>();
+export function statShape(kind: 'ensemble' | 'ramp', k: number, n = STAT_POINTS): Float64Array {
+  const key = `${kind}|${k}|${n}`;
+  const hit = statShapes.get(key);
+  if (hit) return hit;
+  const q = Float64Array.from({ length: n }, (_, i) => (kind === 'ramp' ? 2 * ((i + 0.5) / n) - 1 : normInv((i + 0.5) / n)));
+  let ss = 0;
+  for (const v of q) ss += v * v;
+  const rms = Math.sqrt(ss / n);
+  for (let i = 0; i < n; i++) q[i] /= rms;
+  // a deterministic shuffle (Fisher–Yates with the generator of the profiles)
+  let a = (k * 2654435761 + 12345) >>> 0 || 1;
+  const u = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(u() * (i + 1));
+    [q[i], q[j]] = [q[j], q[i]];
+  }
+  statShapes.set(key, q);
+  return q;
+}
+
 // The lag (in points) where the autocorrelation of a periodic profile falls to 1/e (its correlation length for a
 // Gaussian autocorrelation exp(−r²/cl²)); linear interpolation between the points.
 export function corrLength(h: ArrayLike<number>): number {
@@ -149,7 +220,7 @@ export function roughAt(r: RoughSpec, dims: number[], idx: number[]): RoughParam
 
 export type PlanItem =
   | { kind: 'layer'; i: number; d: number } // (a part of) layer i of the list, flat
-  | { kind: 'slice'; d: number; owner: number; mats: number[]; frac: number[]; segs: SliceSeg[]; ema: EmaMethod; zone: number };
+  | { kind: 'slice'; d: number; owner: number; mats: number[]; frac: number[]; segs: SliceSeg[]; ema: RoughEma; zone: number; shape?: { q: number; surf: '1d' | '2d' } };
 // A rough zone: depths z0 … z1 (nm from the top of the first finite layer), its surfaces k0 … k1 sampled at px points over the
 // cell (the smooth FFF profile is the line through them); below surface k lies layer k + 1 of the list.
 export type RoughZone = { z0: number; z1: number; k0: number; k1: number; S: Float64Array[]; px: number };
@@ -159,20 +230,21 @@ export type Plan = { items: PlanItem[]; cell: number; notes: { layer?: number; t
 const plans = new WeakMap<LayerSpec[], Map<string, Plan | null>>();
 
 // The layering of `list` (incident medium, finite layers, exit medium) at the sweep steps idx, or null without rough
-// interfaces. `cellFixed`: the period of a grating in the structure (the cell of the roughness then).
-export function roughPlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: number): Plan | null {
+// interfaces. `cellFixed`: the period of a grating in the structure (the cell of the roughness then). `stat`: for Compute
+// TMM / Berreman (interfaces described by their statistics take them; RCWA: false, always the profile).
+export function roughPlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: number, stat = false): Plan | null {
   if (!list.some((L) => L.rough?.length)) return null;
   let memo = plans.get(list);
   if (!memo) plans.set(list, (memo = new Map()));
-  const key = `${idx.join(',')}|${cellFixed ?? ''}`;
+  const key = `${idx.join(',')}|${cellFixed ?? ''}|${stat}`;
   if (memo.has(key)) return memo.get(key)!;
-  const plan = makePlan(list, dims, idx, cellFixed);
+  const plan = makePlan(list, dims, idx, cellFixed, stat);
   if (memo.size > 256) memo.delete(memo.keys().next().value!);
   memo.set(key, plan);
   return plan;
 }
 
-function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: number): Plan {
+function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: number, stat = false): Plan {
   const n = list.length;
   const notes: Plan['notes'] = [];
   const d = list.map((L, i) => (i === 0 || i === n - 1 ? 0 : L.bind.d ? at(L.bind.d, dims, idx) : L.d));
@@ -189,12 +261,32 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
   });
   if (!par.some((p) => p)) return { items: list.map((_, i) => ({ kind: 'layer', i, d: d[i] })), cell: cellFixed ?? 1000, notes, zones: [] };
   const cell = cellFixed ?? par.find((p) => p)!.cell;
-  const px = Math.max(...par.map((p) => (p ? Math.round(p.px) : 0)));
-  // unit shapes: an own realization per interface; a thin film's second interface copies the first one's shape
-  const shape: (Float64Array | null)[] = par.map((p) => (p ? resample(roughShape(p.px, p.cl / cell, p.seed), px) : null));
+  const statOf = (p: RoughParams | null) => (stat && p && p.tmm && p.tmm !== 'profile' ? p.tmm : null);
+  const px = Math.max(...par.map((p) => (statOf(p) ? STAT_POINTS : p ? Math.round(p.px) : 0)));
+  // unit shapes: an own realization per interface (or the quantiles of its distribution); a thin film's second
+  // interface copies the first one's shape
+  const shape: (Float64Array | null)[] = par.map((p, k) => {
+    const s = statOf(p);
+    return p ? resample(s ? statShape(s, k) : roughShape(p.px, p.cl / cell, p.seed), px) : null;
+  });
   const rmsOf = (k: number) => (par[k] ? (par[k]!.kind === 'rms' ? par[k]!.size : par[k]!.size / (statsOf(shape[k]!).pp || 1)) : 0);
+  const corrOf = (k: number) => {
+    const r = par[k]?.corr;
+    return r !== undefined && Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : undefined;
+  };
+  for (let k = 1; k < nI; k++) {
+    const rho = corrOf(k);
+    if (rho === undefined || !par[k] || !par[k - 1]) continue;
+    // a partly replicated shape, back to zero mean and unit RMS
+    const a = shape[k - 1]!;
+    const b = shape[k]!;
+    const s = Float64Array.from(a, (v, x) => rho * v + Math.sqrt(1 - rho * rho) * b[x]);
+    const m = s.reduce((p, v) => p + v, 0) / s.length;
+    const rr = Math.sqrt(s.reduce((p, v) => p + (v - m) ** 2, 0) / s.length) || 1;
+    shape[k] = s.map((v) => (v - m) / rr);
+  }
   for (let k = 1; k < nI; k++)
-    if (par[k] && par[k - 1] && d[k] <= rmsOf(k - 1) + rmsOf(k)) {
+    if (par[k] && par[k - 1] && corrOf(k) === undefined && d[k] <= rmsOf(k - 1) + rmsOf(k)) {
       shape[k] = shape[k - 1];
       notes.push({ layer: k, text: `${d[k].toFixed(1)} nm, thinner than the RMS heights of its two interfaces: its second interface follows the first (conformal film)` });
     }
@@ -244,14 +336,14 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
     if (gi >= 0) {
       if (done.has(gi)) continue;
       done.add(gi);
-      items.push(...sliceGroup(groups[gi], S, par, px, gi));
+      items.push(...sliceGroup(groups[gi], S, par, px, gi, rmsOf));
       continue;
     }
     // the layer containing depth m (outside the finite layers: nothing, the media are semi-infinite)
     for (let j = 1; j < n - 1; j++) if (m > z[j - 1] && m < z[j]) push(j, b - a);
   }
   // zones reaching above the first finite layer or below the last one
-  for (let gi = 0; gi < groups.length; gi++) if (!done.has(gi)) items.push(...sliceGroup(groups[gi], S, par, px, gi));
+  for (let gi = 0; gi < groups.length; gi++) if (!done.has(gi)) items.push(...sliceGroup(groups[gi], S, par, px, gi, rmsOf));
   items.push({ kind: 'layer', i: n - 1, d: 0 });
   return { items, cell, notes, zones: groups.map((g) => ({ ...g, S: S.slice(g.k0, g.k1 + 1), px })) };
 }
@@ -260,8 +352,11 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
 const resample = (h: Float64Array, n: number) => (h.length === n ? h : Float64Array.from({ length: n }, (_, i) => h[Math.floor((i * h.length) / n)]));
 
 type Group = { k0: number; k1: number; z0: number; z1: number };
-function sliceGroup(g: Group, S: Float64Array[], par: (RoughParams | null)[], px: number, zone: number): PlanItem[] {
+function sliceGroup(g: Group, S: Float64Array[], par: (RoughParams | null)[], px: number, zone: number, rmsOf: (k: number) => number): PlanItem[] {
   const members = par.slice(g.k0, g.k1 + 1).filter((p): p is RoughParams => !!p);
+  // the features of the zone (its first rough interface): height σ over half-width cl
+  const k0 = par.findIndex((p, k) => k >= g.k0 && k <= g.k1 && !!p);
+  const shape = k0 >= 0 ? { q: rmsOf(k0) / Math.max(1e-9, par[k0]!.cl), surf: par[k0]!.surf ?? ('1d' as const) } : undefined;
   const N = Math.max(1, members.reduce((s, p) => s + Math.max(1, Math.round(p.slices)), 0));
   const ema = members[0]?.ema ?? 'bruggeman';
   const h = (g.z1 - g.z0) / N;
@@ -286,7 +381,7 @@ function sliceGroup(g: Group, S: Float64Array[], par: (RoughParams | null)[], px
     const mats = [...count.keys()].sort((a, b) => a - b);
     const frac = mats.map((m) => count.get(m)! / px);
     const owner = mats[frac.indexOf(Math.max(...frac))];
-    out.push({ kind: 'slice', d: h, owner, mats, frac, segs, ema, zone });
+    out.push({ kind: 'slice', d: h, owner, mats, frac, segs, ema, zone, ...(ema === 'shape' && shape ? { shape } : {}) });
   }
   return out;
 }
@@ -349,9 +444,14 @@ export function roughFff(z: RoughZone, cell: number, n: (k: number) => C): FffPr
 // ---- effective medium of a slice ----
 
 // ε of a mixture: fractions f of the permittivities e (Bruggeman: the root with Im ε ≥ 0 by Newton from the Looyenga
-// value; Maxwell-Garnett: the material with the largest fraction as host).
+// value; Maxwell-Garnett: the material with the largest fraction as host; linear: n = Σ f n).
 export function emaMix(method: EmaMethod, e: C[], f: number[]): C {
   if (e.length === 1) return e[0];
+  if (method === 'linear') {
+    let n = c(0);
+    e.forEach((ei, i) => (n = X.add(n, X.mul(c(f[i]), X.sqrt(ei)))));
+    return X.mul(n, n);
+  }
   const loo = () => {
     let s = c(0);
     e.forEach((ei, i) => (s = X.add(s, X.mul(c(f[i]), cbrt(ei)))));
@@ -392,6 +492,87 @@ const cbrt = (z: C): C => {
   return c(r * Math.cos(a), r * Math.sin(a));
 };
 
-// The index of a slice from the indices of its materials.
-export const sliceIndex = (it: Extract<PlanItem, { kind: 'slice' }>, n: (m: number) => C): C =>
-  X.sqrt(emaMix(it.ema, it.mats.map((m) => X.mul(n(m), n(m))), it.frac));
+// The index of a slice from the indices of its materials (an anisotropic slice on a scalar path: the mean of its
+// principal values, ε_xx + 2 ε_zz over 3 — Compute TMM takes the tensor through Berreman).
+export function sliceIndex(it: Extract<PlanItem, { kind: 'slice' }>, n: (m: number) => C): C {
+  if (tensorEma(it.ema)) {
+    const t = sliceTensor(it, n);
+    return X.sqrt(X.div(X.add(t[0], X.mul(c(2), t[8])), c(3)));
+  }
+  return X.sqrt(emaMix(it.ema as EmaMethod, it.mats.map((m) => X.mul(n(m), n(m))), it.frac));
+}
+
+// The depolarization factors (x, y, z) of the features: ridges of a 1D profile (elliptic cylinders along y) or bumps of a
+// 2D surface (spheroids), height over half-width q.
+export function shapeFactors(q: number, surf: '1d' | '2d'): [number, number, number] {
+  if (surf === '1d') return [q / (1 + q), 0, 1 / (1 + q)];
+  let Lz = 1 / 3;
+  if (Math.abs(q - 1) > 1e-6) {
+    if (q < 1) {
+      // oblate (flat bumps): along the short axis z
+      const e = Math.sqrt(1 - q * q);
+      Lz = (1 / (e * e)) * (1 - (Math.sqrt(1 - e * e) / e) * Math.asin(e));
+    } else {
+      // prolate (needles): along the long axis z
+      const e = Math.sqrt(1 - 1 / (q * q));
+      Lz = ((1 - e * e) / (e * e)) * ((1 / (2 * e)) * Math.log((1 + e) / (1 - e)) - 1);
+    }
+  }
+  return [(1 - Lz) / 2, (1 - Lz) / 2, Lz];
+}
+
+// Bruggeman with a depolarization factor L: Σ f (ε_i − ε)/(ε + L (ε_i − ε)) = 0.
+export function brugL(e: C[], f: number[], L: number): C {
+  let x = c(0);
+  e.forEach((ei, i) => (x = X.add(x, X.mul(c(f[i]), ei))));
+  if (L < 1e-12) return x;
+  if (e.length === 2) {
+    // (1 − L) x² − b x − L A B = 0, b = (1 − L)(f₁A + f₂B) − L (f₁B + f₂A); the root with Im ≥ 0
+    const [A, B] = e;
+    const [f1, f2] = f;
+    const b = X.sub(X.mul(c(1 - L), X.add(X.mul(c(f1), A), X.mul(c(f2), B))), X.mul(c(L), X.add(X.mul(c(f1), B), X.mul(c(f2), A))));
+    if (1 - L < 1e-12) return X.div(X.mul(A, B), X.add(X.mul(c(f1), B), X.mul(c(f2), A)));
+    const disc = X.sqrt(X.add(X.mul(b, b), X.mul(c(4 * (1 - L) * L), X.mul(A, B))));
+    const r1 = X.div(X.add(b, disc), c(2 * (1 - L)));
+    const r2 = X.div(X.sub(b, disc), c(2 * (1 - L)));
+    return r1.im >= r2.im ? r1 : r2;
+  }
+  // three or more materials: continuation in L from the arithmetic mean (L = 0, exact), Newton at every step
+  const steps = Math.max(1, Math.ceil(L / 0.02));
+  for (let s = 1; s <= steps; s++) {
+    const l = (L * s) / steps;
+    for (let it = 0; it < 50; it++) {
+      let F = c(0);
+      let dF = c(0);
+      e.forEach((ei, i) => {
+        const den = X.add(x, X.mul(c(l), X.sub(ei, x)));
+        F = X.add(F, X.mul(c(f[i]), X.div(X.sub(ei, x), den)));
+        dF = X.sub(dF, X.mul(c(f[i]), X.div(ei, X.mul(den, den))));
+      });
+      const st = X.div(F, dF);
+      x = X.sub(x, st);
+      if (Math.hypot(st.re, st.im) < 1e-14 * Math.hypot(x.re, x.im)) break;
+    }
+  }
+  return x.im < 0 ? X.conj(x) : x;
+}
+
+// The tensor of an anisotropic slice (row-major 3×3).
+export function sliceTensor(it: Extract<PlanItem, { kind: 'slice' }>, n: (m: number) => C): C[] {
+  let inv = c(0);
+  let avg = c(0);
+  it.mats.forEach((m, i) => {
+    const e = X.mul(n(m), n(m));
+    inv = X.add(inv, X.div(c(it.frac[i]), e));
+    avg = X.add(avg, X.mul(c(it.frac[i]), e));
+  });
+  const z = c(0);
+  const harm = X.div(c(1), inv);
+  if (it.ema === 'shape') {
+    const e = it.mats.map((m) => X.mul(n(m), n(m)));
+    const [lx, ly, lz] = shapeFactors(it.shape?.q ?? 1, it.shape?.surf ?? '1d');
+    return [brugL(e, it.frac, lx), z, z, z, brugL(e, it.frac, ly), z, z, z, brugL(e, it.frac, lz)];
+  }
+  // 'wiener': horizontal laminae (a gentle surface: the interfaces nearly flat): ε_xx = ε_yy = Σ f ε, ε_zz = (Σ f/ε)⁻¹
+  return it.ema === 'wiener' ? [avg, z, z, z, avg, z, z, z, harm] : [harm, z, z, z, avg, z, z, z, avg];
+}

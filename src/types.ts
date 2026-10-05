@@ -406,7 +406,10 @@ export type RoughData = {
   px: number;
   seed: number;
   slices: number;
-  ema: 'bruggeman' | 'maxwell-garnett' | 'looyenga';
+  ema: 'bruggeman' | 'maxwell-garnett' | 'looyenga' | 'linear' | 'aniso' | 'wiener' | 'shape';
+  tmm?: 'profile' | 'ensemble' | 'ramp'; // Compute TMM: the profile of the seed (absent), a Gaussian or a uniform height distribution
+  corr?: number; // correlation with the rough interface before (0 … 1); absent / NaN: automatic (thin films conformal)
+  surf?: '1d' | '2d'; // medium 'shape': ridges of a 1D profile (absent) or bumps of a 2D surface
 };
 export type RoughNode = Node<RoughData, 'rough'>;
 

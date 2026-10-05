@@ -53,7 +53,7 @@ import { convergenceOrders, convergencePoints, rcwaConvergence, rcwaLayersAt, ru
 import { convDeviation } from '../src/engine/rcwaConvRun.ts';
 import { rcwaThickConical, rcwaThickPoint } from '../src/physics/rcwaThick.ts';
 import { KINETICS_DEFAULTS, RCWA_DEFAULTS, ROUGH_DEFAULTS, SENSORGRAM_DEFAULTS } from '../src/defaults.ts';
-import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type Plan, type RoughSpec } from '../src/engine/rough.ts';
+import { brugL, corrLength, emaMix, normInv, roughPlan, roughShape, scaledProfile, shapeFactors, statsOf, type Plan, type RoughSpec } from '../src/engine/rough.ts';
 import { fieldResults } from '../src/engine/rcwaFieldRun.ts';
 import type { CustomInfo, DrawGratingInfo, FieldInfo, RcwaFieldInfo } from '../src/engine/evaluate.ts';
 
@@ -4036,7 +4036,7 @@ await import('./check-notes.ts');
   const p = sprExample();
   const nodes = [
     ...p.nodes,
-    { id: 'rough', type: 'rough', position: { x: 0, y: 0 }, data: { ...ROUGH_DEFAULTS, side: 'bottom', size: 3 } },
+    { id: 'rough', type: 'rough', position: { x: 0, y: 0 }, data: { ...ROUGH_DEFAULTS, side: 'bottom', size: 3, tmm: 'profile', ema: 'bruggeman' } },
     { id: 'seeds', type: 'sweep', position: { x: 0, y: 0 }, data: { name: 'seed', kind: 'number', mode: 'list', min: 1, max: 3, step: 1, list: '1, 2, 3' } },
     { id: 'avg', type: 'extract', position: { x: 0, y: 0 }, data: { name: '', fields: ['R'], fixed: {}, mean: ['sweep:seeds'] } },
   ] as AppNode[];
@@ -4063,8 +4063,87 @@ await import('./check-notes.ts');
   });
   const iMin = argmin([...avg.fields.R]);
   if (eAvg > 1e-14 || eStd > 1e-14 || avg.axes.some((a) => a.id === 'sweep:seeds')) throw new Error(`Roughness graph mean over seeds: ${eAvg}, std ${eStd}`);
+  // (7) TMM by the statistics: 'ensemble' = the Gaussian fractions Φ(z/σ) at the slice centres, the same for every seed;
+  // 'ramp' + linear in n = n interpolated linearly over 2√3 σ; RCWA keeps the profile of the seed
+  const sig = 3;
+  const ens = (o: Partial<RoughSpec>) => roughPlan(sp([R({ size: sig, tmm: 'ensemble', ...o })]).layers, [], [], undefined, true)!;
+  const pE = ens({});
+  const Phi = (x: number) => {
+    // the normal distribution function through its inverse (bisection): the same quantile function as the plan
+    let [lo, hi] = [0, 1];
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (normInv(mid) < x) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  let zc = 50 - sig * normInv(1 - 0.5 / 4096) * (1 + 1e-12);
+  let ePhi = 0;
+  for (const it of pE.items) {
+    if (it.kind !== 'slice') continue;
+    const fW = it.frac[it.mats.indexOf(2)] ?? 0;
+    ePhi = Math.max(ePhi, Math.abs(fW - Phi((zc + it.d / 2 - 50) / sig)));
+    zc += it.d;
+  }
+  const sameSeed = JSON.stringify(layersAt(sp([R({ size: sig, tmm: 'ensemble', seed: 1 })]), [], 633)) === JSON.stringify(layersAt(sp([R({ size: sig, tmm: 'ensemble', seed: 7, cl: 60 })]), [], 633));
+  const rcwaKeeps = JSON.stringify(roughPlan(sp([R({ size: sig, tmm: 'ensemble' })]).layers, [], [], undefined, false)) === JSON.stringify(roughPlan(sp([R({ size: sig })]).layers, [], []));
+  const ramp = layersAt(sp([R({ size: sig, tmm: 'ramp', ema: 'linear' })]), [], 633);
+  const [nAg, nW] = [n('Ag'), n('Water')];
+  let z = 50 - Math.sqrt(3) * sig;
+  let eRamp = 0;
+  for (const q of ramp.slice(2, -1)) {
+    const f = (z + q.d / 2 - (50 - Math.sqrt(3) * sig)) / (2 * Math.sqrt(3) * sig);
+    eRamp = Math.max(eRamp, Math.hypot(q.n.re - ((1 - f) * nAg.re + f * nW.re), q.n.im - ((1 - f) * nAg.im + f * nW.im)));
+    z += q.d;
+  }
+  // (8) RCWA pixels, cell ≪ λ, TM: each slice acts as the anisotropic medium ε_xx = (Σ f/ε)⁻¹, ε_zz = Σ f ε (Berreman);
+  // a rough Si film (high contrast) under air, a 5 nm cell: RCWA tends to it as the cell shrinks (20 nm: |ΔR| 0.011),
+  // Bruggeman stays off (0.033). (A metal's TM staircase does not converge in N here: no reference.)
+  const siSpec = (ema: RoughSpec['ema'], extra: Partial<TmmSpec> = {}): TmmSpec => ({ models, instances: inst(), layers: [rl('Air'), rl('Si', 80, [R({ size: 3, cell: 5, px: 200, cl: 0.25, ema })]), rl('BK7')], lambda: [633], theta: [20, 45, 60, 70], pol: 'p', sweeps: [], ...extra });
+  const frp = runRcwa(siSpec('bruggeman', { rcwa: { orders: 25, show: 0 } })).R;
+  const fb = runSpec(siSpec('aniso', { b4: { phi: 0 } })).R as Float64Array;
+  const brugTM = runTmm(siSpec('bruggeman')).R;
+  const eTM = Math.max(...[0, 1, 2, 3].map((i) => Math.abs(frp[i] - fb[i])));
+  const eBrug = Math.max(...[0, 1, 2, 3].map((i) => Math.abs(frp[i] - brugTM[i])));
+  // (9) a film replicating the interface before it: the correlation of the two surfaces = ρ (Cr 20 nm, two zones)
+  const corrPlan = (rho: number) => roughPlan([rl('BK7'), rl('Cr', 20, [R({ side: 'top', size: 1.5 })]), rl('Au', 45, [R({ side: 'top', size: 1.5, seed: 2, corr: rho })]), rl('Water')], [], [])!;
+  const ccOf = (p: Plan) => {
+    const [a, b] = [p.zones[0].S[0], p.zones[1].S[0]];
+    const ma = a.reduce((s, v) => s + v, 0) / a.length;
+    const mb = b.reduce((s, v) => s + v, 0) / b.length;
+    let [sab, saa, sbb] = [0, 0, 0];
+    a.forEach((v, i) => ((sab += (v - ma) * (b[i] - mb)), (saa += (v - ma) ** 2), (sbb += (b[i] - mb) ** 2)));
+    return sab / Math.sqrt(saa * sbb);
+  };
+  const cc = [0, 0.5, 1].map((rho) => ccOf(corrPlan(rho)));
+  const okCorr = Math.abs(cc[0]) < 0.15 && Math.abs(cc[1] - 0.5) < 0.15 && cc[2] > 0.999999;
+  // (10) the shape medium: L = 0 / 1 = the Wiener means, 1/3 = Bruggeman; depolarization factors (sum 1, limits); its
+  // tensor tends to the horizontal (q → 0) and vertical (q → ∞) Wiener bounds
+  const eA = n('Au'), eWt = n('Water');
+  const es = [cmulC(eA, eA), cmulC(eWt, eWt)];
+  const fs = [0.37, 0.63];
+  const ar = cadd(cmulC(c(fs[0]), es[0]), cmulC(c(fs[1]), es[1]));
+  const hm = cdiv(c(1), cadd(cdiv(c(fs[0]), es[0]), cdiv(c(fs[1]), es[1])));
+  const dz = (a: { re: number; im: number }, b: { re: number; im: number }) => Math.hypot(a.re - b.re, a.im - b.im) / Math.hypot(b.re, b.im);
+  const eL = Math.max(dz(brugL(es, fs, 0), ar), dz(brugL(es, fs, 1), hm), dz(brugL(es, fs, 1 / 3), emaMix('bruggeman', es, fs)), dz(brugL([...es, es[0]], [0.2, 0.63, 0.17], 1 / 3), emaMix('bruggeman', es, fs)));
+  const f1 = shapeFactors(0.2, '1d'), f2 = shapeFactors(0.2, '2d'), f3 = shapeFactors(5, '2d'), f4 = shapeFactors(1, '2d');
+  const okL = Math.abs(f1[0] + f1[2] - 1) < 1e-15 && f1[1] === 0 && Math.abs(f2[0] + f2[1] + f2[2] - 1) < 1e-14 && f2[2] > 0.7 && f3[2] < 0.1 && Math.abs(f4[2] - 1 / 3) < 1e-12 && shapeFactors(1e-6, '2d')[2] > 0.9999 && shapeFactors(1e6, '1d')[0] > 0.9999;
+  // (11) against RCWA of the smooth profile (scripts/bench-rough.ts, FFF N 40, 3 seeds): rough gold RMS 3 / cl 15 → dip
+  // 74.16°, RMS 1 / cl 15 → 72.33°; TiO₂ 120 nm RMS 3 → R(450 nm) 0.1392; the 1D shape medium, nothing fitted
+  const shapeDip = (size: number, cl: number) => {
+    const ths = rangeValues(70, 77, 0.01) as number[];
+    const Rs = runSpec({ models, instances: inst(), layers: [rl('BK7'), rl('Au', 50, [R({ size, cl, cell: 300, slices: 20, tmm: 'ensemble', ema: 'shape' })]), rl('Water')], lambda: [633], theta: ths, pol: 'p', sweeps: [], b4: { phi: 0 } }).R as Float64Array;
+    return ths[argmin(Rs)];
+  };
+  const dAu3 = shapeDip(3, 15) - 74.16;
+  const dAu1 = shapeDip(1, 15) - 72.33;
+  const rTi = (runSpec({ models, instances: inst(), layers: [rl('Air'), rl('TiO2', 120, [R({ side: 'top', size: 3, cl: 20, cell: 300, slices: 20, tmm: 'ensemble', ema: 'shape' })]), rl('BK7')], lambda: [450], theta: [0], pol: 'p', sweeps: [], b4: { phi: 0 } }).R as Float64Array)[0] - 0.1392;
+  const okBench = Math.abs(dAu3) < 0.25 && Math.abs(dAu1) < 0.1 && Math.abs(rTi) < 1e-3;
+  if (!(ePhi < 5e-4 && sameSeed && rcwaKeeps && eRamp < 2e-3 && eTM < 5e-3 && eTM < eBrug / 5 && okCorr && eL < 1e-10 && okL && okBench))
+    throw new Error(`rough statistics: Φ ${ePhi}, seeds ${sameSeed}, RCWA profile ${rcwaKeeps}, ramp ${eRamp}, TM anisotropic ${eTM} (Bruggeman ${eBrug}), correlation ${cc}, shape medium ${eL} ${okL}, vs RCWA Au ${dAu3} / ${dAu1}, TiO₂ ${rTi}`);
   console.log(
-    `roughness: RMS / pp exact, mean cl over 20 seeds ${clMean.toFixed(2)} (20); RMS 0 = flat; Ag thickness kept ${agD.toFixed(3)} nm; RCWA pixels, TE quasi-static = Σfε slices (${eQs.toExponential(1)}); Cr 2 nm conformal (one zone), 20 nm two zones; graph: seeds 1–3 averaged = runs (${eAvg.toExponential(1)}), SPR dip ${th[iMin].toFixed(2)}° R ${avg.fields.R[iMin].toFixed(4)} ± ${avg.fields['R:std'][iMin].toFixed(4)}`,
+    `roughness: RMS / pp exact, mean cl over 20 seeds ${clMean.toFixed(2)} (20); RMS 0 = flat; Ag thickness kept ${agD.toFixed(3)} nm; RCWA pixels, TE quasi-static = Σfε slices (${eQs.toExponential(1)}); Cr 2 nm conformal (one zone), 20 nm two zones; graph: seeds 1–3 averaged = runs (${eAvg.toExponential(1)}), SPR dip ${th[iMin].toFixed(2)}° R ${avg.fields.R[iMin].toFixed(4)} ± ${avg.fields['R:std'][iMin].toFixed(4)}; ensemble = Φ(z/σ) (${ePhi.toExponential(1)}), no seed; ramp + linear n (${eRamp.toExponential(1)}); RCWA pixels TM quasi-static = anisotropic slices (${eTM.toExponential(1)}; Bruggeman ${eBrug.toExponential(1)}); replicated faces ρ 0 / 0.5 / 1 → ${cc.map((v) => v.toFixed(2)).join(' / ')}; shape medium: L 0 / 1 / ⅓ = Wiener / Bruggeman (${eL.toExponential(1)}), vs RCWA (smooth profile): Au dip ${dAu3 >= 0 ? '+' : ''}${dAu3.toFixed(2)}° (RMS 3) / ${dAu1 >= 0 ? '+' : ''}${dAu1.toFixed(2)}° (RMS 1), TiO₂ R ${rTi >= 0 ? '+' : ''}${rTi.toExponential(1)}`,
   );
 }
 

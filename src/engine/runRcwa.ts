@@ -11,7 +11,7 @@ import type { Polarization } from '../physics/tmm.ts';
 import { FFF_PROFILES, gratingFff, gratingOutline, gratingSlices, type GratingParams } from './grating.ts';
 import type { Bound, FieldMeta, LayerSpec, TmmSpec } from './types.ts';
 import { TMM_META } from './dataset.ts';
-import { roughFff, roughPlan, sliceIndex } from './rough.ts';
+import { roughFff, roughPlan, sliceIndex, sliceTensor, tensorEma } from './rough.ts';
 
 const at = <T,>(b: Bound<T>, dims: number[], idx: number[]) => {
   let k = 0;
@@ -163,7 +163,7 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
   // rough interfaces: slices of pixels (RCWA, a cell of the grating period if there is one) or of an effective medium
   // (Berreman), between the flat parts of the layers
   const gp = list.map((L, i) => (i > 0 && i < list.length - 1 ? gratingAt(L, dims, idx) : null)).find((g) => g)?.period;
-  const plan = roughPlan(list, dims, idx, gp);
+  const plan = roughPlan(list, dims, idx, gp, !spec.rcwa);
   if (!plan) list.forEach((L, i) => emit(L, i));
   else {
     const special = (i: number) => (i > 0 && i < list.length - 1 && !!list[i].grating) || !!spec.instances[keys[i]].aniso;
@@ -194,7 +194,7 @@ export function rcwaLayersAt(spec: TmmSpec, idx: number[], lam: number, list: La
         pixels = true;
         const ns = new Map(it.mats.map((m) => [m, nOf(m)]));
         out.push({ d: it.d, segs: it.segs.map((q) => ({ from: q.from, to: q.to, n: ns.get(q.m)! })) });
-      } else out.push({ n: sliceIndex(it, nOf), d: it.d });
+      } else out.push(tensorEma(it.ema) ? { eps: sliceTensor(it, nOf), d: it.d } : { n: sliceIndex(it, nOf), d: it.d });
       owner.push(it.owner);
     }
     if (pixels && Number.isNaN(period)) period = plan.cell;
