@@ -15,7 +15,7 @@ import type { C } from './complex.ts';
 import * as X from './complex.ts';
 import { add, cmat, diagMulLeft, diagMulRight, eig, eye, inv, mul, mulVec, scale, type CMat } from './cmat.ts';
 import { fourier, ordersOf, RCWA_FAST, segEps, star, toeplitz, type Factorization, type RcwaLayer, type SMat } from './rcwa.ts';
-import { blockApply, blockLayerS, blockRegionS, starBB, toDense, type B2, type BlockS } from './rcwaBlocks.ts';
+import { blockApply, blocksOf, S4_ID, scalarLayerS, scalarRegionS, starBB, starS, toDense, type B2, type BlockS, type S4 } from './rcwaBlocks.ts';
 import { anisoExitFlux, anisoLayerBlock, anisoRegionBlock, rotateZ } from './berreman.ts';
 import { nCos, type Polarization } from './tmm.ts';
 
@@ -235,14 +235,33 @@ function conicalStack(layers: RcwaLayer[], kx: Float64Array, ky: number, k0: num
       const D = 1 + k * k + ky * ky;
       return [X.c((k * ky) / D), X.c((1 + ky * ky) / D), X.c(-(1 + k * k) / D), X.c((-k * ky) / D)];
     });
-    const uniform = (n: C) => {
+    // per order: k̂t (any direction at kt = 0), and the gap V₀⁻¹ in the basis (k̂t, ŝ): p = k̂tᵀ V₀⁻¹ ŝ, r = ŝᵀ V₀⁻¹ k̂t
+    const kt = Array.from(kx, (k) => Math.hypot(k, ky));
+    const ux = kx.map((k, m) => (kt[m] > 1e-12 ? k / kt[m] : 1));
+    const uy = Array.from(kx, (_, m) => (kt[m] > 1e-12 ? ky / kt[m] : 0));
+    const pg = V0b.map((v, m) => X.add(X.add(X.mul(v[0], X.c(-ux[m] * uy[m])), X.mul(v[1], X.c(ux[m] * ux[m]))), X.add(X.mul(v[2], X.c(-uy[m] * uy[m])), X.mul(v[3], X.c(uy[m] * ux[m])))));
+    const rg = V0b.map((v, m) => X.add(X.add(X.mul(v[0], X.c(-uy[m] * ux[m])), X.mul(v[1], X.c(-uy[m] * uy[m]))), X.add(X.mul(v[2], X.c(ux[m] * ux[m])), X.mul(v[3], X.c(ux[m] * uy[m])))));
+    // q of TM and TE in an isotropic medium of index n (and its kz per order)
+    const isoQ = (n: C) => {
       const eps = X.mul(n, n);
-      const kz = Array.from(kx, (k) => nCos(n, X.c(Math.hypot(k, ky))));
-      const V: B2[] = Array.from(kx, (k, m) => {
-        const w = X.div(X.c(1), safe(kz[m]));
-        return [X.mul(X.c(-ky * k), w), X.mul(X.sub(X.c(k * k), eps), w), X.mul(X.sub(eps, X.c(ky * ky)), w), X.mul(X.c(ky * k), w)];
+      const kz = kt.map((k) => nCos(n, X.c(k)));
+      return { kz, tm: kz.map((q, m) => X.div(X.mul(pg[m], eps), safe(q))), te: kz.map((q, m) => X.mul(X.mul(rg[m], X.c(-1)), q)) };
+    };
+    // the isotropic run being combined: two scalar chains per order (TM, TE)
+    let run: { tm: S4; te: S4 }[] | null = null;
+    const flush = () => {
+      if (!run) return;
+      const r = run;
+      run = null;
+      const blocks = r.map((c, m) => blocksOf(c.tm, c.te, ux[m], uy[m]));
+      push({ S11: blocks.map((b) => b.S11[0]), S12: blocks.map((b) => b.S12[0]), S21: blocks.map((b) => b.S21[0]), S22: blocks.map((b) => b.S22[0]) });
+    };
+    const addIso = (f: (m: number) => { tm: S4; te: S4 }) => {
+      const cur: { tm: S4; te: S4 }[] = run ?? Array.from(kx, () => ({ tm: S4_ID, te: S4_ID }));
+      run = cur.map((c, m) => {
+        const s = f(m);
+        return { tm: starS(c.tm, s.tm), te: starS(c.te, s.te) };
       });
-      return { V, kz };
     };
     // the sequence: blocks (uniform) combined order by order, dense matrices for the gratings
     const seq: (BlockS | SMat)[] = [];
@@ -251,17 +270,24 @@ function conicalStack(layers: RcwaLayer[], kx: Float64Array, ky: number, k0: num
       if (last && Array.isArray((last as BlockS).S11) && Array.isArray((x as BlockS).S11)) seq[seq.length - 1] = starBB(last as BlockS, x as BlockS);
       else seq.push(x);
     };
-    const anisoMemo = new Map<string, BlockS>();
-    push(blockRegionS(uniform(n0).V, V0b, 'ref'));
+    // anisotropic layers already solved at this point (a periodic stack repeats a few tensors): compared by value
+    const anisoMemo: { eps: C[]; d: number; twist: number; blk: BlockS }[] = [];
+    const sameT = (a: C[], b: C[]) => a === b || a.every((v, i) => v.re === b[i].re && v.im === b[i].im);
+    {
+      const q = isoQ(n0);
+      addIso((m) => ({ tm: scalarRegionS(q.tm[m], 'ref'), te: scalarRegionS(q.te[m], 'ref') }));
+    }
     layers.slice(1, -1).forEach((L, j) => {
-      if (isGrating(L, j + 1)) push(layerS(gratingModes(L, kx, ky, fact), k0 * L.d, V0i).S);
-      else if (L.eps) {
+      if (isGrating(L, j + 1)) {
+        flush();
+        push(layerS(gratingModes(L, kx, ky, fact), k0 * L.d, V0i).S);
+      } else if (L.eps) {
+        flush();
         // anisotropic: Berreman 4×4 per order; a repeated layer (a periodic stack) is solved once
         const layer = (eps: C[], d: number, twist = 0) => {
-          const key = `${eps.map((v) => `${v.re},${v.im}`).join(';')}|${d}|${twist}`;
-          let blk = anisoMemo.get(key);
-          if (!blk) anisoMemo.set(key, (blk = anisoLayerBlock(eps, kx, ky, k0 * d, V0b, (twist * Math.PI) / 180)));
-          push(blk);
+          let hit = anisoMemo.find((e) => e.d === d && e.twist === twist && sameT(e.eps, eps));
+          if (!hit) anisoMemo.push((hit = { eps, d, twist, blk: anisoLayerBlock(eps, kx, ky, k0 * d, V0b, (twist * Math.PI) / 180) }));
+          push(hit.blk);
         };
         const h = L.helix;
         // a helix: exact at normal incidence, sublayers (the tensor at the middle of each) otherwise
@@ -270,13 +296,21 @@ function conicalStack(layers: RcwaLayer[], kx: Float64Array, ky: number, k0: num
         else for (let j = 0; j < h.slices; j++) layer(rotateZ(L.eps, (h.twist * (j + 0.5)) / h.slices), L.d / h.slices);
       }
       else {
-        const u = uniform(L.n!);
-        push(blockLayerS(u.V, V0b, u.kz.map((q) => X.exp(X.mul(X.c(0, 1), X.mul(q, X.c(k0 * L.d)))))));
+        const q = isoQ(L.n!);
+        const Xp = q.kz.map((z) => X.exp(X.mul(X.c(0, 1), X.mul(z, X.c(k0 * L.d)))));
+        addIso((m) => ({ tm: scalarLayerS(q.tm[m], Xp[m]), te: scalarLayerS(q.te[m], Xp[m]) }));
       }
     });
     // the exit medium: uniform, or anisotropic (a semi-infinite Berreman medium: its own outgoing / incoming modes)
     const exit = layers[layers.length - 1];
-    push(exit.eps ? anisoRegionBlock(exit.eps, kx, ky, V0b) : blockRegionS(uniform(exit.n!).V, V0b, 'trn'));
+    if (exit.eps) {
+      flush();
+      push(anisoRegionBlock(exit.eps, kx, ky, V0b));
+    } else {
+      const q = isoQ(exit.n!);
+      addIso((m) => ({ tm: scalarRegionS(q.tm[m], 'trn'), te: scalarRegionS(q.te[m], 'trn') }));
+      flush();
+    }
     const asDense = (x: BlockS | SMat): SMat => (Array.isArray((x as BlockS).S11) ? toDense(x as BlockS) : (x as SMat));
     if (seq.length === 1) {
       const b = seq[0] as BlockS;

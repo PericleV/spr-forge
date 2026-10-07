@@ -59,7 +59,7 @@ import { formulaStat, metricCost, statOf, zonesCost, type Outside, type Zone, ty
 import { bandTerms, effectiveSlice, odOf, pMerit, sliceCurves, sliceInfo, sliceLines, sliceValues, termText, type MeritPoint, type Slice, type SliceInfo, type SpecTerm, type TargetSpec } from './spec.ts';
 import { interp, parseSpectrum } from './match.ts';
 import { FFF_PROFILES, gratingSlices, smallestFeature, type GratingParams } from './grating.ts';
-import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, tensorEma, type PlanItem } from './rough.ts';
+import { corrLength, roughPlan, roughShape, scaledProfile, statsOf, type PlanItem } from './rough.ts';
 import { fieldResults, type FieldJob } from './rcwaFieldRun.ts';
 import { MAX_ORDERS, rcwaLayerList, rcwaLayersAt, rcwaRegionsAt } from './runRcwa.ts';
 import type { FieldMap, FieldQuantity } from '../physics/rcwaField.ts';
@@ -1066,10 +1066,12 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
       if (![cd.polMix.psi, cd.polMix.delta].every(Number.isFinite)) errors.push('Polarization: enter ψ and δ.');
       jonesT = { psi: cd.polMix.psi, delta: cd.polMix.delta };
     }
-    if (!anisoUsed && (ph || phi0 !== 0)) warnings.add('The azimuth φ has no effect on isotropic films (it matters with anisotropic layers).');
-    // an anisotropic effective medium of a rough zone: a tensor, through Berreman
-    const roughAniso = [...layers, ...(back?.layers ?? [])].some((L) => L.rough?.some((r) => tensorEma(r.ema)));
-    info.berreman = anisoUsed || !!jonesT || roughAniso;
+    // an anisotropic effective medium of a rough zone: a diagonal tensor, exact in TMM (TE ε_yy, TM ε_xx / ε_zz) when
+    // the plane of incidence is xz; a 1D profile (ε_xx ≠ ε_yy) turned by an azimuth φ ≠ 0 needs Berreman
+    const rough1D = [...layers, ...(back?.layers ?? [])].some((L) => L.rough?.some((r) => r.ema === 'aniso' || (r.ema === 'shape' && (r.surf ?? '1d') === '1d')));
+    const roughTurned = rough1D && (!!ph || phi0 !== 0);
+    if (!anisoUsed && !roughTurned && (ph || phi0 !== 0)) warnings.add('The azimuth φ has no effect on isotropic films (it matters with anisotropic layers).');
+    info.berreman = anisoUsed || !!jonesT || roughTurned;
     if (cd.cone) {
       const h = cd.coneHalf ?? 5;
       if (!(h > 0 && h < 60)) errors.push('Cone: the half-angle must be in (0, 60)°.');
@@ -2174,12 +2176,14 @@ function evalField(ctx: Ctx, node: FieldNode): NodeResult {
   // stack layer each comes from)
   const b4 = spec.b4;
   const solverAt = (lamV: number) => {
-    if (!b4) {
-      const { layers: L, owner } = layersOwned(spec, sweepIdx, lamV);
+    const owned = b4 ? null : layersOwned(spec, sweepIdx, lamV);
+    // (tensor slices of a rough zone: the field through Berreman, the profile of TMM knows scalar layers only)
+    if (owned && !owned.layers.some((q) => q.eps)) {
+      const { layers: L, owner } = owned;
       return { d: L.map((q) => q.d), owner, prof: (lx: number, tx: number, zs: ArrayLike<number>, lay: ArrayLike<number>) => fieldProfile(L, lx, tx, pol, zs, lay) };
     }
     const st = rcwaLayersAt(spec, sweepIdx, lamV);
-    const [phi, inc] = [phiAt(spec, sweepIdx), b4.jones ?? pol];
+    const [phi, inc] = [phiAt(spec, sweepIdx), b4?.jones ?? pol];
     return { d: st.layers.map((q) => q.d), owner: st.owner, prof: (lx: number, tx: number, zs: ArrayLike<number>, lay: ArrayLike<number>) => berremanProfile(st.layers, lx, tx, phi, inc, zs, lay) };
   };
   const sv = solverAt(lam.value);
@@ -3576,11 +3580,18 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   if (mats.some((_, k) => Number.isFinite(d.matMin?.[k]) && Number.isFinite(d.matMax?.[k]) && !(d.matMin![k] < d.matMax![k])))
     warnings.push('A material’s own min d is not below its max d.');
   const design: Design = { front: keep(d.design.front), back: d.thick ? keep(d.design.back) : [] };
-  const ev = evaluateDesign(problem, design);
+  const pm: PolMode = pols.length === 1 ? pols[0] : 'avg';
+  // the merit and the spectrum of the design, kept while the problem and the design are the same (an edit elsewhere)
+  const fKey = `${hash(JSON.stringify([design, pm, problem.lambdas.length, problem.angles, problem.p, problem.sides, problem.thick, problem.nRef]))}|${problemDigest(problem)}`;
+  let memo = filterMemo.get(fKey);
+  if (!memo) {
+    memo = { ev: evaluateDesign(problem, design), sp: spectrum(problem, design, 0, pm) };
+    if (filterMemo.size >= 16) filterMemo.delete(filterMemo.keys().next().value!);
+    filterMemo.set(fKey, memo);
+  }
+  const { ev, sp } = memo;
   info.merit = ev.merit;
   info.mf = ev.mf;
-  const pm: PolMode = pols.length === 1 ? pols[0] : 'avg';
-  const sp = spectrum(problem, design, 0, pm);
   Object.assign(info, { lambdas, R: sp.R, T: sp.T, pol: pm === 'avg' ? (d.pol === 'both' ? 'mean of s and p' : 'unpolarized') : pm, angle: angles[0], cone: d.cone ? half : undefined });
   info.total = { front: design.front.reduce((s, L) => s + L.d, 0), back: design.back.reduce((s, L) => s + L.d, 0) };
 
@@ -3593,6 +3604,40 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   };
   if (!design.front.length && !design.back.length) warnings.push('No layers yet: press Start to design the coating.');
   return ok({ type: 'stack', stack }, info, warnings);
+}
+
+const filterMemo = new Map<string, { ev: ReturnType<typeof evaluateDesign>; sp: ReturnType<typeof spectrum> }>();
+// A numeric fingerprint of a design problem's arrays (the indices, the samples), order-sensitive.
+function problemDigest(p: DesignProblem): string {
+  let a = 0;
+  let b = 0;
+  let k = 1;
+  const eat = (v: number) => {
+    a = (a + v * k) % 1e12;
+    b = (b + v / k) % 1e12;
+    k = (k % 9973) + 1;
+  };
+  for (const arr of [...p.mats, p.n0, p.nS, p.nOut])
+    for (const z of arr) {
+      eat(z.re);
+      eat(z.im);
+    }
+  for (const l of p.lambdas) eat(l);
+  for (const s of p.samples) {
+    eat(s.li);
+    eat(s.ai);
+    eat(s.target);
+    eat(s.w);
+    eat(s.tol ?? 0);
+    eat(s.pol.length + s.q.length * 7 + (s.kind?.length ?? 0) * 31);
+    for (const v of s.avg ?? []) {
+      eat(v.li);
+      eat(v.ai);
+      eat(v.w);
+    }
+  }
+  for (const v of [p.minD, p.maxD, p.maxLayers, p.maxTotal, ...(p.matMin ?? []), ...(p.matMax ?? [])]) eat(Number.isFinite(v) ? (v as number) : -1);
+  return `${a.toPrecision(15)}:${b.toPrecision(15)}:${p.samples.length}`;
 }
 
 // ---- Tolerance analysis (Monte Carlo) ----
@@ -3811,6 +3856,13 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   info.pendingMC = req.pending;
   info.samples = N;
   if (!raw) return { errors: [], warnings: [], outs: {}, pending: true, info };
+  // the statistics of the same samples and settings: an earlier result (no criteria inputs: those are not keyed)
+  const tolKey =
+    req.pending || value.pending || inputs(ctx, node.id, 'criteria').some((ci) => ci.connected)
+      ? ''
+      : hash(JSON.stringify([raw.key, ds.key, d, value.name, tin.connected && tin.value?.type === 'data' ? (tin.value.dataset?.key ?? 'pending') : null]));
+  const tolHit = tolKey && toleranceMemo.get(tolKey);
+  if (tolHit) return tolHit;
   // as measured: every sample with its own noise; the nominal through the instrument blur (no noise)
   const mds = inst ? degrade(raw, inst, 1) : raw;
   const nom = inst ? degrade(ds, inst, 0, false) : ds;
@@ -4116,7 +4168,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     [f, `${f}_mean`, `${f}_median`].map((fk) => ({ ...base, id: `${node.id}:area:${fk}`, label: `p${d.pLo}–p${d.pHi}`, kind: 'area' as const, field: fk, dataset: stats, lo: `${f}_plo`, hi: `${f}_phi` })),
   );
   const pending = value.pending || req.pending || critPending;
-  return {
+  const result: NodeResult = {
     errors: [],
     warnings: [...instWarn, ...specWarn],
     outs: {
@@ -4127,7 +4179,10 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     pending,
     info,
   };
+  if (!pending) remember(toleranceMemo, tolKey, result);
+  return result;
 }
+const toleranceMemo = new Map<string, NodeResult>();
 
 // ---- Binding kinetics and Sensorgram ----
 
@@ -4198,6 +4253,10 @@ function evalKinetics(ctx: Ctx, node: KineticsNode): NodeResult {
   if (!(analyte.mw > 0 && analyte.dndc > 0 && analyte.rho > 0 && analyte.dims.every((v) => v > 0))) errors.push('The analyte needs MW, dn/dc, density and dimensions > 0.');
   if (!swelling && !(ionic > 0)) errors.push('The ionic strength must be > 0.');
   const sw = numberSweep(ctx, node.id, 'sweep', 'kinetics', errors);
+  // the same node data and sweep: the result of an earlier evaluation (an edit elsewhere in the graph)
+  const memoKey = errors.length ? '' : hash(JSON.stringify([d, sw?.values]));
+  const hit = memoKey && kineticsMemo.get(memoKey);
+  if (hit) return hit;
   const cRef = Math.max(0, ...d.steps.map((s) => s.c));
   if (sw && d.sweepOf === 'c' && !swelling && !(cRef > 0)) errors.push('A concentration sweep scales the injections: give a step a concentration.');
   if (sw && d.sweepOf === 'ionic' && sw.values.some((v) => !(v > 0))) errors.push('The ionic strength must be > 0.');
@@ -4274,7 +4333,18 @@ function evalKinetics(ctx: Ctx, node: KineticsNode): NodeResult {
   const name = d.name || MODEL_TEXT[d.model];
   const res = ok({ type: 'data', dataset, pending: false, name, annotations: [] }, info, warnings);
   if (steady?.dataset) res.outs.steady = { type: 'data', dataset: { ...steady.dataset, key: `${dataset.key}:steady` }, pending: false, name: `${name} · steady state`, annotations: [] };
+  remember(kineticsMemo, memoKey, res);
   return res;
+}
+
+// Results of the Binding kinetics and Sensorgram nodes kept between evaluations (their integration, dip tracking and
+// noise are not cheap; the graph is evaluated again at every edit anywhere).
+const kineticsMemo = new Map<string, NodeResult>();
+const sensorgramMemo = new Map<string, NodeResult>();
+function remember(m: Map<string, NodeResult>, key: string, r: NodeResult) {
+  if (!key) return;
+  if (m.size >= 24) m.delete(m.keys().next().value!);
+  m.set(key, r);
 }
 
 // Steady-state (equilibrium) analysis: the response at the end of every injection (all series) against its
@@ -4551,6 +4621,9 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   const grid = req.dataset && sameGrid(req.dataset, { ...ds, axes: axes2, size: specSize(spec2) }) ? req.dataset : null;
   info.t = times;
   if (!grid) return { errors: [], warnings, outs: {}, pending: true, info };
+  const sgKey = req.pending ? '' : hash(JSON.stringify([grid.key, K.key, d, seedSw?.values]));
+  const sgHit = sgKey && sensorgramMemo.get(sgKey);
+  if (sgHit) return sgHit;
 
   // as measured (the instrument of Tolerance: blur along the scan, the noise of every scan); a swept seed gives one
   // realization of the noise per seed (a new first axis)
@@ -4794,7 +4867,7 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   }
   info.rows.push(`${nT} times × ${xs.length} points of ${along.label}${nK > 1 ? ` × ${nK} series` : ''}${seeds ? ` × ${seeds.length} seeds` : ''}${km.swelling ? '' : `; analyte n = ${nP.toFixed(4)} at ${+lam0.toFixed(1)} nm`}`);
   const name = d.name || 'sensorgram';
-  return {
+  const result: NodeResult = {
     errors: [],
     warnings,
     outs: {
@@ -4804,6 +4877,8 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
     pending: req.pending,
     info,
   };
+  remember(sensorgramMemo, sgKey, result);
+  return result;
 }
 
 // ---- Grating layer (1D, RCWA) ----

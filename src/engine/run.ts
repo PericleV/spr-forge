@@ -7,7 +7,7 @@ import { polPartsMeta, rcwaLayersAt, rcwaMeta, runRcwa, tmToE } from './runRcwa.
 import { rcwaConical } from '../physics/rcwaConical.ts';
 import { rcwaThickConical } from '../physics/rcwaThick.ts';
 import { GD_META, TMM_META } from './dataset.ts';
-import { roughPlan, sliceIndex } from './rough.ts';
+import { roughPlan, sliceIndex, sliceTensor, tensorEma } from './rough.ts';
 import { coneRays } from './cone.ts';
 
 export const specSize = (spec: TmmSpec) =>
@@ -37,7 +37,12 @@ export function layersOwned(spec: TmmSpec, idx: number[], lam: number, list = sp
   const layers: Layer[] = [];
   const owner: number[] = [];
   for (const it of plan.items) {
-    layers.push(it.kind === 'layer' ? { n: base[it.i].n, d: it.d } : { n: sliceIndex(it, (m) => base[m].n), d: it.d });
+    if (it.kind === 'layer') layers.push({ n: base[it.i].n, d: it.d });
+    else if (tensorEma(it.ema)) {
+      // a diagonal tensor: exact through tmmPoint (TE ε_yy, TM ε_xx / ε_zz)
+      const t = sliceTensor(it, (m) => base[m].n);
+      layers.push({ n: sliceIndex(it, (m) => base[m].n), d: it.d, eps: [t[0], t[4], t[8]] });
+    } else layers.push({ n: sliceIndex(it, (m) => base[m].n), d: it.d });
     owner.push(it.kind === 'layer' ? it.i : it.owner);
   }
   return { layers, owner };

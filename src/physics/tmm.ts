@@ -5,7 +5,11 @@ import type { C } from './complex.ts';
 
 export type Polarization = 'p' | 's';
 
-export type Layer = { n: C; d: number }; // d in nm; first & last layers are semi-infinite (d ignored)
+// d in nm; first & last layers are semi-infinite (d ignored). `eps`: a diagonal permittivity (ε_xx, ε_yy, ε_zz; the
+// plane of incidence xz) — TE sees ε_yy, TM ε_xx along x and ε_zz along z (k_z = √(ε_xx (1 − k_x²/ε_zz)), admittance
+// k_z/ε_xx): exact for uniaxial / diagonal media, e.g. the anisotropic slices of a rough interface; n is then only a
+// scalar summary for other uses.
+export type Layer = { n: C; d: number; eps?: [C, C, C] };
 
 // n_j cosθ_j = sqrt(n_j² − (n₀ sinθ₀)²), branch chosen for a forward-going / decaying wave.
 export const nCos = (n: C, kx: C): C => {
@@ -42,13 +46,21 @@ export function tmmPoint(input: Layer[], lambdaNm: number, thetaDeg: number, pol
   const qr = new Float64Array(N);
   const qi = new Float64Array(N);
   for (let j = 0; j < N; j++) {
-    const a = j === 0 ? n0 : input[j].n.re;
-    const b = j === 0 ? 0 : input[j].n.im;
+    const e3 = j === 0 ? undefined : input[j].eps;
+    // a diagonal medium: the index of its polarization (TE: √ε_yy; TM: √ε_xx, with q² = ε_xx (1 − kx²/ε_zz))
+    const ne = e3 ? X.sqrt(pol === 's' ? e3[1] : e3[0]) : undefined;
+    const a = j === 0 ? n0 : ne ? ne.re : input[j].n.re;
+    const b = j === 0 ? 0 : ne ? ne.im : input[j].n.im;
     nr[j] = a;
     ni[j] = b;
     // q = n cos θ = √(n² − kx²), principal root, then the forward / decaying branch (as nCos)
-    const wr = a * a - b * b - kx2;
-    const wi = 2 * a * b;
+    let wr = a * a - b * b - kx2;
+    let wi = 2 * a * b;
+    if (e3 && pol === 'p') {
+      const w = X.mul(e3[0], X.sub(X.c(1), X.div(X.c(kx2), e3[2])));
+      wr = w.re;
+      wi = w.im;
+    }
     const r = Math.hypot(wr, wi);
     // the smaller part from the larger (no cancellation for a trace of absorption), as X.sqrt
     let vr: number, vi: number;

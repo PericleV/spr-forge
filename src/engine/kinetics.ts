@@ -167,32 +167,62 @@ function system(p: KineticParams) {
   }
 }
 
-// The fastest rate of the model in the protocol (for the integration step).
-function fastest(p: KineticParams, cmax: number) {
-  if (p.model === 'swelling') return 1 / Math.max(1e-9, p.tau);
-  const r = [(p.rsa ? 4 : 2) * p.ka * cmax + p.kd];
-  if (p.model === 'bivalent') r.push(p.ka2 * p.rmax + 2 * p.kd2);
-  if (p.model === 'hetero') r.push(p.ka2 * cmax + p.kd2);
-  if (p.model === 'twostate') r.push(p.ka2 + p.kd2);
-  return Math.max(1e-6, ...r.filter(Number.isFinite));
-}
+// The protocol integrated by an adaptive Runge–Kutta (Dormand–Prince 5(4), error per step ≤ 10⁻¹⁰ of the scale of the
+// state), sampled every dt; a step ends at every sample and at every change of the protocol. (A fixed step bounded by the
+// fastest rate constant was far too small when mass transport or blocking slows the binding down.)
+const DP = {
+  c: [0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1, 1],
+  a: [
+    [],
+    [1 / 5],
+    [3 / 40, 9 / 40],
+    [44 / 45, -56 / 15, 32 / 9],
+    [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729],
+    [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656],
+    [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84],
+  ],
+  // 5th-order weights (the last row of a) minus the 4th-order ones: the error estimate
+  e: [71 / 57600, 0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40],
+};
 
-// The protocol integrated (classical Runge–Kutta, step ≤ 1/20 of the fastest time constant), sampled every dt.
 export function simulate(p: KineticParams, steps: KineticStep[], dt: number): KineticResult {
   const sys = system(p);
-  const cmax = Math.max(0, ...steps.map((s) => s.c));
-  const h0 = Math.min(dt, 0.05 / fastest(p, cmax));
   const out: KineticResult = { t: [], R: [], c: [], s: [] };
   let y = new Array<number>(sys.n).fill(0);
   let t = 0;
   const swelling = p.model === 'swelling';
+  const scale = swelling ? 1 : Math.max(1, p.rmax + (p.model === 'hetero' ? p.rmax2 : 0));
+  const tol = 1e-10 * scale;
   const emit = (C: number) => {
     out.t.push(t);
     out.R.push(sys.resp(y) + p.drift * t);
     out.c.push(swelling ? 0 : C);
     out.s.push(swelling ? y[0] : 0);
   };
-  const add = (a: number[], b: number[], k: number) => a.map((v, i) => v + k * b[i]);
+  let h = Math.min(dt, 1e-3);
+  const hMax = Math.max(dt, 1e-6) * 10;
+  // from t to t2 at a constant drive (a step cut short by t2 does not shrink the next one)
+  const advance = (t2: number, drive: number) => {
+    while (t < t2 - 1e-12 * Math.max(1, t2)) {
+      const hh = Math.min(h, t2 - t);
+      const cut = hh < h;
+      const k: number[][] = [sys.f(y, drive)];
+      for (let j = 1; j < 7; j++) {
+        const yj = y.map((v, i) => v + hh * DP.a[j].reduce((acc, aij, m) => acc + aij * k[m][i], 0));
+        k.push(sys.f(yj, drive));
+      }
+      const y5 = y.map((v, i) => v + hh * DP.a[6].reduce((acc, aij, m) => acc + aij * k[m][i], 0));
+      const err = Math.max(...y.map((_, i) => Math.abs(hh * DP.e.reduce((acc, ej, m) => acc + ej * k[m][i], 0))));
+      if (err <= tol || hh < 1e-9) {
+        y = y5;
+        t += hh;
+        const grow = err > 0 ? 0.9 * (tol / err) ** 0.2 : 5;
+        const hNew = Math.min(hMax, hh * Math.min(5, grow));
+        h = cut ? Math.max(h, hNew) : hNew;
+      } else h = hh * Math.max(0.1, 0.9 * (tol / err) ** 0.25);
+    }
+    t = t2;
+  };
   let next = 0; // the next sample time
   for (const st of steps) {
     if (st.regen && !swelling) y = y.map(() => 0);
@@ -203,13 +233,7 @@ export function simulate(p: KineticParams, steps: KineticStep[], dt: number): Ki
         emit(drive);
         next += dt;
       }
-      const h = Math.min(h0, t1 - t, Math.max(1e-9, next - t));
-      const k1 = sys.f(y, drive);
-      const k2 = sys.f(add(y, k1, h / 2), drive);
-      const k3 = sys.f(add(y, k2, h / 2), drive);
-      const k4 = sys.f(add(y, k3, h), drive);
-      y = y.map((v, i) => v + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
-      t += h;
+      advance(Math.min(t1, Math.max(t + 1e-9, next)), drive);
     }
   }
   emit(swelling ? (steps.at(-1)?.swell ?? 0) : (steps.at(-1)?.c ?? 0));

@@ -4140,10 +4140,20 @@ await import('./check-notes.ts');
   const dAu1 = shapeDip(1, 15) - 72.33;
   const rTi = (runSpec({ models, instances: inst(), layers: [rl('Air'), rl('TiO2', 120, [R({ side: 'top', size: 3, cl: 20, cell: 300, slices: 20, tmm: 'ensemble', ema: 'shape' })]), rl('BK7')], lambda: [450], theta: [0], pol: 'p', sweeps: [], b4: { phi: 0 } }).R as Float64Array)[0] - 0.1392;
   const okBench = Math.abs(dAu3) < 0.25 && Math.abs(dAu1) < 0.1 && Math.abs(rTi) < 1e-3;
-  if (!(ePhi < 5e-4 && sameSeed && rcwaKeeps && eRamp < 2e-3 && eTM < 5e-3 && eTM < eBrug / 5 && okCorr && eL < 1e-10 && okL && okBench))
-    throw new Error(`rough statistics: Φ ${ePhi}, seeds ${sameSeed}, RCWA profile ${rcwaKeeps}, ramp ${eRamp}, TM anisotropic ${eTM} (Bruggeman ${eBrug}), correlation ${cc}, shape medium ${eL} ${okL}, vs RCWA Au ${dAu3} / ${dAu1}, TiO₂ ${rTi}`);
+  // (12) the tensor slices in plain TMM (diagonal ε: TE ε_yy, TM ε_xx / ε_zz) = Berreman: a 1D profile at φ = 0, a 2D
+  // surface and Wiener at any φ; R, T, r, t
+  const tensSpec = (ema: RoughSpec['ema'], surf: '1d' | '2d', pol: 'p' | 's', extra: Partial<TmmSpec> = {}): TmmSpec => ({ models, instances: inst(), layers: [rl('BK7'), rl('Au', 50, [R({ size: 3, cl: 15, cell: 300, slices: 12, tmm: 'ensemble', ema, surf })]), rl('Water')], lambda: [633, 700], theta: [40, 65, 72, 75], pol, sweeps: [], ...extra });
+  let eTens = 0;
+  for (const [ema, surf, phi] of [['shape', '1d', 0], ['shape', '2d', 30], ['wiener', '1d', 45], ['aniso', '1d', 0]] as const)
+    for (const pol of ['p', 's'] as const) {
+      const a = runTmm(tensSpec(ema, surf, pol));
+      const b = runSpec(tensSpec(ema, surf, pol, { b4: { phi } }));
+      for (const f of ['R', 'T', 'rRe', 'rIm'] as const) eTens = Math.max(eTens, ...Array.from(a[f], (v, i) => Math.abs(v - (b[f] as Float64Array)[i])));
+    }
+  if (!(ePhi < 5e-4 && sameSeed && rcwaKeeps && eRamp < 2e-3 && eTM < 5e-3 && eTM < eBrug / 5 && okCorr && eL < 1e-10 && okL && okBench && eTens < 1e-10))
+    throw new Error(`rough statistics: Φ ${ePhi}, seeds ${sameSeed}, RCWA profile ${rcwaKeeps}, ramp ${eRamp}, TM anisotropic ${eTM} (Bruggeman ${eBrug}), correlation ${cc}, shape medium ${eL} ${okL}, vs RCWA Au ${dAu3} / ${dAu1}, TiO₂ ${rTi}, TMM tensor slices vs Berreman ${eTens}`);
   console.log(
-    `roughness: RMS / pp exact, mean cl over 20 seeds ${clMean.toFixed(2)} (20); RMS 0 = flat; Ag thickness kept ${agD.toFixed(3)} nm; RCWA pixels, TE quasi-static = Σfε slices (${eQs.toExponential(1)}); Cr 2 nm conformal (one zone), 20 nm two zones; graph: seeds 1–3 averaged = runs (${eAvg.toExponential(1)}), SPR dip ${th[iMin].toFixed(2)}° R ${avg.fields.R[iMin].toFixed(4)} ± ${avg.fields['R:std'][iMin].toFixed(4)}; ensemble = Φ(z/σ) (${ePhi.toExponential(1)}), no seed; ramp + linear n (${eRamp.toExponential(1)}); RCWA pixels TM quasi-static = anisotropic slices (${eTM.toExponential(1)}; Bruggeman ${eBrug.toExponential(1)}); replicated faces ρ 0 / 0.5 / 1 → ${cc.map((v) => v.toFixed(2)).join(' / ')}; shape medium: L 0 / 1 / ⅓ = Wiener / Bruggeman (${eL.toExponential(1)}), vs RCWA (smooth profile): Au dip ${dAu3 >= 0 ? '+' : ''}${dAu3.toFixed(2)}° (RMS 3) / ${dAu1 >= 0 ? '+' : ''}${dAu1.toFixed(2)}° (RMS 1), TiO₂ R ${rTi >= 0 ? '+' : ''}${rTi.toExponential(1)}`,
+    `roughness: RMS / pp exact, mean cl over 20 seeds ${clMean.toFixed(2)} (20); RMS 0 = flat; Ag thickness kept ${agD.toFixed(3)} nm; RCWA pixels, TE quasi-static = Σfε slices (${eQs.toExponential(1)}); Cr 2 nm conformal (one zone), 20 nm two zones; graph: seeds 1–3 averaged = runs (${eAvg.toExponential(1)}), SPR dip ${th[iMin].toFixed(2)}° R ${avg.fields.R[iMin].toFixed(4)} ± ${avg.fields['R:std'][iMin].toFixed(4)}; ensemble = Φ(z/σ) (${ePhi.toExponential(1)}), no seed; ramp + linear n (${eRamp.toExponential(1)}); RCWA pixels TM quasi-static = anisotropic slices (${eTM.toExponential(1)}; Bruggeman ${eBrug.toExponential(1)}); replicated faces ρ 0 / 0.5 / 1 → ${cc.map((v) => v.toFixed(2)).join(' / ')}; shape medium: L 0 / 1 / ⅓ = Wiener / Bruggeman (${eL.toExponential(1)}), vs RCWA (smooth profile): Au dip ${dAu3 >= 0 ? '+' : ''}${dAu3.toFixed(2)}° (RMS 3) / ${dAu1 >= 0 ? '+' : ''}${dAu1.toFixed(2)}° (RMS 1), TiO₂ R ${rTi >= 0 ? '+' : ''}${rTi.toExponential(1)}; tensor slices in plain TMM = Berreman (${eTens.toExponential(1)})`,
   );
 }
 
