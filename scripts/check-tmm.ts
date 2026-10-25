@@ -16,7 +16,7 @@ import { fitDispersion, fitSpectrum } from '../src/engine/fitrun.ts';
 import { rng as rngOpt, adam, DEFAULT_PARAMS, differentialEvolution, fromScalar, genetic, levenbergMarquardtBatch, mergeParams, nelderMead, nsga2, particleSwarm, simulatedAnnealing, Tracker, type Box, type Control, type Crossover, type Evaluate } from '../src/engine/optimize.ts';
 import { evaluateHeadless, meritOf } from '../src/engine/headless.ts';
 import { OIC_A_MF, OIC_B_MF } from '../src/data/oic2025.ts';
-import { myoglobinRsaExample, sensorgramAntibodyExample, sensorgramSmallMoleculeExample, sensorgramSwellingExample, startHereExample } from '../src/examples.ts';
+import { myoglobinRsaExample, robustSprExample, sensorgramAntibodyExample, sensorgramSmallMoleculeExample, sensorgramSwellingExample, startHereExample } from '../src/examples.ts';
 import { huGratingExample, HU2011, HU_N, roughSprExample, teneMalariaExample, TENE2025, oicCastleExample, oicNotchExample, CONV_N, rcwaConvergenceExample, absorberExample, anisoBicExample, lcCavityExample, liuBicExample, LIU2023, PANKIN2022, conicalSprExample, toleranceExample, ANALYSIS_DEFAULTS, dbrExample, filterExample, materialData, TOLERANCE_DEFAULTS, FIELD_DEFAULTS, gratingSprExample, gmrExample, metrologyExample, sprExample, METROLOGY_TRUTH, sprDesignExample, strongCouplingExample, strongCouplingAngleExample, tammExample, TAMM_LU2019, rabiJenaExample, RABI_JENA, TARGET_DEFAULTS, notchExample, NOTCH_SPEC, bandpassExample, arBothSidesExample, thermalEmitterSaExample, PAN2024, heTammExample, he2021TargetCsv, pelesExample, SEBEK2023, sprGaExample, sprDualModeExample } from '../src/examples.ts';
 import { countsBreak, crossover, evaluateSensor, geneD, mergedGenes, mutate, randomStructure, runSprGa, sprClassOf, sprScan, withMaterial, type SprGene, type SprMaterial, type SprOk, type SprProblem, type SprStructure } from '../src/engine/sprDesign.ts';
 import { compile, compileComplex } from '../src/engine/expr.ts';
@@ -5286,6 +5286,53 @@ if (full('FFF: Popov aluminium sinus, gold trapezoid and blazed (80 s)')) {
     throw new Error(`surface: blocking ${eBlock}, Feder ${feder}, rate ${rate0}, myoglobin ${my10} / ${my150}, albumin ${hsa}, auto layer ${eAuto}, coverage ${eCov}, warning ${okWarn}, drift ${eDrift}, seeds ${okSeedAx} ${dR} ${exactSame} ${nNoise}`);
   console.log(
     `surface: RSA blocking 1 − 4θ, Feder t^(−1/2) (gap ratio ${feder.toFixed(3)}), myoglobin on silica Γ∞ ${my10.toFixed(3)} / ${my150.toFixed(3)} mg/m² at 10 / 150 mM (Wasilewska et al. 2021: 0.60 ± 0.1 / 1.3 ± 0.1), albumin ${hsa.toFixed(2)} at 150 mM (2019: 1.3–1.4); auto layer = molecule height, then h·Γ/Γ∞; drift = water + Δn (${eDrift.toExponential(1)}°); swept seed: 3 noisy series, σ ${nNoise.toFixed(5)} (0.001)`,
+  );
+}
+
+// Robust design: the position by the data itself; the robust output of Tolerance (yield = the one shown, the smooth yield,
+// the same samples for the same seed) and the Optimization Engine on it (the yield rises; a gradient method needs the
+// smooth yield; the warnings)
+{
+  // (a) 'data': the lowest sample itself; the parabola lands between the samples; FWHM from the sample's value
+  const xs = Array.from({ length: 41 }, (_, i) => 60 + i * 0.5);
+  const ys = xs.map((x) => 1 - 0.9 / (1 + ((x - 70.2) / 2) ** 2));
+  const dd = locate(xs, ys, 0, 40, 'min', { method: 'data' });
+  const dp = locate(xs, ys, 0, 40, 'min', { method: 'parabola' });
+  const wd = halfWidth(xs, ys, 0, 40, 'dip', 'local', NaN, { method: 'data' });
+  const okData = dd.x === 70 && dd.y === ys[20] && Math.abs(dp.x - 70.2) < 0.05 && dp.x !== 70 && wd.extreme === ys[20] && Math.abs(wd.level - (Math.max(...ys) + ys[20]) / 2) < 1e-15 && Math.abs(wd.width - 4) < 0.1;
+  // (b) the example: yield of the robust output = the node's, the smooth yield close to it, deterministic
+  const p = robustSprExample();
+  const lib2 = makeLibrary(p.materials);
+  const ev1 = evaluateHeadless(p.nodes, p.edges, lib2).results;
+  const tolR = ev1.get('tol')!;
+  const rob = (tolR.outs.robust as { dataset: Dataset }).dataset;
+  const yInfo = (tolR.info as ToleranceInfo).yieldPct;
+  const rob2 = (evaluateHeadless(p.nodes, p.edges, lib2).results.get('tol')!.outs.robust as { dataset: Dataset }).dataset;
+  const okRobust = rob.fields.yield[0] === yInfo && Math.abs(yInfo - 64) < 1e-9 && Math.abs(rob.fields.yieldSmooth[0] - yInfo) < 5 && rob.fields.yield[0] === rob2.fields.yield[0] && rob.fields.c0_pass[0] > 90 && rob.fields.c1_pass[0] < 80 && !tolR.errors.length;
+  // (c) the optimizer on it: the yield rises with differential evolution; Adam stalls on the yield, rises on the smooth yield
+  const vars = [{ id: 'vd', integer: false }];
+  const withField = (f: string) => p.nodes.map((n) => (n.id === 'obj' ? ({ ...n, data: { ...n.data, field: f } } as AppNode) : n));
+  const runOpt = async (field: string, algo: 'de' | 'adam') => {
+    const nodes = withField(field);
+    const t = new Tracker(fromScalar((x) => meritOf(nodes, p.edges, lib2, vars, ['obj'], x).merit), { lo: [40], hi: [60], integer: [false] });
+    const ctl: Control = { stopped: () => false, waitIfPaused: async () => {}, report: () => {} };
+    if (algo === 'de') await differentialEvolution(t, { lo: [40], hi: [60], integer: [false] }, [48], { iterations: 6, population: 8, seed: 1 }, ctl);
+    else await adam(t, { lo: [40], hi: [60], integer: [false] }, [46], { iterations: 25, lr: 0.05, starts: 1, seed: 1 }, ctl);
+    return { d: t.bestX[0], y: -t.best * 100 };
+  };
+  const de = await runOpt('yield', 'de');
+  const adStep = await runOpt('yield', 'adam');
+  const adSmooth = await runOpt('yieldSmooth', 'adam');
+  const okOpt = de.y > 70 && de.d > 48.5 && de.d < 51 && Math.abs(adStep.d - 46) < 1e-9 && adSmooth.y > 50 && adSmooth.d > 47.5;
+  // (d) the optimizer node: the cost of a robust evaluation; a gradient method on the yield is warned about
+  const optRes = ev1.get('opt')!;
+  const adamNodes = p.nodes.map((n) => (n.id === 'opt' ? ({ ...n, data: { ...n.data, algorithm: 'adam' } } as AppNode) : n));
+  const warnAdam = evaluateHeadless(adamNodes, p.edges, lib2).results.get('opt')!.warnings.some((w) => w.includes('steps of 1/N'));
+  const okNode = /100 samples/.test((optRes.info as { robust?: string }).robust ?? '') && !optRes.warnings.some((w) => w.includes('steps of 1/N')) && warnAdam;
+  if (!(okData && okRobust && okOpt && okNode))
+    throw new Error(`robust design: data ${okData} (${dd.x}, ${dp.x}, ${wd.width}), robust ${okRobust} (${rob.fields.yield[0]} / ${yInfo} / ${rob.fields.yieldSmooth[0]}), optimizer ${okOpt} (DE ${de.d} ${de.y}, Adam ${adStep.d} ${adStep.y}, smooth ${adSmooth.d} ${adSmooth.y}), node ${okNode}`);
+  console.log(
+    `robust design: position by data = the sample (70 vs parabola ${dp.x.toFixed(3)}), FWHM level from it; Tolerance robust output: yield ${yInfo} % = shown, smooth ${rob.fields.yieldSmooth[0].toFixed(1)} %, same seed same samples; Optimization Engine: DE ${de.d.toFixed(2)} nm → yield ${de.y.toFixed(0)} %, Adam on the yield stays at ${adStep.d} nm, on the smooth yield ${adSmooth.d.toFixed(2)} nm (${adSmooth.y.toFixed(0)} %); warnings`,
   );
 }
 

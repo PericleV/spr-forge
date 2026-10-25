@@ -513,6 +513,60 @@ export const filterExample = (): Project =>
   );
 
 // Tolerance analysis: a 7-layer AR coating (designed with the Filter designer) under random thickness errors.
+// Robust design: the yield of a Tolerance node (every sample's dip deep and narrow) maximized by the Optimization Engine.
+export const robustSprExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -320, y: -380 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Robust SPR sensor: the yield under thickness errors',
+          text: 'Kretschmann BK7 / Au / water at 633 nm. The gold is deposited with 3 % thickness errors (normal σ). A chip is good when its dip is deep (R at the dip ≤ 0.02) and narrow (FWHM ≤ 5.4°): the two criteria of the Tolerance node, on the metrics of the FWHM node, checked on each of its 100 samples.\n\nThe start, 48 nm, gives the deepest nominal dip, but a yield of only 64 %. The Objective maximizes the yield (the robust output of Tolerance); the Optimization Engine (differential evolution) computes the 100 samples of every candidate, with the same errors: press Start. It ends near 49.5 nm with a yield of about 79 %: thicker, because the FWHM limit is closer than the depth limit.\n\nTry: the smooth yield with Adam (the yield itself has no slope for it); “position by: data” in FWHM; other limits or σ.',
+          width: 420,
+          height: 330,
+        },
+      },
+      material('bk7', 'BK7', 0, 0),
+      material('aum', 'Au', -270, 200),
+      { id: 'vd', type: 'variable', position: { x: -320, y: 400 }, data: { name: 'd Au', value: 48, min: 40, max: 60, integer: false } },
+      { id: 'au', type: 'layer', position: { x: 0, y: 200 }, data: { label: 'Au film', thickness: 48, layers2D: 1 } },
+      material('water', 'Water', 0, 420),
+      { id: 'stack', type: 'combine', position: { x: 300, y: 150 }, data: { name: 'SPR chip', count: 1 } },
+      { id: 'wl', type: 'param', position: { x: 300, y: -140 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'ang', type: 'param', position: { x: 300, y: 440 }, data: param('theta', 'range', 70, 66, 80, 0.05) },
+      { id: 'tmm', type: 'compute', position: { x: 640, y: 60 }, data: compute('SPR chip') },
+      { id: 'fwhm', type: 'fwhm', position: { x: 1040, y: -260 }, data: ANALYSIS_DEFAULTS.fwhm },
+      {
+        id: 'tol',
+        type: 'tolerance',
+        position: { x: 1040, y: 220 },
+        data: { ...TOLERANCE_DEFAULTS, name: 'gold ± 3 %', samples: 100, dSigma: 3, criteria: [{ source: 'fwhm', field: 'e0', min: NaN, max: 0.02 }, { source: 'fwhm', field: 'w0', min: NaN, max: 5.4 }] },
+      },
+      { id: 'obj', type: 'objective', position: { x: 1540, y: 220 }, data: { name: 'maximize the yield', field: 'yield', along: '', lo: NaN, hi: NaN, stat: 'mean', goal: 'max', target: 0, scale: 100, weight: 1 } },
+      { id: 'opt', type: 'optimizer', position: { x: 1900, y: 220 }, data: { ...OPTIMIZER_DEFAULTS, algorithm: 'de', iterations: 12, population: 10, polish: false } },
+      { id: 'plot', type: 'plot', position: { x: 2360, y: 220 }, data: PLOT_DEFAULTS },
+    ] as AppNode[],
+    [
+      edge('aum', 'au', 'mat'),
+      edge('vd', 'au', 'd'),
+      edge('bk7', 'stack', 'incident'),
+      edge('au', 'stack', 'item-0'),
+      edge('water', 'stack', 'exit'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('ang', 'tmm', 'theta'),
+      edge('tmm', 'fwhm', 'in'),
+      edge('tmm', 'tol', 'in'),
+      edge('fwhm', 'tol', 'criteria', 'metrics'),
+      edge('tol', 'obj', 'in', 'robust'),
+      edge('obj', 'opt', 'obj'),
+      edge('opt', 'plot', 'in'),
+    ],
+  );
+
 export const toleranceExample = (): Project =>
   project(
     [
@@ -3041,6 +3095,7 @@ export const EXAMPLES: ExampleEntry[] = [
   { group: EXAMPLE_GROUPS[0], name: 'Start here: your first SPR binding experiment', make: startHereExample, desc: 'A minimal SPR biosensor experiment with a note at every step: the chip, the light, an antibody binding, the moving dip — no theory needed.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR (Kretschmann)', make: sprExample, desc: 'Surface plasmon resonance of a silver film on a prism: the reflectance dip vs angle and its analysis.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor design (custom objective)', make: sprDesignExample, desc: 'Thicknesses of an SPR sensor optimized for a custom objective (sensitivity and dip quality).' },
+  { group: EXAMPLE_GROUPS[0], name: 'Robust SPR sensor: the yield under thickness errors (Tolerance → Optimization Engine)', make: robustSprExample, desc: 'Gold thickness errors of 3 %: the yield of chips with a deep and narrow dip, maximized by the optimizer over 100 Monte Carlo samples per candidate.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
   { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },

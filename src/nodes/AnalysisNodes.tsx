@@ -160,6 +160,7 @@ function ZoneEditor({ value, info, along, onChange }: { value: Interval; info?: 
 // How the position of the dip / peak is found (engine/metrics.ts `locate`): the parabola follows the noise of three
 // points; a polynomial fit or the centroid of the dip average it over the points below the level.
 const LOCATE: [LocateMethod, string, string][] = [
+  ['data', 'data (the sample)', 'No model: the lowest (highest) computed or measured sample itself, its x and its value. The position moves in steps of the grid; FWHM: the half level from that value, the edges interpolated linearly between the samples around them'],
   ['parabola', '3-point parabola', 'A parabola through the lowest sample and its two neighbours: exact on smooth computed curves, but it follows the noise of those three points'],
   ['poly', 'polynomial fit', 'Least-squares polynomial through the points of the dip below the level; its extreme is the position. Averages the noise over the dip'],
   ['centroid', 'centroid', 'Centre of mass of the dip below the level, weights (level − y)·dx (Piliarik & Homola 2009). Robust to noise; on an asymmetric dip it is shifted from the minimum, but follows it'],
@@ -186,9 +187,17 @@ export function LocateControls({ data, set }: { data: LocateFields; set: (patch:
           degree <NumInput className="tiny" value={data.locDeg ?? 2} step={1} onChange={(v) => set({ locDeg: Math.min(6, Math.max(2, Math.round(v))) })} />
         </label>
       )}
+      <div className="hint">{LOCATE_NOTE[m]}</div>
     </div>
   );
 }
+// What the chosen method does, and how it differs from the others (shown under the choice)
+const LOCATE_NOTE: Record<LocateMethod, string> = {
+  data: 'Data: the sample itself, no interpolation of the extreme. Its position moves in steps of the grid (Sensitivity then in steps of grid step / Δn); the parabola, the fit and the centroid place it between the samples.',
+  parabola: 'Parabola: through the extreme sample and its two neighbours. Between the samples, exact on smooth curves, but it follows the noise of three points; data takes the sample itself, fit and centroid average the dip.',
+  poly: 'Polynomial fit: through the points below the level. Averages the noise over the dip; the value stays the lowest sample (the FWHM level unchanged). Data and parabola use one or three samples only.',
+  centroid: 'Centroid: the centre of mass of the dip below the level. The most robust to noise, but shifted from the minimum on an asymmetric dip; data and parabola use one or three samples only.',
+};
 
 export function ExtremumNodeView({ id, data }: NodeProps<ExtremumNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();

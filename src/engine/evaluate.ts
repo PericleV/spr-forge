@@ -2599,6 +2599,7 @@ export type OptimizerInfo = {
   variables: { id: string; name: string; value: number; min: number; max: number; integer: boolean }[];
   ancestors: string[]; // every node the objectives depend on (the part of the graph to optimize)
   failed: string[]; // objective inputs with errors
+  robust?: string; // a Tolerance in the loop: every candidate computes all its samples
 };
 
 function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
@@ -2653,6 +2654,19 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
     const n = ctx.nodes.get(id);
     return n?.type === 'rough' && (n.data.tmm ?? 'profile') === 'profile' ? [n.data.label || 'Roughness'] : [];
   });
+  // the yield of a Tolerance as an objective: it moves in steps of 1/N, so gradient methods see no slope
+  const stepYield = [...seen].some((id) => {
+    const n = ctx.nodes.get(id);
+    return (n?.type === 'objective' && n.data.field === 'yield') || (n?.type === 'formula' && n.data.terms.some((t) => (t as { field?: string }).field === 'yield'));
+  });
+  const tols = [...seen].flatMap((id) => {
+    const n = ctx.nodes.get(id);
+    return n?.type === 'tolerance' ? [Math.round(n.data.samples)] : [];
+  });
+  if (tols.length)
+    info.robust = `Robust design: every candidate computes the ${tols.join(' + ')} samples of ${tols.length > 1 ? 'the Tolerance nodes' : 'the Tolerance'} (the same errors for every candidate: same seed), so one evaluation costs about ${tols.reduce((a, b) => a + b, 0)} × a single structure.`;
+  if (stepYield && (node.data.algorithm === 'adam' || node.data.algorithm === 'lm'))
+    warnings.push('The yield of a Tolerance changes in steps of 1/N samples: a gradient method (Adam, LM) sees no slope. Choose differential evolution, genetic, particle swarm, annealing or Nelder–Mead, or optimize the smooth yield.');
   if (tmmUsed && oneProfile.length)
     warnings.push(`${oneProfile.join(', ')}: Compute TMM sees one random profile (“this profile (seed)”), so the optimum fits that realization; choose “ensemble” in the Roughness node for its statistics (no seed, smooth for the optimizer).`);
 
@@ -3658,6 +3672,7 @@ export type ToleranceInfo = AnalysisInfo & {
   hi: number[];
   dev: number[]; // RMS deviation of each sample from the nominal
   yieldPct: number; // NaN without a specification
+  yieldSmooth?: number; // the smooth yield (Π Φ(margin / σ) per sample), NaN without a specification
   pass: number[];
   ranking: { label: string; share: number }[]; // fraction of the variance explained (linear) by each error
   stats: { label: string; value: string }[];
@@ -3914,6 +3929,8 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   // pass / fail: every curve of the sample within the limits (bands along the analysed axis, or ± around a target)
   let pass: number[] = [];
   const specWarn: string[] = [];
+  // the margin of every test for every sample (how far inside its limits the worst point is; < 0 = fails): the smooth yield
+  const margins: { label: string; m: number[] }[] = [];
   if (d.spec && axis) {
     const xs = axis.values;
     // a band outside the analysed axis tests nothing: say so
@@ -3929,21 +3946,29 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     if (tin.connected && tAx < 0) specWarn.push(`The target must be a curve vs ${axis.label}.`);
     const tMeta = tds ? (metaOf(tds, 'target') ?? metaOf(tds, F) ?? tds.meta[0]) : null;
     const ty = tds && tAx >= 0 ? line(tds, tMeta!.key, tAx, tds.axes.map(() => 0)) : null;
+    const specM = E.map(() => Infinity);
     pass = E.map((_, s) => {
       let ok2 = true;
+      let worst = Infinity;
       const perCurve = (ys: Float64Array) => {
         if (ty && tds) {
           const tx = tds.axes[tAx].values;
           tx.forEach((x, i) => {
             const y = interp(xs, ys, x);
-            if (Number.isFinite(y) && Number.isFinite(ty[i]) && Math.abs(y - ty[i]) > d.specTol) ok2 = false;
+            if (!Number.isFinite(y) || !Number.isFinite(ty[i])) return;
+            const m = d.specTol - Math.abs(y - ty[i]);
+            worst = Math.min(worst, m);
+            if (m < 0) ok2 = false;
           });
         } else
           for (const b of d.specBands) {
             const yb = b.q === F ? ys : null;
             if (!yb) continue;
             xs.forEach((x, i) => {
-              if (x >= b.lo && x <= b.hi && (yb[i] < b.min || yb[i] > b.max)) ok2 = false;
+              if (!(x >= b.lo && x <= b.hi)) return;
+              if (yb[i] < b.min || yb[i] > b.max) ok2 = false;
+              const m = Math.min(Number.isFinite(b.min) ? yb[i] - b.min : Infinity, Number.isFinite(b.max) ? b.max - yb[i] : Infinity);
+              if (Number.isFinite(yb[i])) worst = Math.min(worst, m);
             });
           }
       };
@@ -3961,8 +3986,10 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
         const mIdx = [...idx.slice(0, sIdx), s, ...idx.slice(sIdx)];
         perCurve(line(mds, F, along >= sIdx ? along + 1 : along, mIdx));
       }
+      specM[s] = worst;
       return ok2 ? 1 : 0;
     });
+    margins.push({ label: ty ? `${F} within ±${d.specTol} of the target` : `${F} inside the bands`, m: specM });
     if (!ty && !d.specBands.some((b) => b.q === F)) specWarn.push(`No limits on ${F}: add bands for ${F} (or show ${d.specBands[0]?.q ?? 'another field'}).`);
   }
   // ---- criteria: the metrics of analysis nodes (Min / max, FWHM, Sensitivity) recomputed on every sample ----
@@ -4014,11 +4041,14 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
       const hasMin = Number.isFinite(c.min);
       const hasMax = Number.isFinite(c.max);
       let ok = 0;
+      const critM = E.map(() => Infinity);
       bySample.forEach((vals, s) => {
         const good = vals.every((v) => Number.isFinite(v) && (!hasMin || v >= c.min) && (!hasMax || v <= c.max));
         if (good) ok++;
         if ((hasMin || hasMax) && !good) critPass[s] = 0;
+        for (const v of vals) critM[s] = Math.min(critM[s], Number.isFinite(v) ? Math.min(hasMin ? v - c.min : Infinity, hasMax ? c.max - v : Infinity) : -Infinity);
       });
+      if (hasMin || hasMax) margins.push({ label: `${meta.label} (${entry.name})`, m: critM });
       if (hasMin || hasMax) constrained = true;
       // one value per sample for the statistics: the value itself, or the mean over the sample's curves
       const values = bySample.map((vals) => (vals.length === 1 ? vals[0] : vals.reduce((a, b) => a + b, 0) / vals.length));
@@ -4154,6 +4184,46 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   info.dev = dev;
   info.pass = pass;
   info.yieldPct = pass.length ? (100 * pass.reduce((a, b) => a + b, 0)) / N : NaN;
+  // smooth yield: every sample counts Π Φ(margin / w) over the tests, w = a quarter of the spread (σ) of that test's margin
+  // over the samples (a sample σ/2 inside its limits counts 0.98, on the limit 0.5, σ/2 outside 0.02): it changes
+  // continuously with the design, while the yield changes in steps of 1/N
+  const smooth = E.map(() => 1);
+  for (const t of margins) {
+    const fin = t.m.filter(Number.isFinite);
+    const mu = fin.reduce((a, b) => a + b, 0) / Math.max(1, fin.length);
+    const sd = Math.sqrt(fin.reduce((a, b) => a + (b - mu) ** 2, 0) / Math.max(1, fin.length - 1));
+    const tau = sd > 0 ? sd / 4 : 1e-6 * (1 + Math.abs(mu));
+    t.m.forEach((m, s) => (smooth[s] *= m === Infinity ? 1 : m === -Infinity || Number.isNaN(m) ? 0 : normCdf(m / tau)));
+  }
+  info.yieldSmooth = margins.length ? (100 * smooth.reduce((a, b) => a + b, 0)) / N : NaN;
+  const rFields: Record<string, Float64Array> = {};
+  const rMeta: FieldMeta[] = [];
+  const put = (key: string, label: string, short: string, unit: string, v: number) => {
+    rFields[key] = Float64Array.of(v);
+    rMeta.push({ key, label, short, unit });
+  };
+  put('yield', 'yield: samples passing every condition', 'yield', '%', info.yieldPct);
+  put('yieldSmooth', 'smooth yield: Π Φ(4 · margin / σ) per sample, continuous for gradient optimizers', 'smooth yield', '%', info.yieldSmooth);
+  put('devMean', `RMS deviation of ${F}: mean`, 'dev mean', '', dev.reduce((a, b) => a + b, 0) / N);
+  put('devMedian', `RMS deviation of ${F}: median`, 'dev median', '', quantile([...dev].sort((a, b) => a - b), 0.5));
+  put('devHi', `RMS deviation of ${F}: p${d.pHi}`, `dev p${d.pHi}`, '', quantile([...dev].sort((a, b) => a - b), qhi));
+  for (const c of info.criteria ?? [])
+    for (const row of c.rows) {
+      const nm = `${row.label} (${c.name})`;
+      const k = `c${row.index}`;
+      put(`${k}_mean`, `${nm}: mean over the samples`, `${row.label} mean`, row.unit, row.mean);
+      put(`${k}_std`, `${nm}: standard deviation`, `${row.label} σ`, row.unit, row.std);
+      put(`${k}_plo`, `${nm}: p${d.pLo}`, `${row.label} p${d.pLo}`, row.unit, row.plo);
+      put(`${k}_phi`, `${nm}: p${d.pHi}`, `${row.label} p${d.pHi}`, row.unit, row.phi);
+      put(`${k}_pass`, `${nm}: samples within its limits`, `${row.label} pass`, '%', row.passPct);
+    }
+  const robust: Dataset = {
+    key: `robust:${node.id}:${mds.key}:${hash(JSON.stringify([d.spec, d.specBands, d.specTol, conds, d.pLo, d.pHi, info.criteria?.map((c) => c.rows.map((r) => r.mean))]))}`,
+    axes: [{ id: 'result', label: 'result', unit: '', values: [0] }],
+    fields: rFields,
+    meta: rMeta,
+    size: 1,
+  };
   const sd = [...dev].sort((a, b) => a - b);
   info.stats = [
     { label: 'samples', value: String(N) },
@@ -4175,6 +4245,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
       out: { type: 'data', dataset: stats, pending, name: `${value.name} · tolerance`, annotations },
       samples: { type: 'data', dataset: mds, pending, name: `${value.name} · MC samples`, annotations: [] },
       errors: { type: 'data', dataset: errorsDs, pending, name: `${value.name} · MC errors`, annotations: [] },
+      robust: { type: 'data', dataset: robust, pending, name: `${value.name} · robust (yield, statistics)`, annotations: [] },
     },
     pending,
     info,
@@ -4183,6 +4254,14 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
   return result;
 }
 const toleranceMemo = new Map<string, NodeResult>();
+// The standard normal distribution function (erfc by the rational approximation of W. J. Cody's form in Numerical
+// Recipes, erfcc: relative error < 1.2e-7).
+function normCdf(z: number): number {
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.5 * x);
+  const erfc = t * Math.exp(-x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+  return z >= 0 ? 1 - erfc / 2 : erfc / 2;
+}
 
 // ---- Binding kinetics and Sensorgram ----
 

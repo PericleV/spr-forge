@@ -407,6 +407,12 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
           {Number.isFinite(info.yieldPct) && (
             <div className="val yield">
               yield = {info.yieldPct.toFixed(1)} % ({info.pass.reduce((a, b) => a + b, 0)} / {info.samples} samples pass)
+              {Number.isFinite(info.yieldSmooth) && <> · smooth yield = {info.yieldSmooth!.toFixed(1)} %</>}
+            </div>
+          )}
+          {Number.isFinite(info.yieldPct) && (
+            <div className="hint">
+              Yield counts the samples that pass: it moves in steps of 1/{info.samples}, so an optimizer needs a method without gradients (differential evolution, genetic, particle swarm, annealing, Nelder–Mead). The smooth yield counts every sample by how far inside its limits it is (on a limit ½, a quarter of the spread inside 0.84, half of it 0.98): it changes continuously, works with every method (also Adam, LM), and equals the yield when the samples are far from the limits.
             </div>
           )}
           {info.specWhere && <div className="hint">{info.specWhere}</div>}
@@ -467,6 +473,10 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
       <div className="port-row out">
         errors per sample (+ deviation, pass)
         <Port kind="source" id="errors" port="data" />
+      </div>
+      <div className="port-row out" title="One value each: yield, smooth yield, the RMS deviation (mean, median, upper percentile), and for every criterion its mean, σ, percentiles and pass rate over the samples. Into an Objective (e.g. yield → maximize): the optimizer then computes every sample of this Tolerance for every candidate design, with the same errors (same seed)">
+        robust (yield, statistics) → Objective
+        <Port kind="source" id="robust" port="data" />
       </div>
     </div>
   );

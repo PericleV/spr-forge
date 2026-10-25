@@ -461,6 +461,7 @@ export function OptimizerNodeView({ id, data }: NodeProps<OptimizerNode>) {
         {run?.status === 'paused' && <button className="nodrag btn-run" onClick={() => resumeRun(id)}>▶ Resume</button>}
         {active && <button className="nodrag btn-stop" onClick={() => stopRun(id)}>■ Stop</button>}
       </div>
+      {info?.robust && <div className="hint">{info.robust}</div>}
       {run && (
         <div className="stack-rows results">
           <div className="val">

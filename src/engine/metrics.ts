@@ -52,7 +52,9 @@ export function extremum(xs: ArrayLike<number>, ys: ArrayLike<number>, i0: numbe
 // `level` is a fraction of the depth from the bottom (0.5 = half depth). The last two average the noise over the dip
 // (Piliarik & Homola, Opt. Express 17, 16505 (2009)). Only the position changes: the value stays the bottom of the dip
 // (the refined lowest sample; a fit or the curve at the centroid would sit above it and move the half-depth level of FWHM).
-export type LocateMethod = 'parabola' | 'poly' | 'centroid';
+// 'data': no model at all — the lowest (highest) sample itself, its x and its value (positions in steps of the grid; the
+// half-depth level of FWHM from that value, its edges still interpolated linearly between the two samples around it).
+export type LocateMethod = 'parabola' | 'poly' | 'centroid' | 'data';
 export type Locate = { method?: LocateMethod; level?: number; deg?: number };
 
 // Solves the small dense system A x = b (Gaussian elimination with partial pivoting); null when singular.
@@ -82,6 +84,7 @@ function solve(A: number[][], b: number[]): number[] | null {
 export function locate(xs: ArrayLike<number>, ys: ArrayLike<number>, i0: number, i1: number, mode: 'min' | 'max', loc?: Locate): Extremum {
   const e = extremum(xs, ys, i0, i1, mode);
   const method = loc?.method ?? 'parabola';
+  if (method === 'data' && e.i >= 0) return { x: xs[e.i], y: ys[e.i], i: e.i };
   if (method === 'parabola' || e.i < 0) return e;
   const sgn = mode === 'min' ? 1 : -1;
   // the level: a fraction of the depth, from the lowest sample to the opposite extreme of the window
