@@ -5336,4 +5336,32 @@ if (full('FFF: Popov aluminium sinus, gold trapezoid and blazed (80 s)')) {
   );
 }
 
+// Reroute points and Python scripts: two Reroutes between Compute TMM and FWHM change nothing (the evaluator joins their
+// connections); a Python script gives nothing in the scripts (its note), and the Optimization Engine refuses an objective
+// that depends on one
+{
+  const p = robustSprExample();
+  const lib3 = makeLibrary(p.materials);
+  const base = evaluateHeadless(p.nodes, p.edges, lib3).results;
+  const viaR = p.edges.flatMap((e) =>
+    e.source === 'tmm' && e.target === 'fwhm'
+      ? [
+          { ...e, id: 'r-a', target: 'r1', targetHandle: 'in' },
+          { ...e, id: 'r-b', source: 'r1', sourceHandle: 'out', target: 'r2', targetHandle: 'in' },
+          { ...e, id: 'r-c', source: 'r2', sourceHandle: 'out' },
+        ]
+      : [e],
+  );
+  const rr = [...p.nodes, { id: 'r1', type: 'reroute', position: { x: 0, y: 0 }, data: {} }, { id: 'r2', type: 'reroute', position: { x: 0, y: 0 }, data: {} }] as AppNode[];
+  const routed = evaluateHeadless(rr, viaR, lib3).results;
+  const same = JSON.stringify(routed.get('fwhm')?.info) === JSON.stringify(base.get('fwhm')?.info) && (routed.get('tol')!.info as ToleranceInfo).yieldPct === (base.get('tol')!.info as ToleranceInfo).yieldPct && !routed.get('r2')!.errors.length && routed.get('r2')!.outs.out?.type === 'data';
+  const py = [...p.nodes, { id: 'py', type: 'python', position: { x: 0, y: 0 }, data: { code: 'x = 1.0', run: 1, outs: [{ name: 'x', kind: 'data' }] } }] as AppNode[];
+  const pyEdges = [...p.edges.filter((e) => !(e.target === 'obj')), { id: 'p-a', source: 'tmm', sourceHandle: 'out', target: 'py', targetHandle: 'in-0' }, { id: 'p-b', source: 'py', sourceHandle: 'py-x', target: 'obj', targetHandle: 'in' }];
+  const pr = evaluateHeadless(py, pyEdges, lib3).results;
+  const note = pr.get('py')!.warnings.some((w) => w.includes('app only'));
+  const refused = pr.get('opt')!.errors.some((e) => e.includes('Python script'));
+  if (!(same && note && refused)) throw new Error(`reroute / python: same ${same}, note ${note}, refused ${refused} (${pr.get('opt')!.errors})`);
+  console.log('reroute and python: two Reroutes leave FWHM and the yield as they were; a Python script gives nothing in the scripts, the Optimization Engine refuses an objective fed by one');
+}
+
 if (QUICK) console.log(`quick run: ${skipped.length} slow blocks skipped — ${skipped.join('; ')}. The full run: npm run check:tmm`);

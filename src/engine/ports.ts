@@ -1,4 +1,5 @@
 // Typed ports: a connection is valid only when the target accepts the source's port type.
+import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types.ts';
 
 export type PortType =
@@ -26,8 +27,36 @@ export const PORT_COLORS: Record<PortType, string> = {
   note: '#8a93a6',
 };
 
-export function sourcePort(node: AppNode, handle?: string | null): PortType | null {
+// the names of the port types (the ports' tooltips)
+export const PORT_LABELS: Record<PortType, string> = {
+  material: 'material',
+  layer: 'layer',
+  stack: 'stack',
+  'param-theta': 'angle θ',
+  'param-lambda': 'wavelength λ',
+  'sweep-number': 'number sweep',
+  'sweep-polarization': 'polarization sweep',
+  data: 'data',
+  objective: 'objective',
+  note: 'note',
+};
+
+// What a Reroute passes on is known from the graph: the nodes and the connections (absent: a Reroute gives nothing).
+export type PortContext = { node: (id: string) => AppNode | undefined; edges: Edge[] };
+export const ALL_PORTS = Object.keys(PORT_COLORS) as PortType[];
+
+export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortContext, depth = 0): PortType | null {
   switch (node.type) {
+    case 'python': {
+      if (!handle?.startsWith('py-')) return null;
+      const o = node.data.outs?.find((q) => `py-${q.name}` === handle);
+      return o?.kind === 'material' ? 'material' : 'data';
+    }
+    case 'reroute': {
+      const e = ctx?.edges.find((q) => q.target === node.id && q.targetHandle === 'in');
+      const up = e && ctx?.node(e.source);
+      return up && depth < 50 ? sourcePort(up, e.sourceHandle, ctx, depth + 1) : null;
+    }
     case 'material':
     case 'matsweep':
     case 'aniso':
@@ -154,6 +183,10 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return handle === 'in' || handle === 'target' || handle === 'criteria' ? ['data'] : [];
     case 'notes':
       return handle.startsWith('item-') ? ['note'] : [];
+    case 'reroute':
+      return handle === 'in' ? ALL_PORTS : [];
+    case 'python':
+      return /^in-\d+$/.test(handle) ? ['data', 'material', 'sweep-number', 'param-theta', 'param-lambda'] : [];
     case 'kinetics':
       return handle === 'sweep' ? ['sweep-number'] : [];
     case 'sensorgram':
@@ -167,8 +200,10 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
 export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) =>
   ((node?.type === 'compare' || node?.type === 'matsweep' || node?.type === 'formula' || node?.type === 'merge' || node?.type === 'custom') && handle === 'in') || (node?.type === 'optimizer' && handle === 'obj') || (node?.type === 'filter' && handle === 'target') || (node?.type === 'tolerance' && handle === 'criteria');
 
-export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: string | null, sourceHandle?: string | null) {
+export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: string | null, sourceHandle?: string | null, ctx?: PortContext) {
   if (!source || !target || source.id === target.id) return false;
-  const p = sourcePort(source, sourceHandle);
+  // (into a Reroute: anything of a known type)
+  if (target.type === 'reroute') return targetHandle === 'in' && sourcePort(source, sourceHandle, ctx) !== null;
+  const p = sourcePort(source, sourceHandle, ctx);
   return !!p && targetAccepts(target, targetHandle).includes(p);
 }

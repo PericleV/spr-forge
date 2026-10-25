@@ -172,13 +172,13 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
             <label className="radio">
               branches
               <select className="nodrag" value={data.branch1} onChange={(e) => set({ branch1: e.target.value, autoGuess: true })}>
-                <option value="">—</option>
+                <option value="">–</option>
                 {fields.map((f) => (
                   <option key={f.key} value={f.key}>{f.short}</option>
                 ))}
               </select>
               <select className="nodrag" value={data.branch2} onChange={(e) => set({ branch2: e.target.value, autoGuess: true })}>
-                <option value="">—</option>
+                <option value="">–</option>
                 {fields.map((f) => (
                   <option key={f.key} value={f.key}>{f.short}</option>
                 ))}
@@ -292,7 +292,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
       </div>
       <div className="stack-rows results">
         <div className="val">
-          R² = {info && Number.isFinite(info.live.r2) ? info.live.r2.toFixed(5) : '—'} · RMSE = {info && Number.isFinite(info.live.rmse) ? info.live.rmse.toPrecision(3) : '—'}
+          R² = {info && Number.isFinite(info.live.r2) ? info.live.r2.toFixed(5) : '–'} · RMSE = {info && Number.isFinite(info.live.rmse) ? info.live.rmse.toPrecision(3) : '–'}
           {fresh ? ` · fitted (${data.stats!.iterations} it., ${data.stats!.points} pts)` : data.stats ? ' · the data changed since the fit' : ''}
         </div>
         {!spectrum && info?.crossing !== undefined && Number.isFinite(info.crossing) && (

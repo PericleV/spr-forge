@@ -76,7 +76,7 @@ export function ComponentsEditor(props: {
         );
       })}
       <select className="nodrag" value="" onChange={(e) => e.target.value && props.onAdd(e.target.value as ComponentType)}>
-        <option value="">+ add component…</option>
+        <option value="">+ add component</option>
         {(Object.keys(COMPONENTS) as ComponentType[]).map((t) => (
           <option key={t} value={t}>{COMPONENTS[t].label}</option>
         ))}

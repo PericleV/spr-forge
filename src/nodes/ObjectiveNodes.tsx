@@ -8,7 +8,7 @@ import type { AppNode, ObjectiveData, ObjectiveNode, VariableData, VariableNode,
 import { Messages, NumInput, OutPort, Port, SliceControls } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
-const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}` : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}` : '–');
 
 export function VariableNodeView({ id, data }: NodeProps<VariableNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
@@ -234,7 +234,7 @@ export function ZonesNodeView({ id, data }: NodeProps<ZonesNode>) {
               <option value="le">keep ≤</option>
             </select>
             <select className="nodrag" value={z.field} onChange={(e) => setZone(i, { field: e.target.value })}>
-              <option value="">— quantity —</option>
+              <option value="">choose a quantity</option>
               {fields.map((f) => (
                 <option key={f.key} value={f.key}>{f.short}</option>
               ))}
@@ -261,7 +261,7 @@ export function ZonesNodeView({ id, data }: NodeProps<ZonesNode>) {
         {(data.outside !== 'ignore' || data.reduce === 'contrast') && (
           <>
             <select className="nodrag" value={data.outsideField} onChange={(e) => set({ outsideField: e.target.value })}>
-              <option value="">— quantity —</option>
+              <option value="">choose a quantity</option>
               {fields.map((f) => (
                 <option key={f.key} value={f.key}>{f.short}</option>
               ))}

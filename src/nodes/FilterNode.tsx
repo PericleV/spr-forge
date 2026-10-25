@@ -13,7 +13,7 @@ import { layerSensitivity, MATERIAL_LETTERS } from '../engine/design.ts';
 import { CHART_W } from './sizes.ts';
 
 const LETTERS = MATERIAL_LETTERS;
-const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '—');
+const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '–');
 const time = (s: number) => (s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
 
 const MAT_COLORS = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc948', '#9c755f'];
@@ -296,7 +296,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
         </label>
       </div>
       <div className="row wrap">
-        <label className="radio" title="A converging beam around each angle: the spectra are averaged over its rays (pupil filled uniformly; s / p in each ray's own plane of incidence — exact for unpolarized light)">
+        <label className="radio" title="A converging beam around each angle: the spectra are averaged over its rays (pupil filled uniformly; s / p in each ray's own plane of incidence: exact for unpolarized light)">
           <input className="nodrag" type="checkbox" checked={!!data.cone} onChange={(e) => set({ cone: e.target.checked })} />
           cone of light
         </label>
@@ -311,7 +311,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
             ) : (
               <>
                 f/ <NumInput className="tiny" value={data.coneF ?? 4} step={0.5} onChange={(coneF) => set({ coneF })} />
-                <span className="muted">= ±{info?.cone !== undefined ? info.cone.toFixed(2) : '—'}°</span>
+                <span className="muted">= ±{info?.cone !== undefined ? info.cone.toFixed(2) : '–'}°</span>
               </>
             )}
           </>
@@ -477,7 +477,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
                     <td>{info?.names[L.m] ?? LETTERS[L.m]}</td>
                     <td><NumInput className="short" value={+L.d.toFixed(3)} step={1} disabled={running} onChange={(d) => Number.isFinite(d) && d >= 0 && setLayer(side, i, { d })} /></td>
                     <td><input className="nodrag" type="checkbox" checked={!!L.fix} disabled={running} onChange={(e) => setLayer(side, i, { fix: e.target.checked || undefined })} /></td>
-                    <td><input className="nodrag tie" value={L.tie ?? ''} disabled={running} placeholder="—" onChange={(e) => setLayer(side, i, { tie: e.target.value.trim() || undefined })} /></td>
+                    <td><input className="nodrag tie" value={L.tie ?? ''} disabled={running} placeholder="–" onChange={(e) => setLayer(side, i, { tie: e.target.value.trim() || undefined })} /></td>
                   </tr>
                 )),
               ])}

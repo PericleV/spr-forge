@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { applyMark, SHOW_FORMATTING, type Mark } from '../notes/markup.ts';
 import { NoteText } from '../notes/NoteText.tsx';
-import { NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react';
+import { NodeResizer, useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { FormulaInfo } from '../engine/evaluate.ts';
 import { FUNCTION_NAMES } from '../engine/expr.ts';
@@ -9,7 +9,7 @@ import type { FormulaStat } from '../engine/objectives.ts';
 import type { AppNode, FormulaData, FormulaNode, FormulaTerm, InfoData, InfoNode } from '../types.ts';
 import { AutoText, Messages, NumInput, OutPort, Port, Radios, SliceControls } from './ui.tsx';
 
-const fmt = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? `${+v.toPrecision(5)}` : '—');
+const fmt = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? `${+v.toPrecision(5)}` : '–');
 
 // Free-text note: what this part of the graph does. Formatted text (markup.ts): edited as text with a small toolbar,
 // shown formatted when not edited; its output goes to Combine notes.
@@ -22,6 +22,8 @@ const MARK_BUTTONS: [Mark, string, string, CSSProperties][] = [
 export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const set = (patch: Partial<InfoData>) => updateNodeData(id, patch);
+  // the note's output (for Combine notes, kept for the projects that use it): shown only while connected
+  const linked = useNodeConnections({ handleType: 'source', handleId: 'out' }).length > 0;
   const [editing, setEditing] = useState(false);
   const [textColor, setTextColor] = useState('#c00000');
   const area = useRef<HTMLTextAreaElement>(null);
@@ -73,9 +75,9 @@ export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
         <div className="row port-row">
           <AutoText className="title-input" value={data.title} placeholder="Title" onChange={(title) => set({ title })} />
           <input className="nodrag" type="color" value={data.color || '#8a93a6'} title="colour of the note" onChange={(e) => set({ color: e.target.value })} />
-          <Port kind="source" id="out" port="note" />
+          {linked && <Port kind="source" id="out" port="note" />}
         </div>
-        <textarea className="nodrag nowheel" value={data.text} placeholder="Notes: what this part of the graph does, assumptions, results…" onChange={(e) => set({ text: e.target.value })} />
+        <textarea className="nodrag nowheel" value={data.text} placeholder="Notes: what this part of the graph does, assumptions, results" onChange={(e) => set({ text: e.target.value })} />
       </div>
     );
   return (
@@ -85,7 +87,7 @@ export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
       <div className="row port-row">
         <AutoText className="title-input" value={data.title} placeholder="Title" onChange={(title) => set({ title })} />
         <input className="nodrag" type="color" value={data.color || '#8a93a6'} title="colour of the note" onChange={(e) => set({ color: e.target.value })} />
-        <Port kind="source" id="out" port="note" />
+        {linked && <Port kind="source" id="out" port="note" />}
       </div>
       {editing && (
         <div className="row note-bar" ref={bar}>
@@ -108,7 +110,7 @@ export function InfoNodeView({ id, data, selected }: NodeProps<InfoNode>) {
           ref={area}
           className="nodrag nowheel"
           value={data.text}
-          placeholder="Notes: what this part of the graph does, assumptions, results…"
+          placeholder="Notes: what this part of the graph does, assumptions, results"
           onChange={(e) => {
             pending.current = null;
             set({ text: e.target.value });
@@ -197,7 +199,7 @@ export function FormulaNodeView({ id, data }: NodeProps<FormulaNode>) {
         Name
         <input className="nodrag" value={data.name} placeholder="auto" onChange={(e) => set({ name: e.target.value })} />
       </label>
-      <div className="hint">Connect analysis outputs or spectra (several allowed): FWHM, Sensitivity (S, FOM), Min / Max, Fit parameters, Compute TMM (e.g. Ts / Tp at a wavelength, the fraction of points with R ≥ 0.99)…</div>
+      <div className="hint">Connect analysis outputs or spectra (several allowed): FWHM, Sensitivity (S, FOM), Min / Max, Fit parameters, Compute TMM (e.g. Ts / Tp at a wavelength, the fraction of points with R ≥ 0.99), and others.</div>
       <div className="zones">
         {data.terms.flatMap((t, i) => [
           <div className="zone-row" key={i}>
@@ -216,7 +218,7 @@ export function FormulaNodeView({ id, data }: NodeProps<FormulaNode>) {
                 setTerm(i, { source, field });
               }}
             >
-              {!options.some((o) => o.value === `${t.source}|${t.field}`) && <option value={`${t.source}|${t.field}`}>{t.field || '(choose)'} — not connected</option>}
+              {!options.some((o) => o.value === `${t.source}|${t.field}`) && <option value={`${t.source}|${t.field}`}>{t.field || '(choose)'} (not connected)</option>}
               {options.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}

@@ -567,6 +567,67 @@ export const robustSprExample = (): Project =>
     ],
   );
 
+// Python scripts in a graph: a Drude metal made in Python is the film of an SPR chip; a second script fits the dip.
+const PY_DRUDE = `# A Drude metal: ε(E) = ε∞ − ωp² / (E² + iγE), E in eV
+lam = np.linspace(400, 1600, 1201)      # nm
+E = 1239.84 / lam                        # eV
+eps_inf, wp, gamma = 9.8, 9.0, 0.067
+metal = Material(lam, np.sqrt(eps_inf - wp**2 / (E**2 + 1j * gamma * E)), name="Drude metal")
+`;
+const PY_FIT = `from scipy.optimize import curve_fit
+
+# A: R over θ of the Compute TMM
+theta = A.axes["theta"]
+R = np.squeeze(A.R)
+
+def dip(t, t0, w, depth, base):
+    return base - depth / (1 + ((t - t0) / (w / 2)) ** 2)
+
+i = np.argmin(R)
+p, cov = curve_fit(dip, theta, R, p0=[theta[i], 1.0, R.max() - R[i], R.max()])
+theta0, fwhm = p[0], abs(p[1])
+print(f"dip at {theta0:.3f}°, FWHM {fwhm:.3f}° (Lorentzian fit)")
+fit = Data({"theta": theta}, units={"theta": "°"}, R=R, R_fit=dip(theta, *p))
+`;
+export const pythonSprExample = (): Project =>
+  project(
+    [
+      {
+        id: 'note',
+        type: 'info',
+        position: { x: -380, y: -330 },
+        data: {
+          ...INFO_DEFAULTS,
+          title: 'Python scripts in a graph',
+          text: 'Top left, a Python script makes a material: a Drude metal written as a formula (Material(λ, ñ)). Its port goes to the Layer like a Material node; the chip is BK7 / Drude metal 50 nm / water at 633 nm.\n\nRight, a second script takes the R(θ) of Compute TMM (its variable A), fits a Lorentzian dip with scipy and gives out the data and the fit (Data) for the Plot, and the dip angle and width as numbers.\n\nBoth run when the project opens (the first time Python is downloaded, about 10 MB). Change ωp or γ in the first script and press Run: the dip moves and the fit follows (Auto run in Options and examples does it at every change). Help ▸ Python script explains the variables, the outputs and the examples.',
+          width: 440,
+          height: 330,
+        },
+      },
+      { id: 'pymat', type: 'python', position: { x: -560, y: 120 }, data: { code: PY_DRUDE, run: 1, outs: [{ name: 'metal', kind: 'material' }], hide: ['lam', 'E', 'eps_inf', 'wp', 'gamma'] } },
+      material('bk7', 'BK7', 0, -40),
+      { id: 'film', type: 'layer', position: { x: 0, y: 200 }, data: { label: 'Drude film', thickness: 50, layers2D: 1 } },
+      material('water', 'Water', 0, 420),
+      { id: 'stack', type: 'combine', position: { x: 300, y: 150 }, data: { name: 'SPR chip', count: 1 } },
+      { id: 'wl', type: 'param', position: { x: 300, y: -140 }, data: param('lambda', 'constant', 633, 500, 1000, 1) },
+      { id: 'ang', type: 'param', position: { x: 300, y: 440 }, data: param('theta', 'range', 70, 60, 85, 0.05) },
+      { id: 'tmm', type: 'compute', position: { x: 640, y: 60 }, data: compute('SPR chip') },
+      { id: 'pyfit', type: 'python', position: { x: 1000, y: -40 }, data: { code: PY_FIT, run: 1, outs: [{ name: 'fit', kind: 'data' }, { name: 'theta0', kind: 'data' }, { name: 'fwhm', kind: 'data' }], hide: ['theta', 'R', 'i', 'p', 'cov'] } },
+      { id: 'plot', type: 'plot', position: { x: 1560, y: -40 }, data: PLOT_DEFAULTS },
+    ] as AppNode[],
+    [
+      edge('pymat', 'film', 'mat', 'py-metal'),
+      edge('bk7', 'stack', 'incident'),
+      edge('film', 'stack', 'item-0'),
+      edge('water', 'stack', 'exit'),
+      edge('stack', 'tmm', 'stack'),
+      edge('wl', 'tmm', 'lambda'),
+      edge('ang', 'tmm', 'theta'),
+      edge('tmm', 'pyfit', 'in-0'),
+      edge('pyfit', 'plot', 'in', 'py-fit'),
+    ],
+  );
+
 export const toleranceExample = (): Project =>
   project(
     [
@@ -752,7 +813,7 @@ export const rcwaConvergenceExample = (): Project =>
         data: {
           ...INFO_DEFAULTS,
           title: 'RCWA convergence vs the orders N',
-          text: 'The gold grating of “SPR by grating coupling” (Λ = 500 nm, 40 nm deep, fill 0.5, 633 nm, TM). A Sweep (N = 10, 15, 20, 30, 40) on the orders port of Compute RCWA: every step is computed at its own N and the data get an axis “orders N”. FWHM: the dip angle and width for each N (plot vs N). Extract data: R at θ = 10.5° (interpolated between the computed angles) for each N. Custom data: the gold Material gives ε and n_sp = Re √(ε/(ε + 1)); the shallow-grating angle asin(λ/Λ − n_sp) = 12.8° against the computed dip (the 40 nm grating pulls it down by ≈ 2.2°). Metal gratings in TM converge slowly and not monotonically: here the dip angle settles within ±0.05° while R at the dip still moves between 0.04 and 0.08 up to N = 40 — take N from such a study, for the quantity you report.',
+          text: 'The gold grating of “SPR by grating coupling” (Λ = 500 nm, 40 nm deep, fill 0.5, 633 nm, TM). A Sweep (N = 10, 15, 20, 30, 40) on the orders port of Compute RCWA: every step is computed at its own N and the data get an axis “orders N”. FWHM: the dip angle and width for each N (plot vs N). Extract data: R at θ = 10.5° (interpolated between the computed angles) for each N. Custom data: the gold Material gives ε and n_sp = Re √(ε/(ε + 1)); the shallow-grating angle asin(λ/Λ − n_sp) = 12.8° against the computed dip (the 40 nm grating pulls it down by ≈ 2.2°). Metal gratings in TM converge slowly and not monotonically: here the dip angle settles within ±0.05° while R at the dip still moves between 0.04 and 0.08 up to N = 40; take N from such a study, for the quantity you report.',
           width: 380,
           height: 300,
         },
@@ -1277,7 +1338,7 @@ export const arBothSidesExample = (): Project =>
           title: 'AR coating on both faces of a plate (four materials)',
           text:
             'Specification: total reflectance of a 1 mm BK7 plate (both faces, incoherent) R ≤ 0.2 % on 420–680 nm, at normal incidence (bare plate: 8.1 %).\n\n' +
-            'Four coating materials: TiO₂, Al₂O₃, SiO₂ and MgF₂ (n = 1.38, constant): the needle function is computed for every material, the deep search tries all its local minima and keeps the best refined design — the choice of the materials is part of the optimization.\n\n' +
+            'Four coating materials: TiO₂, Al₂O₃, SiO₂ and MgF₂ (n = 1.38, constant): the needle function is computed for every material, the deep search tries all its local minima and keeps the best refined design; the choice of the materials is part of the optimization.\n\n' +
             'Press Start: both faces are designed (each one first, then together).',
           width: 360,
           height: 300,
@@ -1612,7 +1673,7 @@ export const pelesExample = (): Project =>
           ...INFO_DEFAULTS,
           title: 'Castle filter: the contour of the Peleș castle as T(λ)',
           text:
-            'In the spirit of OIC 2025 Problem A (Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026)), whose target followed the contour of the Neuschwanstein castle: here a stylized silhouette of the Peleș castle — the main tower with its tall spire (T = 0.95 at 660 nm), the second tower (0.80 at 800 nm), gables and turrets — on 400–1000 nm, normal incidence.\n\n' +
+            'In the spirit of OIC 2025 Problem A (Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026)), whose target followed the contour of the Neuschwanstein castle: here a stylized silhouette of the Peleș castle: the main tower with its tall spire (T = 0.95 at 660 nm), the second tower (0.80 at 800 nm), gables and turrets; on 400–1000 nm, normal incidence.\n\n' +
             'Contest materials: H (n = 2.25) and M (n = 1.38), the pair of highest contrast used by the winner; substrate 1.52 (no back side), layers ≥ 5 nm, ≤ 80 layers. MF = 100·RMS(T − T̂) as in the contest (Target curve with tolerance 0.01).\n\n' +
             'Press Start in the Filter designer (deep search from (HL)^10 at 700 nm): about MF 2–3 % in a minute (44 layers, 3.7 µm); the longer it runs, the sharper the spires. For scale: the winner of the Neuschwanstein problem reached MF 0.72 % with 100 layers and 11 µm. The Plot below checks the designed stack with an independent TMM (Compute + Curve match).',
           width: 400,
@@ -1724,7 +1785,7 @@ export const huGratingExample = (): Project =>
           text:
             'C. Hu, Optik 122, 1881 (2011). Light (TM, 900 nm) comes from the analyte onto an aluminium grating (Λ = 350 nm, 27 nm deep, metal fraction 0.9) coated by 3 nm of gold (drawn as a pixel map: the film also covers the side walls); Drude metals of the paper. The −1st order excites the plasmon: the dip moves to smaller angles when n grows. The analyte is one Material with an index sweep (1.32 … 1.37), so it fills the grooves too.\n\n' +
             'Press Run on Compute RCWA (1505 points: about a minute on a multi-core computer). N = 20: the 3 nm side walls ask for more (the warning), but N = 20 and 30 give the same dip angles to 0.02° here. FWHM gives the dip angle and width for each n; Custom data (with the analyte Material connected: its n) computes S = Δθ/Δn against n = 1.32 and χ = S/FWHM.\n\n' +
-            'Paper: shift 9.39° for 1.32 → 1.37, FWHM 0.93°, S = 187 °/RIU (regression over five indices), χ = 201 RIU⁻¹. Here: shift ≈ 9.25°, FWHM ≈ 0.81°, S ≈ 185 °/RIU. Also checked (see the tests): the plain Au grating, 40 nm deep, 60.55° → 51.87° in the paper, 60.5–60.6° → 51.6–51.8° here as N goes from 10 to 50 — metal gratings in TM converge in oscillations, and the paper does not give its N; the gold grating 30 nm deep, 63.02° → 54.37° (printed 53.37°) — 63.1° → 54.4° here.',
+            'Paper: shift 9.39° for 1.32 → 1.37, FWHM 0.93°, S = 187 °/RIU (regression over five indices), χ = 201 RIU⁻¹. Here: shift ≈ 9.25°, FWHM ≈ 0.81°, S ≈ 185 °/RIU. Also checked (see the tests): the plain Au grating, 40 nm deep, 60.55° → 51.87° in the paper, 60.5–60.6° → 51.6–51.8° here as N goes from 10 to 50; metal gratings in TM converge in oscillations, and the paper does not give its N; the gold grating 30 nm deep, 63.02° → 54.37° (printed 53.37°); 63.1° → 54.4° here.',
           width: 460,
           height: 520,
         },
@@ -1818,7 +1879,7 @@ export const teneMalariaExample = (sys: 3 | 4): Project => {
           text:
             `T. Tene et al., Front. Bioeng. Biotechnol. 13, 1580344 (2025): BK7 1.5151 | Ag ${s4 ? 40 : 45} nm | Si₃N₄ ${s4 ? 6 : 5} nm | 2 graphene layers (3.0 + 1.1491i, 0.34 nm)${s4 ? ' | ssDNA 5 nm (1.462)' : ''} | erythrocytes; TM, 633 nm. The medium is a Material sweep: normal (1.402), ring (1.395), trophozoite (1.381), schizont (1.371).\n\n` +
             'FWHM gives the dip angle, its width and R at the dip for every medium. Extract data takes the normal medium as the reference; Custom data (with the medium and the normal Material connected: their n) computes Δθ, Δn and S = Δθ/Δn, then DA = Δθ/FWHM, QF = S/FWHM, FoM = S(1 − Rmin)/FWHM, LoD = Δn/Δθ · 0.005°, CSF = S(Rmax − Rmin)/FWHM (Rmax before the dip: Min / max).\n\n' +
-            `Paper (Tables 3, 4): Δθ ${P.dTheta.join(' / ')}°, S ${P.S.join(' / ')} °/RIU — reproduced to the last digit, as the dip angles and depths. Their widths (${P.FWHM.join(' / ')}°) follow an undeclared definition: ours are the half-depth widths, so DA, QF, FoM and CSF differ by up to ~10 %; LoD depends only on Δθ and agrees.`,
+            `Paper (Tables 3, 4): Δθ ${P.dTheta.join(' / ')}°, S ${P.S.join(' / ')} °/RIU: reproduced to the last digit, as the dip angles and depths. Their widths (${P.FWHM.join(' / ')}°) follow an undeclared definition: ours are the half-depth widths, so DA, QF, FoM and CSF differ by up to ~10 %; LoD depends only on Δθ and agrees.`,
           width: 440,
           height: 470,
         },
@@ -1943,7 +2004,7 @@ export const oicCastleExample = (): Project => {
           title: 'OIC 2025 Problem A: the Neuschwanstein castle',
           text:
             'Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026). The target (Data File 1: T in % from 300 to 1100 nm every 0.1 nm) follows the contour of the Neuschwanstein castle; normal incidence, air | coating | substrate 1.52 (no back side); materials without dispersion (Tables 2, 3). The Filter designer holds the committee’s 17-layer example design (Data File 2, with Ag, Au and Ni layers).\n\n' +
-            'MF = 100·√(mean (T − T̂)²) over the 8001 points, built from the nodes: Extract data takes T(λ) of the computation, Custom data the squared deviation from the target at every point, Extract data its mean over λ, Custom data 100·√(mean). Official value of this design: MF = 7.006763 — the nodes give the same to all 7 digits.\n\n' +
+            'MF = 100·√(mean (T − T̂)²) over the 8001 points, built from the nodes: Extract data takes T(λ) of the computation, Custom data the squared deviation from the target at every point, Extract data its mean over λ, Custom data 100·√(mean). Official value of this design: MF = 7.006763; the nodes give the same to all 7 digits.\n\n' +
             'For scale: the winning designs (H and M only, 100 layers, ≈ 11 µm) reach MF ≈ 0.72 before production. Press Start in the Filter designer (it replaces the example design) to try.',
           width: 420,
           height: 430,
@@ -1965,7 +2026,7 @@ export const oicCastleExample = (): Project => {
         position: { x: -420, y: -60 },
         data: {
           ...FILTER_DEFAULTS,
-          name: 'OIC 2025 A — committee design',
+          name: 'OIC 2025 A: committee design',
           preset: 'custom',
           bands: [],
           lmin: 300,
@@ -2036,7 +2097,7 @@ export const oicNotchExample = (): Project => {
           title: 'OIC 2025 Problem B: immersed three-line polarizing notch',
           text:
             'Kruschwitz, Trubetskov, Keck, Appl. Opt. 65, A12 (2026). The coating sits on the diagonal of a cube (n = 1.80): light at 45° inside the glass; the three lines 450, 550 and 650 nm are reflected in s polarization, everything else goes through. Materials of Table 8 (no dispersion); at most 100 layers and 20 µm. The Filter designer holds the committee’s 68-layer example (Data File 3).\n\n' +
-            'MF = (500/3)·Σ Ts/Tp at 450, 550, 650 nm + #(Rs ≥ 99 %) / #(Ts ≥ 99 %) over 400–700 nm every 0.1 nm (Eq. 2), built from the nodes: two computations (s, p); Custom data per wavelength (Ts/Tp and the Heaviside steps step(Rs − 0.99), step(Ts − 0.99)); Extract data at 450, 550, 650 nm and the mean of the steps over λ (the fraction of the points); Custom data sums them. Official value: MF = 1.8540762059 — the nodes give it to 13 digits.\n\n' +
+            'MF = (500/3)·Σ Ts/Tp at 450, 550, 650 nm + #(Rs ≥ 99 %) / #(Ts ≥ 99 %) over 400–700 nm every 0.1 nm (Eq. 2), built from the nodes: two computations (s, p); Custom data per wavelength (Ts/Tp and the Heaviside steps step(Rs − 0.99), step(Ts − 0.99)); Extract data at 450, 550, 650 nm and the mean of the steps over λ (the fraction of the points); Custom data sums them. Official value: MF = 1.8540762059; the nodes give it to 13 digits.\n\n' +
             'Results of the challenge (Table 10): 0.265 (Lemarchand, 99 layers), 0.366, 0.576, 0.849, 8.14, 10.33.',
           width: 440,
           height: 470,
@@ -2057,7 +2118,7 @@ export const oicNotchExample = (): Project => {
         position: { x: -420, y: -1700 },
         data: {
           ...TARGET_DEFAULTS,
-          name: 'B.1 — s polarization',
+          name: 'B.1, s polarization',
           mode: 'bands',
           min: 400,
           max: 700,
@@ -2076,7 +2137,7 @@ export const oicNotchExample = (): Project => {
         id: 'specP',
         type: 'target',
         position: { x: -420, y: -1080 },
-        data: { ...TARGET_DEFAULTS, name: 'B.1 — p polarization', mode: 'bands', min: 400, max: 700, step: 0.5, quantity: 'T', pol: 'p', angle: 45, tol: 0.01, bands: [{ lo: 400, hi: 700, value: 0.99, weight: 1, kind: 'ge' as const }] },
+        data: { ...TARGET_DEFAULTS, name: 'B.1, p polarization', mode: 'bands', min: 400, max: 700, step: 0.5, quantity: 'T', pol: 'p', angle: 45, tol: 0.01, bands: [{ lo: 400, hi: 700, value: 0.99, weight: 1, kind: 'ge' as const }] },
       },
       {
         id: 'filter',
@@ -2084,7 +2145,7 @@ export const oicNotchExample = (): Project => {
         position: { x: -420, y: -60 },
         data: {
           ...FILTER_DEFAULTS,
-          name: 'OIC 2025 B — committee design',
+          name: 'OIC 2025 B: committee design',
           preset: 'custom',
           bands: [],
           lmin: 400,
@@ -2198,7 +2259,7 @@ export const sprGaExample = (): Project =>
         data: {
           ...INFO_DEFAULTS,
           title: 'SPR sensor by a genetic algorithm (Sebek et al. 2023)',
-          text: 'M. Sebek, N. T. K. Thanh, X. Su, J. Teng, ACS Omega 8, 20792 (2023). Optimization Engine, algorithm “Genetic — layer sequences”: tick the materials of each role (prisms, plasmonic metals, other metals, dielectrics, 2D materials counted in monolayers) and their limits; the algorithm builds sensors between the prism and the sensing medium and maximizes the angular sensitivity S = Δθ/Δn of the TM dip for n_s = 1.332 → 1.337. As in the article: population 50, 10 % elites, a wheel weighted by S, children made by one mutation (33 %: thickness ± 1 step, material, swap, add, delete) or one crossover (67 %: crossover point, materials exchanged), invalid children replaced from the pool of valid structures; single-mode conditions: dip deeper than 0.4, left / right half width ≤ 1.25, smooth.\n\nThe structure shown at first is the article\'s 633 nm sensor, CaF₂ | 17 L hBN | 12 nm Al | 28 nm Ag | 17 L hBN: 578 deg/RIU in the article (85.0° → 87.9°), about 450 with the library data here (84.0° → 86.2°) — near grazing incidence S changes a lot with the optical data (their Table S1 is not available). Start runs the algorithm from random structures (seed 1: ~530 deg/RIU after 30 generations). Compute TMM + Sensitivity check the structure on the output independently.',
+          text: 'M. Sebek, N. T. K. Thanh, X. Su, J. Teng, ACS Omega 8, 20792 (2023). Optimization Engine, algorithm “Genetic: layer sequences”: tick the materials of each role (prisms, plasmonic metals, other metals, dielectrics, 2D materials counted in monolayers) and their limits; the algorithm builds sensors between the prism and the sensing medium and maximizes the angular sensitivity S = Δθ/Δn of the TM dip for n_s = 1.332 → 1.337. As in the article: population 50, 10 % elites, a wheel weighted by S, children made by one mutation (33 %: thickness ± 1 step, material, swap, add, delete) or one crossover (67 %: crossover point, materials exchanged), invalid children replaced from the pool of valid structures; single-mode conditions: dip deeper than 0.4, left / right half width ≤ 1.25, smooth.\n\nThe structure shown at first is the article\'s 633 nm sensor, CaF₂ | 17 L hBN | 12 nm Al | 28 nm Ag | 17 L hBN: 578 deg/RIU in the article (85.0° → 87.9°), about 450 with the library data here (84.0° → 86.2°); near grazing incidence S changes a lot with the optical data (their Table S1 is not available). Start runs the algorithm from random structures (seed 1: ~530 deg/RIU after 30 generations). Compute TMM + Sensitivity check the structure on the output independently.',
           width: 520,
           height: 340,
         },
@@ -2332,7 +2393,7 @@ export const lcCavityExample = (): Project =>
         data: {
           ...INFO_DEFAULTS,
           title: 'Liquid-crystal microcavity (Berreman 4×4)',
-          text: 'A 2 µm nematic liquid crystal (uniaxial: n_o = 1.52, n_e = 1.74) between two TiO₂/SiO₂ Bragg mirrors. The optic axis (the director) lies in the x-z plane, tilted by θ_c from the layer — an applied voltage turns it towards the normal.\n\nAt normal incidence, x-polarized light sees n(θ_c), from n_e (θ_c = 0) to n_o (90°); y-polarized light always sees n_o. The map T(λ, θ_c), for light polarized at 45° (both at once), shows the x modes tuned down while the y modes stay: an x mode crosses the next y mode — the degeneracy of modes of opposite polarization behind the Rashba–Dresselhaus spin–orbit coupling of K. Rechcińska et al., Science 366, 727 (2019).\n\nCompute TMM switches to the Berreman 4×4 method by itself (an anisotropic layer); its outputs add the TE / TM parts of R and T.',
+          text: 'A 2 µm nematic liquid crystal (uniaxial: n_o = 1.52, n_e = 1.74) between two TiO₂/SiO₂ Bragg mirrors. The optic axis (the director) lies in the x-z plane, tilted by θ_c from the layer: an applied voltage turns it towards the normal.\n\nAt normal incidence, x-polarized light sees n(θ_c), from n_e (θ_c = 0) to n_o (90°); y-polarized light always sees n_o. The map T(λ, θ_c), for light polarized at 45° (both at once), shows the x modes tuned down while the y modes stay: an x mode crosses the next y mode; the degeneracy of modes of opposite polarization behind the Rashba–Dresselhaus spin–orbit coupling of K. Rechcińska et al., Science 366, 727 (2019).\n\nCompute TMM switches to the Berreman 4×4 method by itself (an anisotropic layer); its outputs add the TE / TM parts of R and T.',
           width: 440,
           height: 300,
         },
@@ -2410,7 +2471,7 @@ export const anisoBicExample = (): Project =>
         data: {
           ...INFO_DEFAULTS,
           title: 'Bound state in the continuum, anisotropic defect (Pankin et al. 2022)',
-          text: 'A 1D photonic crystal in air: 20 periods on each side of an anisotropic layer (n_o = 1, n_e = 2, optic axis along x, 125 nm) and an isotropic one (n = 1, 250 nm) — the model of P. S. Pankin et al., J. Opt. Soc. Am. B 39, 968 (2022). x-polarized light sees a Bragg mirror (a gap around 1 µm); y-polarized light a uniform medium: a continuum of waves passing through.\n\nThe defect is the same anisotropic material, L thick, with its optic axis turned by φ = 45°: its localized x-like mode couples to the y continuum and appears as a Fano line in the reflection of y-polarized light (TE here). When the defect is a full-wave plate, (n_e − n_o) L = λ, the leakage cancels: a bound state in the continuum at L = 1 µm, λ = 1 µm, for any φ. The map R(λ, L) shows the line narrowing and vanishing there; its width grows as (L − 1 µm)².',
+          text: 'A 1D photonic crystal in air: 20 periods on each side of an anisotropic layer (n_o = 1, n_e = 2, optic axis along x, 125 nm) and an isotropic one (n = 1, 250 nm); the model of P. S. Pankin et al., J. Opt. Soc. Am. B 39, 968 (2022). x-polarized light sees a Bragg mirror (a gap around 1 µm); y-polarized light a uniform medium: a continuum of waves passing through.\n\nThe defect is the same anisotropic material, L thick, with its optic axis turned by φ = 45°: its localized x-like mode couples to the y continuum and appears as a Fano line in the reflection of y-polarized light (TE here). When the defect is a full-wave plate, (n_e − n_o) L = λ, the leakage cancels: a bound state in the continuum at L = 1 µm, λ = 1 µm, for any φ. The map R(λ, L) shows the line narrowing and vanishing there; its width grows as (L − 1 µm)².',
           width: 440,
           height: 310,
         },
@@ -2505,7 +2566,7 @@ export const liuBicExample = (): Project => {
         data: {
           ...INFO_DEFAULTS,
           title: 'BICs in an asymmetric PhC + anisotropic layer (Liu et al. 2023)',
-          text: 'Prism (1.52) / 10 × (TiO₂ 94 nm, SiO₂ 145 nm) / anisotropic layer 2.75 µm (n_o = 1.52 + 0.001i, n_e = 1.72 + 0.001i, optic axis in the layer plane at ϕ from x) / air — Z. Liu et al., Opt. Express 31, 8384 (2023). TM light at the Brewster angle of the PhC (53.08°) passes it; TE is reflected; under the layer, air reflects totally. So the TE modes of the layer are localized, and couple to the TM continuum only through the anisotropy: Fano lines in R, made visible by the small loss. They vanish at ϕ = 0° and 90° (symmetry-protected BICs) and at isolated points in between (Friedrich–Wintgen BICs).\n\nThe map reproduces their Fig. 3(a) with TiO₂ facing the prism and ϕ measured from x (the article gives neither the layer order nor, consistently, the origin of ϕ: its Eq. (1) says from y, its Eq. (2) and figures imply from x). The FW-BIC they call e (38.34°, 545.8 nm, finite elements) is at 37.2°, 543.7 nm here; the other three are 0.9–1.6° and 0.1–0.4 % lower too. RETICOLO gives the same R as this computation to 1e-13 on this structure.\n\nBelow: R(λ) around e for ϕ = 30 … 44°: the Fano dip shrinks to nothing at 37.2°.',
+          text: 'Prism (1.52) / 10 × (TiO₂ 94 nm, SiO₂ 145 nm) / anisotropic layer 2.75 µm (n_o = 1.52 + 0.001i, n_e = 1.72 + 0.001i, optic axis in the layer plane at ϕ from x) / air: Z. Liu et al., Opt. Express 31, 8384 (2023). TM light at the Brewster angle of the PhC (53.08°) passes it; TE is reflected; under the layer, air reflects totally. So the TE modes of the layer are localized, and couple to the TM continuum only through the anisotropy: Fano lines in R, made visible by the small loss. They vanish at ϕ = 0° and 90° (symmetry-protected BICs) and at isolated points in between (Friedrich–Wintgen BICs).\n\nThe map reproduces their Fig. 3(a) with TiO₂ facing the prism and ϕ measured from x (the article gives neither the layer order nor, consistently, the origin of ϕ: its Eq. (1) says from y, its Eq. (2) and figures imply from x). The FW-BIC they call e (38.34°, 545.8 nm, finite elements) is at 37.2°, 543.7 nm here; the other three are 0.9–1.6° and 0.1–0.4 % lower too. RETICOLO gives the same R as this computation to 1e-13 on this structure.\n\nBelow: R(λ) around e for ϕ = 30 … 44°: the Fano dip shrinks to nothing at 37.2°.',
           width: 460,
           height: 340,
         },
@@ -2610,7 +2671,7 @@ export const cotsExample = (): Project => {
         data: {
           ...INFO_DEFAULTS,
           title: 'Chiral optical Tamm states and a quasi-BIC (cholesteric + anisotropic mirrors)',
-          text: 'Top — Pyatnov et al., Photonics 5, 30 (2018): a right-handed cholesteric (n_o 1.54, n_e 1.71, pitch 400 nm) between two polarization-preserving anisotropic mirrors (10 periods of 100 + 100 nm uniaxial layers with axes at 0° and 90°), in n = 1.625. The helix reflects σ− circular light (helicity −1); σ− excites a chiral optical Tamm state at each boundary: one peak at 650 nm for d = 4 µm, two coupled ones for d = 1 µm (636 / 665 nm here and in the article). σ+ passes the helix: Fabry–Pérot peaks (625 nm at d = 1 µm, 639 nm at 4 µm, as in the article). The field profile shows the state localized at the boundaries.\n\nBottom — the state as a bound state in the continuum (Timofeev et al., Crystals 7, 113 (2017)): its frequency is in the stop band of σ− but in the continuum of σ+, which crosses the helix freely. Lit through the cholesteric onto a thick mirror (60 periods), it leaks into σ− through the helix, exp(−4π|n_f|L/λ), and into σ+ only through the mismatch of E and H at the mirror — non-zero because µ = 1 (a magnetic anisotropy equal to the electric one would make it a true BIC). The map of σ− → σ+ conversion shows the line narrowing to a floor (~0.24 nm, Q ≈ 2700) and complete conversion at L ≈ 3.4 µm, where the two leaks are equal (the Kopp–Genack crossover).',
+          text: 'Top: Pyatnov et al., Photonics 5, 30 (2018): a right-handed cholesteric (n_o 1.54, n_e 1.71, pitch 400 nm) between two polarization-preserving anisotropic mirrors (10 periods of 100 + 100 nm uniaxial layers with axes at 0° and 90°), in n = 1.625. The helix reflects σ− circular light (helicity −1); σ− excites a chiral optical Tamm state at each boundary: one peak at 650 nm for d = 4 µm, two coupled ones for d = 1 µm (636 / 665 nm here and in the article). σ+ passes the helix: Fabry–Pérot peaks (625 nm at d = 1 µm, 639 nm at 4 µm, as in the article). The field profile shows the state localized at the boundaries.\n\nBottom: the state as a bound state in the continuum (Timofeev et al., Crystals 7, 113 (2017)): its frequency is in the stop band of σ− but in the continuum of σ+, which crosses the helix freely. Lit through the cholesteric onto a thick mirror (60 periods), it leaks into σ− through the helix, exp(−4π|n_f|L/λ), and into σ+ only through the mismatch of E and H at the mirror: non-zero because µ = 1 (a magnetic anisotropy equal to the electric one would make it a true BIC). The map of σ− → σ+ conversion shows the line narrowing to a floor (~0.24 nm, Q ≈ 2700) and complete conversion at L ≈ 3.4 µm, where the two leaks are equal (the Kopp–Genack crossover).',
           width: 480,
           height: 380,
         },
@@ -2776,7 +2837,7 @@ export const roughFilmExample = (): Project =>
         data: {
           ...INFO_DEFAULTS,
           title: 'A film rough on both faces',
-          text: 'A 120 nm TiO₂ film on glass, in air, at normal incidence. Both faces are rough: two Roughness nodes in a row on the same Layer — the top (RMS 4 nm) and the bottom (RMS 3 nm), which follows the top with a correlation of 0.7 (a film that partly replicates its substrate). Correlation length 20 nm.\n\nCompute TMM takes the statistics of the heights (“ensemble”: no seed) and, per slice, a Bruggeman medium shaped by the features (σ high, cl wide: between the two Wiener bounds), and runs at once. Compute RCWA takes the smooth profiles themselves (FFF) for three seeds (press Run, a few minutes); Extract data averages them. Compare: the flat film, TMM and RCWA. The roughness lowers the reflectance in the blue; TMM follows RCWA within 0.0015 in R (at 450 nm: flat 0.144, RCWA 0.1342, TMM 0.1344). Switch the TMM medium to plain Bruggeman to see it overstate the change by half.\n\nOn metals, gentle roughness is another story: the effective-medium slices overstate it many times (Help → Roughness).',
+          text: 'A 120 nm TiO₂ film on glass, in air, at normal incidence. Both faces are rough: two Roughness nodes in a row on the same Layer: the top (RMS 4 nm) and the bottom (RMS 3 nm), which follows the top with a correlation of 0.7 (a film that partly replicates its substrate). Correlation length 20 nm.\n\nCompute TMM takes the statistics of the heights (“ensemble”: no seed) and, per slice, a Bruggeman medium shaped by the features (σ high, cl wide: between the two Wiener bounds), and runs at once. Compute RCWA takes the smooth profiles themselves (FFF) for three seeds (press Run, a few minutes); Extract data averages them. Compare: the flat film, TMM and RCWA. The roughness lowers the reflectance in the blue; TMM follows RCWA within 0.0015 in R (at 450 nm: flat 0.144, RCWA 0.1342, TMM 0.1344). Switch the TMM medium to plain Bruggeman to see it overstate the change by half.\n\nOn metals, gentle roughness is another story: the effective-medium slices overstate it many times (Help → Roughness).',
           width: 460,
           height: 300,
         },
@@ -2838,7 +2899,7 @@ export const roughFieldsExample = (): Project =>
           title: 'Rough gold SPR fields: staircase vs smooth profile (FFF)',
           text:
             'After Treebupachatsakul, Shinnakerdchoke & Pechprasarn, Sensors 23, 3377 (2023), Fig. 15c: BK7 / gold 50 nm whose top is rough (peak-to-peak h = 9 nm, correlation length 8 nm, 500 nm cell) / water, 633 nm, TM. The article computes the profile as a staircase of 1 nm rows (RCWA, 151 orders) and finds hot spots of |E|² at the sharp edges of the rough surface.\n\n' +
-            'The same realization here twice: Compute RCWA with “profiles: staircase slices” (9 slices) and with “profiles: smooth (FFF)” — the differential method with the normal-vector factorization (Popov & Nevière), which integrates the true profile without steps. Press Run on both, then on the two field maps (at the dip of each). The staircase puts a gold corner at every step; compare the maps, and the dips (Compare) with the flat film.\n\n' +
+            'The same realization here twice: Compute RCWA with “profiles: staircase slices” (9 slices) and with “profiles: smooth (FFF)”: the differential method with the normal-vector factorization (Popov & Nevière), which integrates the true profile without steps. Press Run on both, then on the two field maps (at the dip of each). The staircase puts a gold corner at every step; compare the maps, and the dips (Compare) with the flat film.\n\n' +
             'Check the orders N on both: the smooth profile converges at a few tens of orders, the staircase slowly (its corners).',
           width: 400,
           height: 330,
@@ -2961,7 +3022,7 @@ export const sensorgramSwellingExample = (): Project =>
     { name: 'swelling sensorgram', target: 'layer:2', mixing: 'bruggeman', bulk: false, readout: 'dip', track: true },
     {
       title: 'Sensorgram: a swelling hydrogel',
-      text: 'A 40 nm hydrogel (collapsed n = 1.50) on BK7 / Au 50 nm in water swells to 2.5× its thickness and collapses again (Binding kinetics, polymer swelling, τ = 40 s). Sensorgram takes the hydrogel layer as the target: its thickness grows as d₀(1 + s) and water fills the added volume (Bruggeman).\n\nThe layer gets thicker but its index drops toward that of water: here the dilution wins and the dip moves to smaller angles, by several degrees — far from the linear RU picture of a binding experiment.',
+      text: 'A 40 nm hydrogel (collapsed n = 1.50) on BK7 / Au 50 nm in water swells to 2.5× its thickness and collapses again (Binding kinetics, polymer swelling, τ = 40 s). Sensorgram takes the hydrogel layer as the target: its thickness grows as d₀(1 + s) and water fills the added volume (Bruggeman).\n\nThe layer gets thicker but its index drops toward that of water: here the dilution wins and the dip moves to smaller angles, by several degrees; far from the linear RU picture of a binding experiment.',
     },
     { layers: [{ id: 'gel', type: 'layer', position: { x: 0, y: 540 }, data: { label: 'hydrogel', thickness: 40, layers2D: 1 } } as AppNode], nodes: [{ id: 'gelm', type: 'material', position: { x: -330, y: 540 }, data: { ...materialData('user-hydrogel'), color: '#7fb3a8' } } as AppNode], edges: [edge('gelm', 'gel', 'mat')], theta: [66, 89, 0.05] },
   );
@@ -3020,7 +3081,7 @@ export const myoglobinRsaExample = (): Project => {
         data: {
           ...INFO_DEFAULTS,
           title: 'Protein adsorption: random packing and the double layer (Wasilewska et al. 2021, benchmark)',
-          text: 'Myoglobin (17.8 kDa, 4.5 × 3.5 × 2.5 nm, lying) adsorbs from a 5 mg/L solution (281 nM) on silica at pH 3.5 (M. Wasilewska et al., Int. J. Environ. Res. Public Health 18, 4944 (2021), QCM and OWLS). Binding kinetics: a free surface — the molecules land at random places and cannot overlap (random sequential adsorption), transport-limited (kt), irreversible (kd = 0).\n\nTwo buffers, with the ζ potential the paper measured: 10 mM NaCl (ζ = 38 mV, Debye length 3.0 nm) and 150 mM (ζ = 15 mV, 0.8 nm). At low salt the molecules repel each other across the double layer and pack as larger discs (effective hard particle, 1 kT).\n\nPredicted maximum coverage: 0.595 and 1.31 mg/m² (= ng/mm²). Measured (QCM, the irreversibly bound fraction): 0.60 ± 0.1 and 1.3 ± 0.1; OWLS 0.7 and 1.5. Nothing is fitted: the dimensions are those of the crystal structure, ζ from the paper. kt only sets the time scale (a linear, transport-limited start, a few minutes to the plateau as in their runs).\n\nThe silica here is a 10 nm SiO₂ film on an SPR chip (BK7 / Au 50 nm, 633 nm): the Sensorgrams show what an SPR instrument would see.',
+          text: 'Myoglobin (17.8 kDa, 4.5 × 3.5 × 2.5 nm, lying) adsorbs from a 5 mg/L solution (281 nM) on silica at pH 3.5 (M. Wasilewska et al., Int. J. Environ. Res. Public Health 18, 4944 (2021), QCM and OWLS). Binding kinetics: a free surface: the molecules land at random places and cannot overlap (random sequential adsorption), transport-limited (kt), irreversible (kd = 0).\n\nTwo buffers, with the ζ potential the paper measured: 10 mM NaCl (ζ = 38 mV, Debye length 3.0 nm) and 150 mM (ζ = 15 mV, 0.8 nm). At low salt the molecules repel each other across the double layer and pack as larger discs (effective hard particle, 1 kT).\n\nPredicted maximum coverage: 0.595 and 1.31 mg/m² (= ng/mm²). Measured (QCM, the irreversibly bound fraction): 0.60 ± 0.1 and 1.3 ± 0.1; OWLS 0.7 and 1.5. Nothing is fitted: the dimensions are those of the crystal structure, ζ from the paper. kt only sets the time scale (a linear, transport-limited start, a few minutes to the plateau as in their runs).\n\nThe silica here is a 10 nm SiO₂ film on an SPR chip (BK7 / Au 50 nm, 633 nm): the Sensorgrams show what an SPR instrument would see.',
           width: 560,
           height: 300,
         },
@@ -3072,14 +3133,14 @@ export const startHereExample = (): Project => {
     { name: 'my first sensorgram', thick: 'auto', mixing: 'linear', bulk: true, readout: 'dip', track: true, maxTimes: 200 },
     {
       title: 'Start here: your first SPR binding experiment',
-      text: 'A complete, minimal SPR biosensor experiment. Read the numbered notes next to the nodes, 1 to 5; whatever you change is recomputed at once.\n\nLight (633 nm) goes through a glass prism onto a 50 nm gold film. At one angle it excites a surface plasmon — a wave of the electrons of the gold, bound to its surface on the water side — and the reflected light drops: the dip. Molecules that bind to the gold change what the plasmon feels, so the dip moves to a larger angle. Following the dip in time is the sensorgram.\n\nA word you do not know: Help → Glossary.',
+      text: 'A complete, minimal SPR biosensor experiment. Read the numbered notes next to the nodes, 1 to 5; whatever you change is recomputed at once.\n\nLight (633 nm) goes through a glass prism onto a 50 nm gold film. At one angle it excites a surface plasmon (a wave of the electrons of the gold, bound to its surface on the water side) and the reflected light drops: the dip. Molecules that bind to the gold change what the plasmon feels, so the dip moves to a larger angle. Following the dip in time is the sensorgram.\n\nA word you do not know: Help → Glossary.',
     },
     {
       nodes: [
-        note('n1', -760, 0, '1 · The chip', 'Material nodes give the optical constants: BK7 glass (the prism), gold, water (the buffer). A Layer gives the gold its thickness, 50 nm. Combine stack puts them in order: the incident medium (prism), the layers, the exit medium (the buffer, where the molecules are).\n\nTry: gold 40 or 60 nm instead of 50 — the dip gets shallower.'),
-        note('n2', 300, -560, '2 · The light and the calculation', 'Wavelength: 633 nm (a red He-Ne laser). Angle of incidence: a scan from 66 to 74°. Compute TMM calculates the reflectance R at every angle (transfer matrices), for TM (p-polarized) light: only TM excites the plasmon.\n\nTry: switch the polarization to TE — the dip disappears.'),
+        note('n1', -760, 0, '1 · The chip', 'Material nodes give the optical constants: BK7 glass (the prism), gold, water (the buffer). A Layer gives the gold its thickness, 50 nm. Combine stack puts them in order: the incident medium (prism), the layers, the exit medium (the buffer, where the molecules are).\n\nTry: gold 40 or 60 nm instead of 50; the dip gets shallower.'),
+        note('n2', 300, -560, '2 · The light and the calculation', 'Wavelength: 633 nm (a red He-Ne laser). Angle of incidence: a scan from 66 to 74°. Compute TMM calculates the reflectance R at every angle (transfer matrices), for TM (p-polarized) light: only TM excites the plasmon.\n\nTry: switch the polarization to TE; the dip disappears.'),
         note('n3', 640, 1200, '3 · The binding', 'Binding kinetics describes the experiment: an antibody (IgG) binds one-to-one to sites on the chip, with an association rate ka and a dissociation rate kd. The protocol: buffer (baseline), the antibody at 50 nM (association), buffer again (dissociation). Its chart is the bound amount in RU (1000 RU = 1 ng/mm²).\n\nTry: a higher concentration, a smaller kd (it stays bound), a longer association.', 240),
-        note('n4', 1100, 820, '4 · The SPR signal', 'Sensorgram puts the bound antibodies as a thin layer on the gold, recomputes the reflectance at every time and follows the dip. Its text gives the result: the largest shift, how much of the gold is covered, the calibration (degrees per ng/mm²). Bulk effect: the injected solution itself has a slightly higher index (a small step when the injection starts and ends).\n\nTry: tick “detector noise” under Instrument — a measured-looking curve, and the detection limit.', 260),
+        note('n4', 1100, 820, '4 · The SPR signal', 'Sensorgram puts the bound antibodies as a thin layer on the gold, recomputes the reflectance at every time and follows the dip. Its text gives the result: the largest shift, how much of the gold is covered, the calibration (degrees per ng/mm²). Bulk effect: the injected solution itself has a slightly higher index (a small step when the injection starts and ends).\n\nTry: tick “detector noise” under Instrument; a measured-looking curve, and the detection limit.', 260),
         note('n5', 2100, 60, '5 · The plots', 'A Plot draws any output: here the shift of the dip vs time (the sensorgram) and the fraction of the gold covered by antibodies. Change Y in a Plot to see other quantities (the layer, the bound mass, molecules per µm²). Connect the R(t, θ) output of Sensorgram to a new Plot to see the dip itself move.\n\nNext: the other Sensorgram examples (a concentration series, a small molecule with noise, protein adsorption).', 250),
         { id: 'plotC', type: 'plot', position: { x: 1600, y: 640 }, data: { ...PLOT_DEFAULTS, field: 'cover', x: 'time' } } as AppNode,
       ],
@@ -3092,10 +3153,11 @@ export const EXAMPLE_GROUPS = ['Surface plasmons (SPR)', 'Gratings (RCWA)', 'Mic
 export type ExampleEntry = { group: (typeof EXAMPLE_GROUPS)[number]; name: string; make: () => Project; desc: string };
 // (the first one opens at the first start)
 export const EXAMPLES: ExampleEntry[] = [
-  { group: EXAMPLE_GROUPS[0], name: 'Start here: your first SPR binding experiment', make: startHereExample, desc: 'A minimal SPR biosensor experiment with a note at every step: the chip, the light, an antibody binding, the moving dip — no theory needed.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Start here: your first SPR binding experiment', make: startHereExample, desc: 'A minimal SPR biosensor experiment with a note at every step: the chip, the light, an antibody binding, the moving dip; no theory needed.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR (Kretschmann)', make: sprExample, desc: 'Surface plasmon resonance of a silver film on a prism: the reflectance dip vs angle and its analysis.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor design (custom objective)', make: sprDesignExample, desc: 'Thicknesses of an SPR sensor optimized for a custom objective (sensitivity and dip quality).' },
   { group: EXAMPLE_GROUPS[0], name: 'Robust SPR sensor: the yield under thickness errors (Tolerance → Optimization Engine)', make: robustSprExample, desc: 'Gold thickness errors of 3 %: the yield of chips with a deep and narrow dip, maximized by the optimizer over 100 Monte Carlo samples per candidate.' },
+  { group: EXAMPLE_GROUPS[0], name: 'Python scripts: a Drude metal made in Python, the dip fitted with scipy', make: pythonSprExample, desc: 'A material written in Python feeds the Layer of an SPR chip; a second script fits the dip of Compute TMM and gives the fit to a Plot.' },
   { group: EXAMPLE_GROUPS[0], name: 'SPR sensor by a genetic algorithm, 2D materials (Sebek et al. 2023, benchmark)', make: sprGaExample, desc: 'A genetic algorithm picks the layer sequence and materials of an SPR sensor, 2D materials included.' },
   { group: EXAMPLE_GROUPS[0], name: 'Dual-mode SPR sensor: plasmon–waveguide mode switch (Sebek et al. 2023, benchmark)', make: sprDualModeExample, desc: 'A sensor switching between a plasmon and a waveguide mode, after Sebek et al.' },
   { group: EXAMPLE_GROUPS[0], name: 'Rough gold SPR: effective medium vs RCWA (Treebupachatsakul et al. 2021)', make: roughSprExample, desc: 'A rough Au / water interface (RMS, correlation length, seeds averaged): TMM with an effective medium per slice against RCWA of the profile.' },

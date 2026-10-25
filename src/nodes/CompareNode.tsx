@@ -217,7 +217,7 @@ export function CompareNodeView({ id, data }: NodeProps<CompareNode>) {
                   ))}
                 </select>
                 <select className="nodrag" value={c.dash} onChange={(e) => setCurve(c.id, { dash: e.target.value as Dash })}>
-                  <option value="solid">—</option>
+                  <option value="solid">–</option>
                   <option value="dash">- -</option>
                   <option value="dot">···</option>
                 </select>

@@ -282,7 +282,7 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
                 <label className="radio" title="One curve for each value of this parameter (e.g. each step of a sweep)">
                   Curves for
                   <select className="nodrag" value={view.series >= 0 ? ds.axes[view.series].id : 'none'} onChange={(e) => set({ series: e.target.value })}>
-                    <option value="none">— (single curve)</option>
+                    <option value="none">(single curve)</option>
                     {axisOptions(view.free.filter((i) => i !== view.x))}
                   </select>
                 </label>
@@ -426,7 +426,7 @@ export function PlotNodeView({ id, data }: NodeProps<PlotNode>) {
               ? 'Connect the data output of a Compute TMM node.'
               : out?.type === 'data' && out.pending
                 ? 'Computing…'
-                : (result?.warnings.find((w) => w.includes('press')) ?? 'No valid data — see the messages in the upstream nodes.')}
+                : (result?.warnings.find((w) => w.includes('press')) ?? 'No valid data: see the messages in the upstream nodes.')}
           </div>
         )}
       </div>

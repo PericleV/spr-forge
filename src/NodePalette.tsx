@@ -62,7 +62,7 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
           «
         </button>
       </div>
-      <input className="palette-search" placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery('')} />
+      <input className="palette-search" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery('')} />
       <div className="palette-list">
         {shown.map((g) => {
           const folded = !q && state.folded.includes(g.name);

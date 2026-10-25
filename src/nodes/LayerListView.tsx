@@ -5,7 +5,7 @@ import { layerList, layerListCsv, layerListTsv } from '../engine/layerList.ts';
 import type { StackValue } from '../engine/types.ts';
 import { download } from '../plot/export.ts';
 
-const fmt = (d: number | null) => (d === null ? '—' : String(+d.toFixed(2)));
+const fmt = (d: number | null) => (d === null ? '–' : String(+d.toFixed(2)));
 
 export function LayerListView({ stack, name, names }: { stack: StackValue; name: string; names?: Record<string, string> }) {
   const list = useMemo(() => layerList(stack, names), [stack, names]);

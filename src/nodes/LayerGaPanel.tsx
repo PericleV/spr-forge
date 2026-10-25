@@ -11,7 +11,7 @@ import type { AppNode, LayerGaData, LayerRoleRule, OptimizerData } from '../type
 import { NumInput } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
-const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '—');
+const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '–');
 const time = (s: number) => (s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
 const nText = (e: LayerGaLibEntry) => (e.n.im > 1e-4 ? `${e.n.re.toFixed(2)} + ${e.n.im.toFixed(2)}i` : e.n.re.toFixed(3));
 // a list entry: the name and the index at λ (unless the name already gives it)

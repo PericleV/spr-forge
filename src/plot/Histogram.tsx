@@ -2,7 +2,7 @@
 import { binsOf, histStats } from './histStats.ts';
 import { niceTicks } from './scale.ts';
 
-const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(4)}` : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(4)}` : '–');
 
 export function Histogram(props: { values: ArrayLike<number>; label: string; unit: string; bins?: number; color?: string; width?: number; height?: number; marks?: { x: number; label: string }[] }) {
   const { values, label, unit, bins = 0, color = '#7b5bd6', width = 520, height = 260, marks = [] } = props;

@@ -185,7 +185,7 @@ export function MapPlot({ xAxis, yAxis, values, zLabel, zUnit, zDomain, xLim, yL
       lines: [
         `${xAxis.label} = ${axisValueText(xAxis, i)}`,
         `${yAxis.label} = ${axisValueText(yAxis, j)}`,
-        `${zLabel} = ${Number.isFinite(v) ? v.toFixed(4) : '—'}${zUnit}`,
+        `${zLabel} = ${Number.isFinite(v) ? v.toFixed(4) : '–'}${zUnit}`,
       ],
     };
   }

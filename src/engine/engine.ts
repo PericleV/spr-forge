@@ -7,6 +7,8 @@ import { metaOfSpec } from './run.ts';
 import { evaluateGraph, type JobState } from './evaluate.ts';
 import { runJob } from './computePool.ts';
 import type { Dataset, Fields, NodeResult, TmmJob } from './types.ts';
+import type { PyInfo } from './python.ts';
+import { requestRun } from '../python/runner.ts';
 
 // The results kept (to go back to an earlier input without recomputing), by their memory: every array of every result
 const MAX_CACHE_BYTES = 768e6;
@@ -84,7 +86,7 @@ function store(s: JobState, job: TmmJob, fields: Fields, seconds: number) {
 }
 
 export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): EngineState {
-  const [jobState] = useState<JobState>(() => ({ cache: new Map(), lastDone: new Map(), failed: new Map(), armed: new Map() }));
+  const [jobState] = useState<JobState>(() => ({ cache: new Map(), lastDone: new Map(), failed: new Map(), armed: new Map(), py: new Map() }));
   const running = useRef(new Map<string, { key: string; cancel: () => void }>());
   const [version, setVersion] = useState(0);
   const [progress, setProgress] = useState<Record<string, JobProgress>>({});
@@ -102,6 +104,7 @@ export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): Engine
         setVersion((v) => v + 1);
       },
       reset: () => {
+        jobState.py!.clear();
         jobState.armed!.clear();
         jobState.lastDone.clear();
         jobState.failed.clear();
@@ -123,6 +126,15 @@ export function useEngine(nodes: AppNode[], edges: Edge[], lib: Library): Engine
     for (const r of [...jobState.lastDone.keys()]) if (!evaluation.requesters.has(r)) jobState.lastDone.delete(r);
     for (const r of [...(jobState.armed?.keys() ?? [])]) if (!evaluation.requesters.has(r)) jobState.armed!.delete(r);
 
+    // the Python scripts' runs asked for (in the Python worker, one at a time): their results back into the evaluation
+    for (const [id, r] of evaluation.results) {
+      const job = (r.info as { py?: PyInfo } | undefined)?.py?.job;
+      if (job)
+        requestRun(id, job, (nid, result) => {
+          jobState.py!.set(nid, result);
+          setVersion((v) => v + 1);
+        });
+    }
     const wanted = new Map(evaluation.jobs.map((j) => [j.requester, j]));
     for (const [req, r] of run) {
       if (wanted.get(req)?.key === r.key) continue;

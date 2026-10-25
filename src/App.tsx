@@ -14,6 +14,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type FinalConnectionState,
   type IsValidConnection,
   type Node,
   type NodeTypes,
@@ -21,7 +22,10 @@ import {
 import '@xyflow/react/dist/style.css';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
-import { canConnect, isMultiInput, PORT_COLORS, sourcePort } from './engine/ports.ts';
+import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
+import { RerouteNodeView } from './nodes/RerouteNode.tsx';
+import { PythonNodeView } from './nodes/PythonNode.tsx';
+import { codeChanged, openProject } from './python/runner.ts';
 import {
   ANALYSIS_DEFAULTS,
   COMPARE_DEFAULTS,
@@ -69,7 +73,10 @@ import { editCaption } from './nodes/captionStore.ts';
 import { FlowEdge } from './FlowEdge.tsx';
 import { withShell } from './nodes/NodeShell.tsx';
 import { FrameNodeView } from './nodes/FrameNode.tsx';
-import { applyTheme, loadPrefs, loadTheme, savePrefs, STEPS, type CanvasPrefs, type Theme } from './theme.ts';
+import { applyColors, applyTheme, loadColors, loadPrefs, loadTheme, savePrefs, STEPS, type CanvasPrefs, type Theme, type UiColors } from './theme.ts';
+import { ColorChoice } from './ColorChoice.tsx';
+import { IC } from './ui/iconProps.ts';
+import { CircleHelp, FilePlus2, FlaskConical, FolderOpen, Library, Monitor, Moon, Redo2, Save, Search, Sun, TriangleAlert, Undo2 } from 'lucide-react';
 import { autosave, decodeProject, keepLastSession, parseProject, stringifyProject, toProject, type Project } from './project.ts';
 import { ExtremumNodeView, FwhmNodeView, SensitivityNodeView } from './nodes/AnalysisNodes.tsx';
 import { CompareNodeView } from './nodes/CompareNode.tsx';
@@ -142,11 +149,13 @@ const baseNodeTypes = {
   extract: ExtractNodeView,
   merge: MergeNodeView,
   custom: CustomNodeView,
+  python: PythonNodeView,
 };
 // every node inside the common frame (title bar, label, collapse, error mark); group frames draw themselves
 const nodeTypes: NodeTypes = {
   ...(Object.fromEntries(Object.entries(baseNodeTypes).map(([k, V]) => [k, withShell(V as never)])) as NodeTypes),
   frame: FrameNodeView,
+  reroute: RerouteNodeView,
 };
 
 const edgeTypes = { flow: FlowEdge };
@@ -155,8 +164,11 @@ const ERROR_RED = '#e5484d';
 const MULTI_KEYS = ['Shift', 'Control', 'Meta'];
 const DELETE_KEYS = ['Delete', 'Backspace'];
 
-// hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects)
-type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean };
+// hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects); connectOnly: a
+// variant offered only when a connection is let go on the canvas (the Parameter of λ for a wavelength port); key: the
+// variant's own name (absent: the type)
+type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean; connectOnly?: boolean; key?: string };
+const keyOf = (t: Template) => t.key ?? t.type;
 
 const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
   {
@@ -193,11 +205,13 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
     name: 'Simulation',
     items: [
       { type: 'param', label: 'Parameter θ / λ', data: { quantity: 'theta', mode: 'range', value: 60, min: 40, max: 85, step: 0.05 } },
+      { type: 'param', key: 'param-lambda', label: 'Wavelength λ', data: { quantity: 'lambda', mode: 'constant', value: 633, min: 400, max: 900, step: 1 }, connectOnly: true },
       {
         type: 'sweep',
         label: 'Sweep',
         data: { name: '', kind: 'number', mode: 'range', min: 40, max: 60, step: 5, list: '40, 45, 50, 55, 60' },
       },
+      { type: 'sweep', key: 'sweep-pol', label: 'Polarization sweep', data: { name: '', kind: 'polarization', mode: 'list', min: 0, max: 1, step: 1, list: 'p, s' }, connectOnly: true },
       { type: 'compute', label: 'Compute TMM', data: { name: '', polarization: 'p' } },
       { type: 'rcwa', label: 'Compute RCWA', data: RCWA_DEFAULTS },
       { type: 'kinetics', label: 'Binding kinetics', data: KINETICS_DEFAULTS },
@@ -217,6 +231,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'extract', label: 'Extract data', data: { name: '', fields: [], fixed: {} } },
       { type: 'merge', label: 'Merge data', data: { name: '', labels: {} }, hidden: true }, // hidden (the user, 2026-09-30)
       { type: 'custom', label: 'Custom data', data: { name: '', rows: [{ name: '', expr: '' }], aliases: {} } },
+      { type: 'python', label: 'Python script', data: { code: '' } },
     ],
   },
   {
@@ -245,7 +260,8 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
     name: 'Notes',
     items: [
       { type: 'info', label: 'Info', data: INFO_DEFAULTS },
-      { type: 'notes', label: 'Combine notes', data: NOTES_DEFAULTS },
+      { type: 'notes', label: 'Combine notes', data: NOTES_DEFAULTS, hidden: true }, // hidden (the user, 2026-10-25)
+      { type: 'reroute', label: 'Reroute', data: {}, hidden: true }, // added by a double-click on a connection
     ],
   },
 ];
@@ -257,6 +273,8 @@ const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as Exa
 // last session (Welcome: “Continue the last project”, Projects: “Last session”).
 const lastSession = keepLastSession();
 const EMPTY: Project = { app: 'spr-flow', version: 3, nodes: [], edges: [], materials: [] };
+// the code of a project's Python scripts
+const pyCodes = (ns: AppNode[]) => ns.flatMap((n) => (n.type === 'python' ? [n.data.code ?? ''] : []));
 const initial: Project = EMPTY;
 
 function Flow() {
@@ -268,14 +286,14 @@ function Flow() {
   const [projectName, setProjectName] = useState(initial.name ?? '');
   const [examples, setExamples] = useState<ExampleList>([]);
   useEffect(() => {
-    document.title = `${projectName || 'Untitled project'} — SPR Forge`;
+    document.title = `${projectName || 'Untitled project'} · SPR Forge`;
   }, [projectName]);
   const [panel, setPanel] = useState<'library' | 'projects' | 'help' | null>(null);
   // the welcome window: at the first start ('start'), or opened from Help ('help')
   const [welcome, setWelcomeState] = useState<'start' | 'help' | null>(() => (welcomeSeen() ? null : 'start'));
   const setWelcome = (on: boolean) => setWelcomeState(on ? 'help' : null);
   const togglePanel = (p: 'library' | 'projects' | 'help') => setPanel((cur) => (cur === p ? null : p));
-  const { screenToFlowPosition, fitBounds, getNodesBounds, getNodes, getNode, setViewport, deleteElements, updateNodeData } = useReactFlow<AppNode>();
+  const { screenToFlowPosition, fitBounds, getNodesBounds, getNodes, getNode, getEdges, setViewport, deleteElements, updateNodeData } = useReactFlow<AppNode>();
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Find a node (Ctrl+F or the ⌕ button of the canvas controls)
   const [finding, setFinding] = useState(false);
@@ -293,7 +311,15 @@ function Flow() {
   const [prefs, setPrefs] = useState<CanvasPrefs>(loadPrefs);
   const setPref = (patch: Partial<CanvasPrefs>) => setPrefs((p) => savePrefs({ ...p, ...patch }));
   useEffect(() => applyTheme(theme), [theme]);
+  const [colors, setColors] = useState<UiColors>(loadColors);
+  useEffect(() => applyColors(colors), [colors]);
   const openFile = useRef<HTMLInputElement>(null);
+  // the code of the Python scripts written here (while it may run) is kept as allowed: it opens again without asking
+  const codesKey = JSON.stringify(pyCodes(nodes));
+  useEffect(() => {
+    const t = setTimeout(() => codeChanged(JSON.parse(codesKey) as string[]), 800);
+    return () => clearTimeout(t);
+  }, [codesKey]);
 
   const library: LibraryState = useMemo(() => {
     const lib = makeLibrary(userMaterials);
@@ -327,7 +353,10 @@ function Flow() {
     setFitPending(false);
   }, [initialized, fitPending, getNodes, getNodesBounds, setViewport]);
 
-  const load = (p: Project, name?: string) => {
+  // fresh: a project of ours (an example, an empty one), its Python code runs; else (a file, a link, a project kept in the
+  // browser) only code allowed before (python/runner.ts)
+  const load = (p: Project, name?: string, fresh = false) => {
+    openProject(pyCodes(p.nodes), fresh);
     setProjectName(name ?? p.name ?? '');
     engine.control.reset();
     history.reset();
@@ -379,12 +408,12 @@ function Flow() {
   // Empty project: no nodes, no connections, no custom materials.
   const newProject = () => {
     const text = 'Start a new, empty project?\n\nAll nodes, connections and your custom materials will be removed. Use Save first to keep the current project.';
-    if (confirm(text)) load(EMPTY);
+    if (confirm(text)) load(EMPTY, undefined, true);
   };
 
   const isValidConnection: IsValidConnection = useCallback(
-    (c) => canConnect(getNode(c.source), getNode(c.target), c.targetHandle, c.sourceHandle),
-    [getNode],
+    (c) => canConnect(getNode(c.source), getNode(c.target), c.targetHandle, c.sourceHandle, { node: getNode, edges: getEdges() }),
+    [getNode, getEdges],
   );
 
   // Single-input handles keep only the newest connection.
@@ -401,26 +430,129 @@ function Flow() {
     [setEdges, getNode],
   );
 
-  // Colour each edge by the type of value it carries.
-  const colorKey = nodes.map((n) => `${n.id}:${sourcePort(n)}`).join('|');
+  // A node dragged onto a connection goes into it (source → node → target): the connection under the mouse, when the
+  // node is connected to nothing and has an input that takes what the connection carries and an output its target takes
+  // (the first of each, as its ports are drawn); shown while dragging, made when the node is let go.
+  const [dropEdge, setDropEdge] = useState<{ edge: string; inH: string; outH: string } | null>(null);
+  const handlesOf = (id: string, kind: 'source' | 'target') =>
+    [...(document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.querySelectorAll(`.react-flow__handle.${kind}`) ?? [])].map((h) => h.getAttribute('data-handleid') ?? '');
+  const spliceAt = (nodeId: string, x: number, y: number): { edge: string; inH: string; outH: string } | null => {
+    const n = getNode(nodeId);
+    const es = getEdges();
+    if (!n || n.type === 'frame' || es.some((e) => e.source === nodeId || e.target === nodeId)) return null;
+    const under = document
+      .elementsFromPoint(x, y)
+      .map((el) => el.closest('.react-flow__edge'))
+      .find((el): el is Element => !!el);
+    const eid = under?.getAttribute('data-id') ?? under?.getAttribute('data-testid')?.replace(/^rf__edge-/, '');
+    const e = es.find((q) => q.id === eid);
+    if (!e) return null;
+    const ctx: PortContext = { node: getNode, edges: es };
+    const [src, tgt] = [getNode(e.source), getNode(e.target)];
+    const inH = handlesOf(nodeId, 'target').find((h) => canConnect(src, n, h, e.sourceHandle ?? null, ctx));
+    const outH = handlesOf(nodeId, 'source').find((h) => canConnect(n, tgt, e.targetHandle ?? null, h, ctx));
+    return inH !== undefined && outH !== undefined ? { edge: e.id, inH, outH } : null;
+  };
+  const splice = (nodeId: string, d: { edge: string; inH: string; outH: string }) =>
+    setEdges((es) => {
+      const e = es.find((q) => q.id === d.edge);
+      if (!e) return es;
+      return [
+        ...es.filter((q) => q.id !== d.edge),
+        { id: `e-${e.source}-${e.sourceHandle ?? ''}-${nodeId}-${d.inH}`, source: e.source, sourceHandle: e.sourceHandle, target: nodeId, targetHandle: d.inH },
+        { id: `e-${nodeId}-${d.outH}-${e.target}-${e.targetHandle ?? ''}`, source: nodeId, sourceHandle: d.outH, target: e.target, targetHandle: e.targetHandle },
+      ];
+    });
+  // A Reroute put on a connection (double-click on it): the connection goes through it.
+  const addReroute = (ev: { clientX: number; clientY: number }, e: Edge) => {
+    const p = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+    const rid = `reroute-${crypto.randomUUID().slice(0, 8)}`;
+    setNodes((ns) => [...ns, { id: rid, type: 'reroute', position: { x: p.x - 8, y: p.y - 8 }, data: {} } as AppNode]);
+    setEdges((es) => [
+      ...es.filter((x) => x.id !== e.id),
+      { id: `e-${e.source}-${e.sourceHandle ?? ''}-${rid}`, source: e.source, sourceHandle: e.sourceHandle, target: rid, targetHandle: 'in' },
+      { id: `e-${rid}-${e.target}-${e.targetHandle ?? ''}`, source: rid, sourceHandle: 'out', target: e.target, targetHandle: e.targetHandle },
+    ]);
+  };
+  // (a node just added: what to do once it is in the flow and its ports are drawn, a frame or a few later)
+  const whenDrawn = (id: string, fn: () => void, tries = 30) =>
+    requestAnimationFrame(() => {
+      const drawn = getNode(id) && document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"] .react-flow__handle`);
+      if (drawn || tries <= 0) fn();
+      else whenDrawn(id, fn, tries - 1);
+    });
+
+  // A connection let go on the empty canvas (not on a node, not near a port): the menu of the nodes that fit, there.
+  const onConnectEnd = (ev: MouseEvent | TouchEvent, st: FinalConnectionState) => {
+    if (st.isValid || st.toNode || st.toHandle || !st.fromNode || !st.fromHandle) return;
+    if (!(ev.target as Element | null)?.closest('.react-flow__pane')) return;
+    const pt = 'changedTouches' in ev ? ev.changedTouches[0] : ev;
+    if (!pt) return;
+    setMenu({ kind: 'connect', x: pt.clientX, y: pt.clientY, from: { node: st.fromNode.id, handle: st.fromHandle.id ?? null, type: st.fromHandle.type } });
+  };
+  // the node types a connection from (to) a port can go to (come from): a node of the kind as added, one of its ports
+  // taking (giving) what the port gives (takes)
+  const IN_PORTS = ['in', 'in-0', 'mat', 'stack', 'item-0', 'incident', 'exit', 'd', 'n', 'p', 'o', 'e', 'a0', 'ridge', 'groove', 'period', 'lambda', 'theta', 'phi', 'pol', 'orders', 'obj', 'target', 'criteria', 'kinetics', 'sweep', 'seed', 'size', 'p0', 'm0', 'periods', 'lambda0', 'a', 'b'];
+  const OUT_PORTS = ['out', 'stack', 'marked', 'robust', 'metrics', 'sensorgram', 'material'];
+  const fitsConnect = (from: Extract<MenuState, { kind: 'connect' }>['from'], t: Template): boolean => {
+    const other = getNode(from.node);
+    if (!other || t.type === 'reroute') return false;
+    const tmp = { id: '__new', type: t.type, position: { x: 0, y: 0 }, data: t.data } as AppNode;
+    const ctx: PortContext = { node: getNode, edges: getEdges() };
+    if (from.type === 'source') return IN_PORTS.some((h) => canConnect(other, tmp, h, from.handle, ctx));
+    const takes = targetAccepts(other, from.handle);
+    return OUT_PORTS.some((h) => {
+      const p = sourcePort(tmp, h, ctx);
+      return !!p && takes.includes(p);
+    });
+  };
+  // the node chosen: added where the connection was let go, then connected by its first port that fits (once drawn)
+  const addConnected = (t: Template, m: Extract<MenuState, { kind: 'connect' }>) => {
+    const id = addNode(t, { x: m.x, y: m.y });
+    whenDrawn(id, () => {
+      const n = getNode(id);
+      const other = getNode(m.from.node);
+      if (!n || !other) return;
+      const ctx: PortContext = { node: getNode, edges: getEdges() };
+      if (m.from.type === 'source') {
+        const h = handlesOf(id, 'target').find((q) => canConnect(other, n, q, m.from.handle, ctx));
+        if (h !== undefined) onConnect({ source: m.from.node, sourceHandle: m.from.handle, target: id, targetHandle: h });
+      } else {
+        const h = handlesOf(id, 'source').find((q) => canConnect(n, other, m.from.handle, q, ctx));
+        if (h !== undefined) onConnect({ source: id, sourceHandle: h, target: m.from.node, targetHandle: m.from.handle });
+      }
+    });
+  };
+
+  // Colour each edge by the type of value it carries (a Reroute: the type of what reaches it).
+  const colorKey = nodes.map((n) => `${n.id}:${n.type === 'reroute' ? 'r' : sourcePort(n)}`).join('|');
   // The nodes of this render (not getNode: right after loading a project the React Flow store does not hold the new
   // nodes yet, and the edges would stay unstyled until the next change). Rebuilt only when an output type changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [colorKey]);
+  const portCtx: PortContext = useMemo(() => ({ node: (id) => nodeById.get(id), edges }), [nodeById, edges]);
   // the connections of the node under the mouse stand out (thicker)
   const [hovered, setHovered] = useState<string | null>(null);
+  // the nodes selected: their connections show the data moving (the others stay still)
+  const selectedKey = nodes.filter((n) => n.selected).map((n) => n.id).join('|');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const selectedSet = useMemo(() => new Set(selectedKey.split('|')), [selectedKey]);
   const styledEdges = useMemo(
     () =>
       edges.map((e) => {
         const s = nodeById.get(e.source);
-        const p = s && sourcePort(s, e.sourceHandle);
+        const p = s && sourcePort(s, e.sourceHandle, portCtx);
         const color = (p && PORT_COLORS[p]) || 'var(--muted)';
         // custom line: curved or orthogonal, arrow at the middle (direction of the data); a selected line is thicker
         // and drawn over a halo (FlowEdge)
         const lit = hovered !== null && (e.source === hovered || e.target === hovered);
-        return { ...e, type: 'flow', className: lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
+        // (the connection a node dragged over it would go into)
+        const into = dropEdge?.edge === e.id;
+        // (still lines; moving only those of the nodes selected, the line selected solid)
+        const moving = !e.selected && (selectedSet.has(e.source) || selectedSet.has(e.target));
+        return { ...e, type: 'flow', animated: moving, className: into ? 'edge-drop' : lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit || into ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
       }),
-    [edges, nodeById, prefs.arrows, prefs.shape, hovered],
+    [edges, nodeById, portCtx, prefs.arrows, prefs.shape, hovered, dropEdge, selectedSet],
   );
 
   // Deleting a frame keeps its nodes (they leave the frame) unless “remove the group and its nodes” was chosen.
@@ -449,7 +581,7 @@ function Flow() {
     editCaption(r.frameId); // name it right away
   };
   const nodeMenu = (): { title: string; actions: MenuAction[] } | null => {
-    if (!menu || menu.kind === 'pane') return null;
+    if (!menu || menu.kind === 'pane' || menu.kind === 'connect') return null;
     const ids = menu.kind === 'node' ? [menu.nodeId] : menu.ids;
     const remove: MenuAction = { label: ids.length > 1 ? 'Remove selected nodes' : 'Remove node', danger: true, kbd: 'Del', onClick: () => deleteElements({ nodes: ids.map((id) => ({ id })) }) };
     const inGroup = ids.some((id) => getNode(id)?.parentId);
@@ -458,7 +590,7 @@ function Flow() {
       return {
         title: `${ids.length} nodes selected`,
         actions: [
-          { label: 'Group…', onClick: () => groupSelection(ids) },
+          { label: 'Group', onClick: () => groupSelection(ids) },
           { label: 'Collapse', onClick: () => setCollapsed(ids, true) },
           { label: 'Expand', onClick: () => setCollapsed(ids, false) },
           ...leave,
@@ -511,12 +643,16 @@ function Flow() {
   };
   const miniStroke = (n: Node) => (engine.results.get(n.id)?.errors.length ? ERROR_RED : nodeColor(n as AppNode));
 
-  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ type: i.type, label: i.label, group: g.name }))), []);
+  // the canvas menu: the nodes of the panel; a connection let go on the canvas: also the variants (λ, polarization)
+  const toItem = (g: (typeof GROUPS)[number], i: Template): MenuItem => ({ key: keyOf(i), type: i.type, label: i.label, group: g.name });
+  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden && !i.connectOnly).map((i) => toItem(g, i))), []);
+  const connectItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => toItem(g, i))), []);
+  const templateByKey = (key: string) => GROUPS.flatMap((g) => g.items).find((i) => keyOf(i) === key);
   const closeMenu = useCallback(() => setMenu(null), []);
 
   // the nodes panel (left): the sections of GROUPS with the colours of their nodes
   const paletteGroups: PaletteGroup[] = useMemo(
-    () => GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
+    () => GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden && !t.connectOnly).map((t) => ({ type: t.type, label: t.label, help: NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
     [],
   );
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -534,7 +670,7 @@ function Flow() {
     addNode(t, { x: e.clientX, y: e.clientY });
   };
 
-  const addNode = (t: Template, at?: { x: number; y: number }) => {
+  const addNode = (t: Template, at?: { x: number; y: number }): string => {
     const r = canvasRef.current?.getBoundingClientRect();
     let position = screenToFlowPosition(at ?? (r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: window.innerWidth / 2, y: window.innerHeight / 2 }));
     // nodes added one after another by a click: shifted so they do not cover each other
@@ -547,6 +683,7 @@ function Flow() {
     const data = t.type === 'fit' ? fitDefaults() : structuredClone(t.data);
     // the new node on top (last and selected); the others deselected
     setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), { id, type: t.type, position, data, selected: true } as AppNode]);
+    return id;
   };
 
   return (
@@ -565,21 +702,22 @@ function Flow() {
         />
         {history.canUndo && <span className="muted" title="Modified since it was loaded">•</span>}
         {autosaveFailed && (
-          <span className="save-warning" title="The browser storage is full: the changes are not kept for the next visit. Save the project to a file (Save), or delete projects kept in the browser (Projects…).">
-            ⚠ not autosaved — use Save
+          <span className="save-warning" title="The browser storage is full: the changes are not kept for the next visit. Save the project to a file (Save), or delete projects kept in the browser (Projects).">
+            <TriangleAlert {...IC} /> not autosaved: use Save
           </span>
         )}
-        <button onClick={newProject} title="Remove everything and start an empty project">New</button>
+        <span className="tb-group" role="group" aria-label="Project">
+        <button onClick={newProject} title="Remove everything and start an empty project"><FilePlus2 {...IC} /> <span className="tb-label">New</span></button>
         <select
           className="examples-menu"
           value=""
           title="Open a complete example"
           onChange={(e) => {
             const ex = examples[Number(e.target.value)];
-            if (ex && confirm(`Replace the current project with the “${ex.name}” example?`)) load(ex.make(), ex.name);
+            if (ex && confirm(`Replace the current project with the “${ex.name}” example?`)) load(ex.make(), ex.name, true);
           }}
         >
-          <option value="">Examples…</option>
+          <option value="">Examples</option>
           {/* grouped by subject, each group titled */}
           {[...new Set(examples.map((ex) => ex.group))].map((g) => (
             <optgroup key={g} label={g}>
@@ -593,35 +731,54 @@ function Flow() {
             </optgroup>
           ))}
         </select>
-        <button onClick={() => openFile.current?.click()}>Open…</button>
+        <button onClick={() => openFile.current?.click()} title="Open a project file (.json)">
+          <FolderOpen {...IC} /> <span className="tb-label">Open</span>
+        </button>
         <button
           onClick={() =>
             download(stringifyProject(toProject(nodes, edges, userMaterials, projectName), 1), `${(projectName || 'spr-forge-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json')
           }
+          title="Save the project to a file (.json)"
         >
-          Save
+          <Save {...IC} /> <span className="tb-label">Save</span>
         </button>
         <button className={panel === 'projects' ? 'active' : ''} onClick={() => togglePanel('projects')} title="Several projects kept in this browser">
-          Projects…
+          <Library {...IC} /> <span className="tb-label">Projects</span>
         </button>
-        <button className={panel === 'library' ? 'active' : ''} onClick={() => togglePanel('library')} title="Material library (built-in and your own materials)">
-          Materials
-        </button>
+        </span>
+        <span className="tb-group" role="group" aria-label="Edit">
         <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
-          ⌕ Find node
+          <Search {...IC} /> <span className="tb-label keep">Find node</span>
         </button>
         <span className="undo-redo">
-          <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
-          <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+          <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 {...IC} /></button>
+          <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo"><Redo2 {...IC} /></button>
         </span>
-        <button className={panel === 'help' ? 'active' : ''} onClick={() => togglePanel('help')} title="Getting started, the nodes, shortcuts, validation">
-          Help
+        </span>
+        <span className="tb-group" role="group" aria-label="Materials">
+        <button className={panel === 'library' ? 'active' : ''} onClick={() => togglePanel('library')} title="Material library (built-in and your own materials)">
+          <FlaskConical {...IC} /> <span className="tb-label">Materials</span>
         </button>
-        <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)} title="Colour theme">
-          <option value="system">Theme: system</option>
-          <option value="light">Theme: light</option>
-          <option value="dark">Theme: dark</option>
-        </select>
+        </span>
+        <span className="tb-spacer" />
+        <button className={panel === 'help' ? 'active' : ''} onClick={() => togglePanel('help')} title="Getting started, the nodes, shortcuts, validation">
+          <CircleHelp {...IC} /> <span className="tb-label">Help</span>
+        </button>
+        <span className="tb-group tb-theme" role="radiogroup" aria-label="Colour theme">
+          {(
+            [
+              ['system', Monitor, 'Theme: as the system'],
+              ['light', Sun, 'Theme: light'],
+              ['dark', Moon, 'Theme: dark'],
+            ] as const
+          ).map(([t, Icon, label]) => (
+            <button key={t} className={theme === t ? 'active' : ''} role="radio" aria-checked={theme === t} aria-label={label} title={label} onClick={() => setTheme(t)}>
+              <Icon {...IC} />
+            </button>
+          ))}
+        </span>
+        <ColorChoice value={colors.select} shown="var(--select)" label="Selection" title="Selection colour (around the selected nodes)" onChange={(c) => setColors((p) => ({ ...p, select: c }))} />
+        <ColorChoice value={colors.accent} shown="var(--accent)" label="Accent" title="Accent colour (active buttons, checks)" same onChange={(c) => setColors((p) => ({ ...p, accent: c }))} />
         <input
           ref={openFile}
           type="file"
@@ -653,7 +810,6 @@ function Flow() {
               onConnect={onConnect}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
-              defaultEdgeOptions={{ animated: true }}
               minZoom={0.1}
               zoomOnDoubleClick={false}
               multiSelectionKeyCode={MULTI_KEYS}
@@ -666,6 +822,17 @@ function Flow() {
               onPaneClick={closeMenu}
               onMoveStart={closeMenu}
               onNodeDragStart={closeMenu}
+              onNodeDrag={(ev, n) => {
+                const d = 'clientX' in ev ? spliceAt(n.id, ev.clientX, ev.clientY) : null;
+                if (d?.edge !== dropEdge?.edge) setDropEdge(d);
+              }}
+              onNodeDragStop={(ev, n) => {
+                const d = 'clientX' in ev ? spliceAt(n.id, ev.clientX, ev.clientY) : null;
+                setDropEdge(null);
+                if (d) splice(n.id, d);
+              }}
+              onConnectEnd={onConnectEnd}
+              onEdgeDoubleClick={(ev, e) => addReroute(ev, e)}
               onPaneContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({ kind: 'pane', x: e.clientX, y: e.clientY });
@@ -693,7 +860,7 @@ function Flow() {
                 <ControlButton
                   className={prefs.snap ? 'on' : ''}
                   onClick={() => setPref({ snap: !prefs.snap })}
-                  title={prefs.snap ? `Snap to grid: on (${prefs.step} px) — click to move freely` : 'Snap to grid: off — click to position on a grid'}
+                  title={prefs.snap ? `Snap to grid: on (${prefs.step} px); click to move freely` : 'Snap to grid: off; click to position on a grid'}
                   aria-label="Snap to grid"
                 >
                   #
@@ -706,7 +873,7 @@ function Flow() {
                 <ControlButton
                   className={prefs.shape === 'orthogonal' ? 'on' : ''}
                   onClick={() => setPref({ shape: prefs.shape === 'orthogonal' ? 'curved' : 'orthogonal' })}
-                  title={prefs.shape === 'orthogonal' ? 'Connections: right angles — click for curves' : 'Connections: curves — click for right angles'}
+                  title={prefs.shape === 'orthogonal' ? 'Connections: right angles; click for curves' : 'Connections: curves; click for right angles'}
                   aria-label="Connection shape"
                 >
                   {prefs.shape === 'orthogonal' ? '┐' : '∿'}
@@ -717,7 +884,7 @@ function Flow() {
                 <ControlButton onClick={() => setFinding(true)} title="Find a node (Ctrl+F)" aria-label="Find a node">
                   ⌕
                 </ControlButton>
-                <ControlButton className={prefs.minimap ? 'on' : ''} onClick={() => setPref({ minimap: !prefs.minimap })} title={prefs.minimap ? 'Minimap: on — click to hide it' : 'Minimap: off — click to show it'} aria-label="Minimap">
+                <ControlButton className={prefs.minimap ? 'on' : ''} onClick={() => setPref({ minimap: !prefs.minimap })} title={prefs.minimap ? 'Minimap: on; click to hide it' : 'Minimap: off; click to show it'} aria-label="Minimap">
                   ▣
                 </ControlButton>
               </Controls>
@@ -747,9 +914,9 @@ function Flow() {
                 // at start the page holds an empty project (nothing to confirm); from Help it replaces the current one
                 onExample={(i) => {
                   const ex = examples[i];
-                  if (ex && (welcome === 'start' || !nodes.length || confirm(`Replace the current project with the “${ex.name}” example?`))) load(ex.make(), ex.name);
+                  if (ex && (welcome === 'start' || !nodes.length || confirm(`Replace the current project with the “${ex.name}” example?`))) load(ex.make(), ex.name, true);
                 }}
-                onEmpty={() => (welcome === 'start' ? load(EMPTY) : newProject())}
+                onEmpty={() => (welcome === 'start' ? load(EMPTY, undefined, true) : newProject())}
                 onHelp={() => setPanel('help')}
                 last={
                   lastSession && continueLast
@@ -761,11 +928,12 @@ function Flow() {
             {menu && (
               <ContextMenu
                 menu={menu}
-                items={menuItems}
+                items={menu.kind === 'connect' ? connectItems.filter((i) => fitsConnect(menu.from, templateByKey(i.key)!)) : menuItems}
                 onClose={closeMenu}
-                onAdd={(type) => {
-                  const t = GROUPS.flatMap((g) => g.items).find((i) => i.type === type);
-                  if (t) addNode(t, { x: menu.x, y: menu.y });
+                onAdd={(item) => {
+                  const t = templateByKey(item.key);
+                  if (t && menu.kind === 'connect') addConnected(t, menu);
+                  else if (t) addNode(t, { x: menu.x, y: menu.y });
                 }}
                 title={nm?.title}
                 actions={nm?.actions}

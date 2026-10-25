@@ -657,7 +657,19 @@ export type ExtractNode = Node<ExtractData, 'extract'>;
 export type MergeNode = Node<MergeData, 'merge'>;
 export type CustomNode = Node<CustomData, 'custom'>;
 
+// Python script: its code; the inputs' names in the code (by letter; absent: the letter); the outputs of its last run
+// (their ports, kept while it runs again); the outputs not given out; run by itself at every change (auto) or on Run (the
+// count of Run presses).
+export type PythonData = { code: string; vars?: Record<string, string>; outs?: { name: string; kind: 'data' | 'material' }[]; hide?: string[]; auto?: boolean; run?: number };
+export type PythonNode = Node<PythonData, 'python'>;
+
+// Reroute: a point on a connection; it passes on what reaches it (the evaluator joins its two connections).
+export type RerouteData = Record<string, never>;
+export type RerouteNode = Node<RerouteData, 'reroute'>;
+
 export type AppNode =
+  | PythonNode
+  | RerouteNode
   | ExtractNode
   | MergeNode
   | CustomNode

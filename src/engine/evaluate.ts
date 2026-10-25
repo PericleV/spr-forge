@@ -39,7 +39,9 @@ import type {
   SweepNode,
   TargetNode,
   VariableNode,
-  ZonesNode, AnisoNode, NotesNode, Interval, ExtractNode, MergeNode, CustomNode, LocateFields, FilterBand, KineticsNode, KineticsData, SensorgramNode } from '../types.ts';
+  ZonesNode, AnisoNode, NotesNode, Interval, ExtractNode, MergeNode, CustomNode, LocateFields, FilterBand, KineticsNode, KineticsData, SensorgramNode, PythonNode } from '../types.ts';
+import { digest, letterOf, sizeText, type PyInfo, type PyJob, type PyOut, type PyResult, type PyValue, type PyVarShown } from './python.ts';
+import type { MaterialDef } from '../physics/materials.ts';
 import { axisValueText, forEachLine, hash, line, metaOf, otherIndex, strides, TMM_META } from './dataset.ts';
 import { branches, COMPONENTS, coupledRates, crossingOf, dispersionParams, energyWidth, HBAR_EVS, mode2At, modelAt, paramUnit, values as fitValues, type ParamKind } from './fitmodels.ts';
 import { paramId } from './fitrun.ts';
@@ -114,6 +116,9 @@ export type JobState = {
   // Present in the app: Compute RCWA runs only after Run (requester → job key armed by Run). Absent (scripts,
   // optimizer workers): every job runs.
   armed?: Map<string, string>;
+  // Present in the app: the last run of every Python script (by node id). Absent (scripts, optimizer workers): Python
+  // scripts give nothing.
+  py?: Map<string, PyResult>;
 };
 
 export type Evaluation = { results: Map<string, NodeResult>; jobs: TmmJob[]; requesters: Set<string> };
@@ -134,7 +139,24 @@ type Ctx = JobState & {
 const sameGrid = (a: Dataset, b: Dataset) =>
   a.size === b.size && a.axes.length === b.axes.length && a.axes.every((x, i) => x.id === b.axes[i].id && x.values.length === b.axes[i].values.length);
 
-export function evaluateGraph(nodes: AppNode[], edges: Edge[], state: JobState, lib: Library): Evaluation {
+// The connections through Reroute points joined: an input fed by a Reroute takes the connection that reaches it (through
+// several in a row), so every node sees the node that really gives its input.
+function joinReroutes(nodes: AppNode[], edges: Edge[]): Edge[] {
+  const reroutes = new Set(nodes.filter((n) => n.type === 'reroute').map((n) => n.id));
+  if (!reroutes.size) return edges;
+  const into = new Map(edges.filter((e) => reroutes.has(e.target)).map((e) => [e.target, e]));
+  return edges.flatMap((e) => {
+    let src: Edge | undefined = e;
+    for (let k = 0; src && reroutes.has(src.source) && k < 50; k++) src = into.get(src.source);
+    if (!src || reroutes.has(src.source)) return reroutes.has(e.source) ? [] : [e];
+    return [src === e ? e : { ...e, source: src.source, sourceHandle: src.sourceHandle }];
+  });
+}
+
+export function evaluateGraph(nodes: AppNode[], edges0: Edge[], state: JobState, lib0: Library): Evaluation {
+  const edges = joinReroutes(nodes, edges0);
+  // (a Python script may add its materials: to a copy of the library)
+  const lib = nodes.some((n) => n.type === 'python') ? new Map(lib0) : lib0;
   const ctx: Ctx = {
     ...state,
     lib,
@@ -302,6 +324,15 @@ function evalNode(ctx: Ctx, id: string): NodeResult {
       case 'frame':
         r = ok(undefined);
         break;
+      case 'python':
+        r = evalPython(ctx, node);
+        break;
+      case 'reroute': {
+        // (what reaches it, shown on its connections and read by the nodes' own lists)
+        const up = input(ctx, id, 'in');
+        r = up.connected ? { errors: [], warnings: [], info: evalNode(ctx, up.source).info, outs: up.value ? { out: up.value } : {} } : ok(undefined);
+        break;
+      }
     }
   } catch (err) {
     // A bug in one node must not stop the whole graph: report it on that node.
@@ -590,7 +621,7 @@ export function describeStack(s: StackValue): StackInfo {
   if (s.exit) rows.push(`${s.substrate ? 'substrate' : 'out'}: ${matName(s.exit)}${s.substrate ? ` ${+(s.substrate.d / 1e6).toFixed(3)} mm (incoherent)` : ''}`);
   if (s.substrate) {
     for (const L of s.substrate.back.filter((B) => !B.pad)) rows.push(`back: ${text(L)}`);
-    rows.push(`out: ${s.substrate.out ? matName(s.substrate.out) : s.incident ? `${matName(s.incident)} (as incident)` : '—'}`);
+    rows.push(`out: ${s.substrate.out ? matName(s.substrate.out) : s.incident ? `${matName(s.incident)} (as incident)` : '–'}`);
   }
   return { rows, layers: layers.length };
 }
@@ -660,10 +691,10 @@ function evalDbr(ctx: Ctx, node: DbrNode): NodeResult {
   // anisotropic layers (Berreman 4×4) have no single index: their thicknesses in nm
   const anisoSel = (sel: MatSel | undefined) => !!sel && (sel.kind === 'fixed' ? [sel.mat] : sel.mats).some((m) => m.aniso);
   d.period.forEach((p, j) => {
-    if (p.mode === 'qw' && anisoSel(periodMats[j])) errors.push(`Layer ${letter(j)}: an anisotropic material has no single index for λ₀/4 — give its thickness in nm.`);
+    if (p.mode === 'qw' && anisoSel(periodMats[j])) errors.push(`Layer ${letter(j)}: an anisotropic material has no single index for λ₀/4; give its thickness in nm.`);
   });
   d.cavities.forEach((cv, i) => {
-    if (cv.mode === 'half' && !cavSweep && anisoSel(cavityMats[i])) errors.push(`Cavity ${i + 1}: an anisotropic material has no single index for mλ₀/2 — give its thickness in nm.`);
+    if (cv.mode === 'half' && !cavSweep && anisoSel(cavityMats[i])) errors.push(`Cavity ${i + 1}: an anisotropic material has no single index for mλ₀/2; give its thickness in nm.`);
   });
   const nSweep = numberSweep(ctx, node.id, 'periods', 'periods', errors);
   const posSweeps = d.cavities.map((_, i) => numberSweep(ctx, node.id, `pos${i}`, `cavity ${i + 1} position`, errors));
@@ -1240,11 +1271,11 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   if (out.dataset && out.dataset.fields.GDR) {
     const jump = phaseJump(out.dataset, spec);
     if (jump.deg > 45)
-      info.gdNote = `GD / GDD: the phase of ${jump.q} turns by up to ${jump.deg.toFixed(0)}° between neighbouring wavelengths (near λ = ${+jump.lam.toFixed(2)} nm), too coarse for its derivatives there — a finer λ step (≲ 45° per step) around it.`;
+      info.gdNote = `GD / GDD: the phase of ${jump.q} turns by up to ${jump.deg.toFixed(0)}° between neighbouring wavelengths (near λ = ${+jump.lam.toFixed(2)} nm), too coarse for its derivatives there; a finer λ step (≲ 45° per step) around it.`;
   }
   if (manual) {
     info.job = { requester: node.id, key: out.key, state: out.idle ? (out.dataset ? 'stale' : 'idle') : out.pending ? 'running' : 'done' };
-    if (out.idle && out.dataset) warnings.add('The inputs changed: the output is the previous result — press Run to recompute.');
+    if (out.idle && out.dataset) warnings.add('The inputs changed: the output is the previous result; press Run to recompute.');
     // nothing computed yet: no output, the downstream nodes say "press Run"
     if (out.idle && !out.dataset) return { errors, warnings: [...warnings], outs: {}, info };
   }
@@ -1490,7 +1521,7 @@ function analysisSetup(ctx: Ctx, id: string, fieldKey: string, alongId: string, 
 }
 
 const curvesOf = (ds: Dataset, along: number) => ds.size / ds.axes[along].values.length;
-const fmtAt = (v: number, unit: string) => (Number.isFinite(v) ? `${+v.toFixed(4)}${unit === '°' ? '°' : unit ? ` ${unit}` : ''}` : '—');
+const fmtAt = (v: number, unit: string) => (Number.isFinite(v) ? `${+v.toFixed(4)}${unit === '°' ? '°' : unit ? ` ${unit}` : ''}` : '–');
 const hasSpan = (lo: number, hi: number) => Number.isFinite(lo) || Number.isFinite(hi);
 
 // Metrics as a dataset over the remaining axes, for plotting against the swept parameters.
@@ -1561,7 +1592,7 @@ function summary(rows: [string, Float64Array, string][], count: number): string[
   return rows.map(([label, v, unit]) => {
     if (count === 1) return `${label} = ${fmtAt(v[0], unit)}`;
     const good = Array.from(v).filter(Number.isFinite);
-    if (!good.length) return `${label}: —`;
+    if (!good.length) return `${label}: –`;
     return `${label}: ${fmtAt(Math.min(...good), unit)} … ${fmtAt(Math.max(...good), unit)} (${count} curves)`;
   });
 }
@@ -1769,7 +1800,7 @@ function evalSensitivity(ctx: Ctx, node: SensitivityNode): NodeResult {
       field: meta.key,
       x: X0,
       y: Y0,
-      text: Array.from(S, (s, k) => `S = ${Number.isFinite(s) ? +s.toPrecision(4) : '—'} ${sUnit}, FOM = ${Number.isFinite(F[k]) ? +F[k].toPrecision(3) : '—'} 1/RIU`),
+      text: Array.from(S, (s, k) => `S = ${Number.isFinite(s) ? +s.toPrecision(4) : '–'} ${sUnit}, FOM = ${Number.isFinite(F[k]) ? +F[k].toPrecision(3) : '–'} 1/RIU`),
     },
     { ...base, id: `${node.id}:x1`, kind: 'points', label: `${d.kind} (n + Δn)`, field: meta.key, x: X1, y: Y1 },
   ];
@@ -2390,7 +2421,7 @@ function evalVariable(node: VariableNode): NodeResult {
 }
 
 // Virtual quantity OD = −log₁₀ T, offered wherever the data has T.
-const OD_META: FieldMeta = { key: 'OD', label: 'OD — optical density (−log₁₀ T)', short: 'OD', unit: '' };
+const OD_META: FieldMeta = { key: 'OD', label: 'OD: optical density (−log₁₀ T)', short: 'OD', unit: '' };
 const fieldsWithOD = (ds: Dataset): FieldMeta[] => (ds.fields.T && !ds.fields.OD ? [...ds.meta, OD_META] : ds.meta);
 const quantityMeta = (ds: Dataset, q: string): FieldMeta | undefined => (q === 'OD' && ds.fields.T ? (metaOf(ds, 'OD') ?? OD_META) : metaOf(ds, q));
 // The dataset with the OD field added (for plots of OD targets).
@@ -2623,6 +2654,11 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
           queue.push(e.source);
         }
   }
+  // (a Python script upstream: its code runs in the page, one run at a time; the optimizer's workers cannot run it for
+  // every candidate)
+  const pyNode = [...seen].find((id) => ctx.nodes.get(id)?.type === 'python');
+  if (pyNode)
+    return fail([`A Python script (${(ctx.nodes.get(pyNode)?.data as { caption?: string } | undefined)?.caption || pyNode}) feeds the objectives: the Optimization Engine cannot run Python for every candidate. Compute the objective with Custom data or a Custom objective, or run the optimization without the script.`]);
   const variables = [...seen].flatMap((id) => {
     const n = ctx.nodes.get(id);
     return n?.type === 'variable' ? [{ id, name: n.data.name || id, value: n.data.value, min: n.data.min, max: n.data.max, integer: n.data.integer }] : [];
@@ -3350,7 +3386,7 @@ function evalLayerGa(ctx: Ctx, node: OptimizerNode): NodeResult {
       const e = lib.get(id);
       if (!e) continue;
       if ((r === 'twoD') !== e.twoD) {
-        errors.push(`${e.name}: ${r === 'twoD' ? 'not a 2D material' : 'a 2D material — tick it among the 2D materials'}.`);
+        errors.push(`${e.name}: ${r === 'twoD' ? 'not a 2D material' : 'a 2D material: tick it among the 2D materials'}.`);
         continue;
       }
       if (!Number.isFinite(e.n.re) || !Number.isFinite(e.n.im)) {
@@ -3939,7 +3975,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
       const u = axis.unit === '°' ? '°' : axis.unit ? ` ${axis.unit}` : '';
       for (const b of d.specBands)
         if (b.q === F && !xs.some((x) => x >= b.lo && x <= b.hi))
-          specWarn.push(`The limit ${b.lo}–${b.hi} lies outside the analysed axis ${axis.label} (${+xa.toPrecision(6)}–${+xb.toPrecision(6)}${u}): it tests nothing${info.axes.length > 1 ? ' — choose the axis of the limits' : ''}.`);
+          specWarn.push(`The limit ${b.lo}–${b.hi} lies outside the analysed axis ${axis.label} (${+xa.toPrecision(6)}–${+xb.toPrecision(6)}${u}): it tests nothing${info.axes.length > 1 ? ': choose the axis of the limits' : ''}.`);
     }
     const tds = tin.connected && tin.value?.type === 'data' ? tin.value.dataset : null;
     const tAx = tds ? tds.axes.findIndex((a) => a.id === axis.id && a.values.length > 1) : -1;
@@ -4056,8 +4092,8 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
       const mean = fin.reduce((a, b) => a + b, 0) / Math.max(1, fin.length);
       const std = Math.sqrt(fin.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, fin.length - 1));
       const nomVals = nomDs?.fields[meta.key] ? Array.from(nomDs.fields[meta.key]).filter((v) => Number.isFinite(v)) : [];
-      const fmtV = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}${meta.unit ? ` ${meta.unit}` : ''}` : '—');
-      const nominal = !nomVals.length ? '—' : nomVals.length === 1 ? fmtV(nomVals[0]) : `${fmtV(Math.min(...nomVals))} … ${fmtV(Math.max(...nomVals))}`;
+      const fmtV = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}${meta.unit ? ` ${meta.unit}` : ''}` : '–');
+      const nominal = !nomVals.length ? '–' : nomVals.length === 1 ? fmtV(nomVals[0]) : `${fmtV(Math.min(...nomVals))} … ${fmtV(Math.max(...nomVals))}`;
       entry.rows.push({
         index,
         label: meta.label,
@@ -4083,7 +4119,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     if (a.values.length === 1) return `${a.label} = ${a.labels?.[0] ?? +lo.toPrecision(6)}${a.labels ? '' : u}`;
     return a.labels ? `${a.label}: ${a.values.length} steps` : `${a.label} ${+lo.toPrecision(6)}–${+hi.toPrecision(6)}${u} (${a.values.length} points)`;
   };
-  info.where = `Deviation, shaded range and critical errors: ${F} of every sample against the nominal, at every point of the computed grid — ${ds.axes.map(axText).join(' × ')}; the deviation of a sample is the RMS over all ${(outer * inner).toLocaleString('en')} points.${inst ? ` The samples are as measured (${[blurs(inst) && 'blurred by the instrument', noisy(inst) && 'with detector noise'].filter(Boolean).join(', ')}); the nominal is seen through the instrument${noisy(inst) ? ' without noise' : ''}.` : ''}`;
+  info.where = `Deviation, shaded range and critical errors: ${F} of every sample against the nominal, at every point of the computed grid (${ds.axes.map(axText).join(' × ')}); the deviation of a sample is the RMS over all ${(outer * inner).toLocaleString('en')} points.${inst ? ` The samples are as measured (${[blurs(inst) && 'blurred by the instrument', noisy(inst) && 'with detector noise'].filter(Boolean).join(', ')}); the nominal is seen through the instrument${noisy(inst) ? ' without noise' : ''}.` : ''}`;
   const tests: string[] = [];
   if (d.spec && axis) tests.push(tin.connected ? `${F} within ±${d.specTol} of the target curve at every point of it` : `${F} inside the limits of each band (along ${axis.label}, on every curve)`);
   for (const c of info.criteria) for (const row of c.rows) {
@@ -4383,12 +4419,12 @@ function evalKinetics(ctx: Ctx, node: KineticsNode): NodeResult {
         jam: Float64Array.from({ length: size }, (_, q) => runs[Math.floor(q / nT)].R[q % nT] / (1000 * surfaces[Math.floor(q / nT)].capacity)),
       };
   const meta: FieldMeta[] = swelling
-    ? [{ key: 'swell', label: 's — swelling (relative thickness increase)', short: 's', unit: '' }]
+    ? [{ key: 'swell', label: 's: swelling (relative thickness increase)', short: 's', unit: '' }]
     : [
-        { key: 'RU', label: 'R — bound response', short: 'R', unit: 'RU' },
-        { key: 'conc', label: 'c — analyte concentration', short: 'c', unit: 'nM' },
-        { key: 'Gamma', label: 'Γ — bound mass (1000 RU = 1 ng/mm²)', short: 'Γ', unit: 'ng/mm²' },
-        { key: 'jam', label: 'Γ / Γ∞ — fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
+        { key: 'RU', label: 'R: bound response', short: 'R', unit: 'RU' },
+        { key: 'conc', label: 'c: analyte concentration', short: 'c', unit: 'nM' },
+        { key: 'Gamma', label: 'Γ: bound mass (1000 RU = 1 ng/mm²)', short: 'Γ', unit: 'ng/mm²' },
+        { key: 'jam', label: 'Γ / Γ∞: fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
       ];
   let t0 = 0;
   info.steps = d.steps.map((s) => {
@@ -4841,14 +4877,14 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   }
   if (!km.swelling) {
     fields.Gamma = GAM;
-    meta.push({ key: 'Gamma', label: 'Γ — bound mass', short: 'Γ', unit: 'ng/mm²' });
+    meta.push({ key: 'Gamma', label: 'Γ: bound mass', short: 'Γ', unit: 'ng/mm²' });
   }
   if (binding) {
     Object.assign(fields, { deq: DEQ, cover: COV, jam: JAM, num: NUM, spacing: SPC });
     meta.push(
       { key: 'deq', label: 'equivalent compact thickness d = Γ/ρ (what an SPR fit at the protein index reports)', short: 'd eq', unit: 'nm' },
-      { key: 'cover', label: 'coverage — fraction of the surface under the molecules (footprints)', short: 'coverage', unit: '' },
-      { key: 'jam', label: 'Γ / Γ∞ — fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
+      { key: 'cover', label: 'coverage: fraction of the surface under the molecules (footprints)', short: 'coverage', unit: '' },
+      { key: 'jam', label: 'Γ / Γ∞: fraction of a full random monolayer (jamming)', short: 'Γ/Γ∞', unit: '' },
       { key: 'num', label: 'molecules per µm²', short: 'N', unit: 'µm⁻²' },
       { key: 'spacing', label: 'mean distance between the molecules (1/√N)', short: 'spacing', unit: 'nm' },
     );
@@ -5427,4 +5463,119 @@ function cutAlongX(
     size: nx,
   };
   return { ...ok({ type: 'data', dataset: out, pending: value.pending, name: `${value.name} · profile at z = ${+zAt.toFixed(1)} nm`, annotations: [] }, info) };
+}
+
+// ---- Python script ----
+
+// An input as Python gets it: the data of a node a Data (its axes and quantities), a material its ñ(λ) tabulated over its
+// range, a number or a sweep its values.
+function pyValueOf(ctx: Ctx, v: PortValue, letter: string, warnings: string[]): PyValue | null {
+  if (v.type === 'data') {
+    const ds = v.dataset;
+    if (!ds) return null;
+    return {
+      kind: 'data',
+      name: v.name,
+      axes: ds.axes.map((a) => ({ id: a.id, label: a.label, unit: a.unit, values: Float64Array.from(a.values), ...(a.labels ? { labels: a.labels } : {}) })),
+      fields: ds.meta.filter((m) => ds.fields[m.key]).map((m) => ({ key: m.key, label: m.label, unit: m.unit, values: ds.fields[m.key] })),
+    };
+  }
+  if (v.type === 'material') {
+    if (v.sel.kind === 'swept') warnings.push(`${letter}: a material sweep; Python gets its first material.`);
+    const m = nominalMat(v.sel);
+    if (m.aniso) {
+      warnings.push(`${letter}: an anisotropic material is not given to Python.`);
+      return null;
+    }
+    const [lo0, hi0] = validRange(m.id, ctx.lib);
+    const lo = Number.isFinite(lo0) && lo0 > 0 ? lo0 : 200;
+    const hi = Number.isFinite(hi0) && hi0 > lo ? Math.min(hi0, 20000) : Math.max(lo + 1, 2500);
+    const N = 1001;
+    const lam = Float64Array.from({ length: N }, (_, i) => lo + ((hi - lo) * i) / (N - 1));
+    const n = new Float64Array(N);
+    const k = new Float64Array(N);
+    lam.forEach((l, i) => {
+      const c = refractiveIndex(m.id, ctx.models, l, m.porosity);
+      n[i] = c.re;
+      k[i] = c.im;
+    });
+    return { kind: 'material', name: m.name, lam, n, k };
+  }
+  if (v.type === 'sweep') return v.sweep.values.length === 1 ? { kind: 'value', value: v.sweep.values[0] } : { kind: 'array', values: Float64Array.from(v.sweep.values) };
+  if (v.type === 'param') return v.values.length === 1 ? { kind: 'value', value: v.values[0] } : { kind: 'array', values: Float64Array.from(v.values) };
+  return null;
+}
+
+// An output of the code as a value of the graph: a material (added to the library of this evaluation), or data (a
+// number: one point; an array: over its index).
+function pyPortValue(ctx: Ctx, nodeId: string, o: PyOut, runKey: string): PortValue {
+  if (o.kind === 'material') {
+    const id = `py:${nodeId}:${o.name}`;
+    const N = o.lam.length;
+    const model: MaterialDef['model'] =
+      N === 1 ? { type: 'constant', n: o.n[0], k: o.k[0] } : { type: 'tabulated', table: { lambda: Array.from(o.lam, (l) => l / 1000), n: Array.from(o.n), k: Array.from(o.k) }, extrap: 'clamp' };
+    const def: MaterialDef = { id, name: o.title || o.name, color: '#8a7fb5', model, ...(N > 1 ? { range: [o.lam[0], o.lam[N - 1]] as [number, number] } : {}), source: 'Python script' };
+    ctx.lib.set(id, def);
+    ctx.models[id] = model;
+    return { type: 'material', sel: { kind: 'fixed', mat: { key: `${nodeId}:${o.name}`, id, name: def.name, color: def.color } } };
+  }
+  const meta = (key: string, label: string, unit: string): FieldMeta => ({ key, label, short: key, unit });
+  let ds: Dataset;
+  const key = `py:${nodeId}:${o.name}:${runKey}`;
+  if (o.kind === 'value') ds = { key, axes: [{ id: 'result', label: 'result', unit: '', values: [0] }], fields: { [o.name]: Float64Array.of(o.value) }, meta: [meta(o.name, o.name, '')], size: 1 };
+  else if (o.kind === 'array') ds = { key, axes: [{ id: 'index', label: 'index', unit: '', values: Array.from(o.values, (_, i) => i) }], fields: { [o.name]: o.values }, meta: [meta(o.name, o.name, '')], size: o.values.length };
+  else {
+    const axes = o.axes.length ? o.axes.map((a) => ({ id: a.id, label: a.label || a.id, unit: a.unit, values: Array.from(a.values), ...(a.labels ? { labels: a.labels } : {}) })) : [{ id: 'result', label: 'result', unit: '', values: [0] }];
+    const size = axes.reduce((p, a) => p * a.values.length, 1);
+    ds = { key, axes, fields: Object.fromEntries(o.fields.map((f) => [f.key, f.values])), meta: o.fields.map((f) => meta(f.key, f.label || f.key, f.unit)), size };
+  }
+  return { type: 'data', dataset: ds, pending: false, name: o.name, annotations: [] };
+}
+
+// Python script: the inputs as variables, a run asked for when Run is pressed (or, with Auto run, when the code or the
+// data changed), the outputs of the last run (kept while a new one runs, so the graph after it does not go empty).
+function evalPython(ctx: Ctx, node: PythonNode): NodeResult {
+  const d = node.data;
+  const vars: PyJob['vars'] = [];
+  const shown: PyVarShown[] = [];
+  const warnings: string[] = [];
+  let upstreamPending = false;
+  const handles = [...(ctx.inputs.get(node.id)?.keys() ?? [])].filter((h) => /^in-\d+$/.test(h)).sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
+  for (const h of handles) {
+    const inp = input(ctx, node.id, h);
+    if (!inp.connected || !inp.value) continue;
+    if (inp.value.type === 'data' && inp.value.pending) upstreamPending = true;
+    const letter = letterOf(Number(h.slice(3)));
+    const name = d.vars?.[letter]?.trim() || letter;
+    const value = pyValueOf(ctx, inp.value, letter, warnings);
+    if (!value) continue;
+    vars.push({ name, value });
+    shown.push({ letter, name, kind: value.kind, size: sizeText(value) });
+  }
+  const count = new Map<string, number>();
+  for (const v of vars) count.set(v.name, (count.get(v.name) ?? 0) + 1);
+  const twice = [...count].filter(([, k]) => k > 1).map(([nm]) => nm);
+  const info = (py: PyInfo) => ({ py });
+  if (twice.length) return fail([`Two inputs are called ${twice.join(', ')}: give them different names.`], warnings, info({ vars: shown, running: false, stale: false }));
+  const code = d.code ?? '';
+  const run = d.run ?? 0;
+  if (!code.trim()) return { errors: [], warnings: ['Write the code: the inputs are variables here (A, B, …).', ...warnings], outs: {}, info: info({ vars: shown, running: false, stale: false }) };
+  if (!ctx.py) return { errors: [], warnings: ['Python runs in the app only: not in the Optimization Engine’s workers nor in the scripts.', ...warnings], outs: {}, info: info({ vars: shown, running: false, stale: false, headless: true }) };
+  const key = digest(code, vars, run);
+  const last = ctx.py.get(node.id);
+  // a new run only when Run was pressed (a project opened again: its last run done once more, for its outputs); by itself
+  // when the code or the data change only if asked (auto); never while the data upstream are being computed
+  const auto = d.auto === true;
+  const current = !!last && last.key === key;
+  const wanted = !upstreamPending && (auto ? !current : run > 0 && (!last || last.run !== run));
+  const job: PyJob | undefined = wanted ? { key, run, code, vars } : undefined;
+  const outs: Record<string, PortValue> = {};
+  const errors: string[] = [];
+  if (last) {
+    const hide = new Set(d.hide ?? []);
+    for (const o of last.outputs) if (!hide.has(o.name)) outs[`py-${o.name}`] = pyPortValue(ctx, node.id, o, last.key);
+    if (last.error) errors.push(`${last.error.line ? `Line ${last.error.line}: ` : ''}${last.error.message}`);
+    if (!auto && !current) warnings.push('The code or the data changed since the last run: press Run.');
+  } else if (!job) warnings.push(upstreamPending ? 'Waiting for the data upstream.' : 'Press Run to run the code.');
+  return { errors, warnings, outs, pending: !last && !!job, info: info({ vars: shown, ...(job ? { job } : {}), ...(last ? { result: last } : {}), running: !!job, stale: !current }) };
 }

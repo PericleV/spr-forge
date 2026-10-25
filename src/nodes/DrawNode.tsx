@@ -347,7 +347,7 @@ export function DrawNodeView({ id, data }: NodeProps<DrawNode>) {
 
       {unique.length > 0 && (
         <details className="nodrag">
-          <summary>Labels ({unique.length}) — colours come from the Material nodes</summary>
+          <summary>Labels ({unique.length}): colours come from the Material nodes</summary>
           <div className="curves nowheel">
             {unique.map((b) => {
               const k = overrideKey(b);

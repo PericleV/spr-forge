@@ -68,7 +68,7 @@ export function MaterialNodeView({ id, data }: NodeProps<MaterialNode>) {
         </div>
       )}
       {porous && (
-        <label title="What fills the pores. A neighbouring layer: its index as computed at every step (index sweeps, the Δn of a Sensitivity analysis), so the porous layer follows it — e.g. porous gold under water, with water swept.">
+        <label title="What fills the pores. A neighbouring layer: its index as computed at every step (index sweeps, the Δn of a Sensitivity analysis), so the porous layer follows it; e.g. porous gold under water, with water swept.">
           <span className="muted">pores filled with</span>
           <select className="nodrag pores-fill" value={data.poresFill ?? 'library'} onChange={(e) => set({ poresFill: e.target.value as MaterialData['poresFill'] })}>
             <option value="library">{lib.get(porous.filler)?.name ?? porous.filler} (library)</option>
@@ -107,7 +107,7 @@ export function MaterialSweepNodeView({ id, data }: NodeProps<MaterialSweepNode>
       <div className="port-row">
         <Port kind="target" id="in" port="material" />
         <span className="muted">materials</span>
-        <span className="val">{names.length ? names.join(', ') : '—'}</span>
+        <span className="val">{names.length ? names.join(', ') : '–'}</span>
       </div>
       <div className="hint">Connect several Material nodes; the output steps through them.</div>
       <Messages result={result} />
@@ -154,7 +154,7 @@ export function AnisoNodeView({ id, data }: NodeProps<AnisoNode>) {
         <div className="port-row" key={h}>
           <Port kind="target" id={h} port="material" />
           <span className="muted">{text}</span>
-          <span className="val">{comps[k] ?? '—'}</span>
+          <span className="val">{comps[k] ?? '–'}</span>
         </div>
       ))}
       {ANISO_ANGLES[kind].map(([text, tip], k) => (
@@ -199,14 +199,14 @@ export function LayerNodeView({ id, data }: NodeProps<LayerNode>) {
       <div className="port-row">
         <Port kind="target" id="mat" port="material" />
         <span className="muted">Material</span>
-        <span className="val">{(result?.info?.matText as string | undefined) ?? '—'}</span>
+        <span className="val">{(result?.info?.matText as string | undefined) ?? '–'}</span>
       </div>
       <div className="port-row">
         <Port kind="target" id="d" port="sweep-number" />
         <label>
           {mono ? 'Layers (2D)' : 'Thickness [nm]'}
           {dSwept ? (
-            <span className="val swept">swept ({swept ?? '—'})</span>
+            <span className="val swept">swept ({swept ?? '–'})</span>
           ) : mono ? (
             <NumInput value={data.layers2D} min={1} step={1} onChange={(layers2D) => set({ layers2D })} />
           ) : (

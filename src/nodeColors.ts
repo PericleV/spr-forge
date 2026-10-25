@@ -60,6 +60,8 @@ export const NODE_SECTION: Record<NodeKind, Section> = {
   info: 'Notes',
   notes: 'Notes',
   frame: 'Notes',
+  reroute: 'View',
+  python: 'Analysis',
 };
 
 export const NODE_COLORS = Object.fromEntries(Object.entries(NODE_SECTION).map(([t, s]) => [t, GROUP_COLORS[s]])) as Record<NodeKind, string>;
@@ -129,6 +131,8 @@ export const NODE_TITLES: Record<NodeKind, string> = {
   info: 'Info',
   notes: 'Combine notes',
   frame: 'Group',
+  reroute: 'Reroute',
+  python: 'Python script',
 };
 
 export const nodeTitle = (n: AppNode): string => (n.type === 'param' ? (n.data.quantity === 'lambda' ? 'Wavelength' : 'Angle of incidence') : NODE_TITLES[n.type]);
@@ -141,4 +145,4 @@ export function nodeDisplayName(n: AppNode): string {
 }
 
 // Nodes not offered for new graphs (they still open in saved projects): Merge data (hidden by the user, 2026-09-30).
-export const HIDDEN_NODES = new Set<string>(['merge']);
+export const HIDDEN_NODES = new Set<string>(['merge', 'notes']);

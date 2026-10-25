@@ -10,7 +10,7 @@ import type { AppNode, RcwaFieldData, RcwaFieldNode } from '../types.ts';
 import { MapViewControls, Messages, NumInput, OutPort, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
-const fmt = (v: number, digits = 4) => (Number.isFinite(v) ? `${+v.toFixed(digits)}` : '—');
+const fmt = (v: number, digits = 4) => (Number.isFinite(v) ? `${+v.toFixed(digits)}` : '–');
 
 // The two ends of a window axis, edited as a pair: typed values stay in the fields and reach the node (and its checks)
 // only when the focus leaves the pair or Enter is pressed — the node does not re-lay itself out while typing.
@@ -192,7 +192,7 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
         <label className="radio" title="Orders N of the map: a field map needs more orders than a spectrum (its ripples have the width Λ / (2N + 1)); empty = the Compute RCWA's N. Only this point is recomputed, so a larger N is affordable here.">
           map orders N <NumInput className="tiny" value={data.orders ?? NaN} min={0} step={5} placeholder={info?.job ? `${info.job.spec.rcwa?.orders ?? ''}` : ''} onChange={(orders) => set({ orders })} />
         </label>
-        <label className="radio" title="Gibbs ringing of the Fourier sums in x: Lanczos σ (or Fejér) weights the harmonic of order p by sinc(πp/(N+1)) (1 − |p|/(N+1)): the map becomes the field averaged in x over about Λ/(N+1) — the ripples go, sharp features blur over that length. None = the exact truncated sums (as RETICOLO).">
+        <label className="radio" title="Gibbs ringing of the Fourier sums in x: Lanczos σ (or Fejér) weights the harmonic of order p by sinc(πp/(N+1)) (1 − |p|/(N+1)): the map becomes the field averaged in x over about Λ/(N+1); the ripples go, sharp features blur over that length. None = the exact truncated sums (as RETICOLO).">
           Gibbs
           <select className="nodrag" value={data.sigma ?? 'none'} onChange={(e) => set({ sigma: e.target.value as NonNullable<typeof data.sigma> })}>
             <option value="none">none (exact sums)</option>
@@ -240,7 +240,7 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
               if (L) set({ z0: +L.z0.toFixed(4), z1: +L.z1.toFixed(4) });
             }}
           >
-            <option value="">layer…</option>
+            <option value="">layer</option>
             {info.layers.map((L, i) => (
               <option key={i} value={i}>{L.label}</option>
             ))}
@@ -288,7 +288,7 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
             view={data.mapView}
           />
         ) : (
-          <div className="empty small">{info?.stale ? 'Out of date — press Run.' : 'Press Run to compute the field map.'}</div>
+          <div className="empty small">{info?.stale ? 'Out of date: press Run.' : 'Press Run to compute the field map.'}</div>
         )}
       </div>
       {map && run?.status === 'done' && <div className="hint">computed in {run.seconds.toFixed(1)} s · incident medium at the top{smooth ? ' · smooth profile (FFF)' : ''}</div>}

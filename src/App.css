@@ -41,7 +41,45 @@
 .toolbar select.examples-menu { max-width: 15em; text-overflow: ellipsis; }
 /* a section of node buttons wraps onto more lines when it is wider than the window (its buttons keep one-line labels) */
 .toolbar .sep { width: 1px; align-self: stretch; background: var(--border); }
-.toolbar button.active { border-color: var(--accent); color: var(--accent); }
+.toolbar button.active { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+/* ---- Top bar: the buttons in groups (project, edit, materials), help, the theme and the colours at the right ---- */
+.toolbar { gap: 8px 10px; }
+.tb-group { display: inline-flex; align-items: center; gap: 2px; padding: 2px; background: var(--input); border: 1px solid var(--border); border-radius: 8px; }
+.tb-group > button, .tb-group > select, .tb-group .undo-redo > button { background: transparent; border-color: transparent; box-shadow: none; display: inline-flex; align-items: center; gap: 5px; }
+.tb-group > button:hover:not(:disabled), .tb-group > select:hover, .tb-group .undo-redo > button:hover:not(:disabled) { background: var(--panel); border-color: var(--border); }
+.tb-group > button.active { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.tb-group .undo-redo { display: inline-flex; gap: 2px; }
+.tb-group > select { cursor: pointer; }
+.tb-spacer { flex: 1; }
+.toolbar > button { display: inline-flex; align-items: center; gap: 5px; }
+.tb-theme > button { padding: 3px 5px; color: var(--muted); }
+.tb-theme > button.active { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+/* the one-colour icons of the buttons (ui/iconProps.ts): in the text's colour and size, on its line */
+svg.icon { vertical-align: -0.15em; flex: none; }
+/* the two colour squares (selection, accent): a square in a button as tall as the others, a small menu under it */
+.color-choice { position: relative; display: inline-flex; }
+.color-choice > button { display: inline-flex; align-items: center; gap: 5px; }
+.color-choice > button i { display: block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--text) 25%, transparent); }
+.color-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); white-space: nowrap; }
+.color-menu > button.on { border-color: var(--accent); color: var(--accent); }
+.color-grid { display: grid; grid-template-columns: repeat(4, 22px); gap: 6px; }
+.color-grid button { width: 22px; height: 22px; min-height: 0; padding: 0; border: 1px solid color-mix(in srgb, var(--text) 25%, transparent); }
+.color-grid button.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--text); }
+.color-custom { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.color-custom input { width: 40px; height: 24px; padding: 0 2px; cursor: pointer; }
+/* a narrow window: the top bar's buttons as their icons only (their names in their hints), on one line where it fits */
+@media (max-width: 1540px) {
+  .toolbar .tb-label { display: none; }
+  /* (Find node keeps its name: its icon alone does not say what it does) */
+  .toolbar .tb-label.keep { display: inline; }
+  .toolbar .project-name { width: 160px; }
+  .toolbar select.examples-menu { max-width: 9em; }
+}
+/* (narrower still: the name of the app by its logo only, the project's name shorter) */
+@media (max-width: 1000px) {
+  .toolbar .brand-text { display: none; }
+  .toolbar .project-name { width: 110px; }
+}
 /* under the toolbar: the nodes panel and the canvas */
 .workspace { flex: 1; min-height: 0; display: flex; }
 .canvas { position: relative; flex: 1; min-width: 0; min-height: 0; }
@@ -61,17 +99,18 @@
 .palette-empty { padding: 6px 2px; }
 .palette-foot { font-size: var(--fs-tiny); }
 
+/* the controls: text 12 px, corners 6 px (the look of the Mantine ones: the end of this file) */
 button, select, input {
   font: inherit;
-  font-size: var(--fs);
+  font-size: 12px;
   color: var(--text);
   background: var(--input);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 3px 6px;
 }
 button { cursor: pointer; }
-button:hover { border-color: var(--accent); }
+button:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background-color: color-mix(in srgb, var(--accent) 8%, var(--input)); }
 button:disabled { opacity: 0.5; cursor: default; }
 button.danger { color: var(--err); }
 input:disabled { opacity: 0.5; }
@@ -468,7 +507,7 @@ button.active { border-color: var(--accent); color: var(--accent); }
 .ctx-menu button.ctx-color.on { border-color: var(--text); }
 .ctx-menu button.ctx-color:hover { background: inherit; transform: scale(1.12); }
 .undo-redo { display: inline-flex; gap: 2px; }
-.undo-redo button { font-size: 15px; padding: 1px 8px; }
+.undo-redo button { padding: 3px 7px; }
 .node .limits .interval { display: inline-flex; align-items: center; gap: 3px; }
 /* View Grating: pixel grid over the material colours (same in both themes) */
 .px-grid .halo { stroke: rgb(255 255 255 / 0.35); }
@@ -562,6 +601,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .welcome-card span { color: var(--muted); font-size: var(--fs-small); line-height: 1.35; }
 .welcome-card:hover { border-color: var(--select); }
 .help-examples { margin: 4px 0 8px; padding-left: 18px; }
+.help-text { margin: 4px 0 6px; line-height: 1.45; }
+.help-code { margin: 0 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--input); border: 1px solid var(--border); font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: var(--fs-small); white-space: pre-wrap; user-select: text; }
 .help-examples li { margin: 2px 0; }
 
 /* the canvas and the nodes keep the system arrow: Chromium draws the grab hand from a small bitmap, jagged on high-DPI
@@ -597,3 +638,138 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .custom-expr { flex: 1; min-width: 180px; font-family: var(--mono, monospace); }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .chips .chip { padding: 1px 6px; font-size: var(--fs-small); font-family: var(--mono, monospace); }
+
+/* Python script: its editor, what the code printed, its last expression (a table), its figures, an error, its outputs */
+.node-python { width: var(--node-l); }
+.node-python .port-row > b { width: 14px; }
+.node-python .port-row .ellipsis, .py-out-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-python .port-row.out { gap: 8px; }
+.py-out-text { font-weight: 400; max-width: 75%; }
+.py-options { display: flex; flex-direction: column; gap: 6px; }
+.py-options[open] { padding-bottom: 4px; }
+.py-options > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-small); }
+.py-options > *:not(summary) { margin-top: 6px; }
+.py-names { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.py-names input { width: 90px; }
+.code-editor { border: 1px solid var(--border); border-radius: 6px; background: var(--input); font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: var(--fs-small); overflow: hidden; text-align: left; }
+.code-editor .cm-editor { height: 100%; background: transparent; color: var(--text); }
+.code-editor .cm-editor.cm-focused { outline: 1px solid var(--accent); }
+.code-editor .cm-gutters { background: transparent; border-right: 1px solid var(--border); color: var(--muted); }
+.code-editor .cm-activeLine, .code-editor .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.code-editor .cm-cursor { border-left-color: var(--text); }
+.code-editor .cm-selectionBackground, .code-editor .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 30%, transparent) !important; }
+.code-editor .cm-error-line { background: color-mix(in srgb, var(--err) 18%, transparent); }
+.code-editor .cm-tooltip { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+.code-editor .cm-tooltip-autocomplete ul li[aria-selected] { background: var(--accent); color: var(--on-accent); }
+.code-editor .cm-panels { background: var(--panel); color: var(--text); }
+.py-console, .py-error { margin: 0; max-height: 180px; overflow: auto; font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: var(--fs-small); white-space: pre-wrap; word-break: break-word; padding: 4px 6px; border-radius: 6px; background: var(--input); border: 1px solid var(--border); user-select: text; }
+.py-error { color: var(--err); background: var(--err-bg); border-color: transparent; }
+.py-table { max-height: 220px; overflow: auto; font-size: var(--fs-small); user-select: text; }
+.py-table table { border-collapse: collapse; }
+.py-table th, .py-table td { padding: 2px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.py-table th { position: sticky; top: 0; background: var(--panel); }
+.py-figure { display: block; max-width: 100%; background: #ffffff; border-radius: 6px; }
+.py-big { background: var(--panel); border-radius: 10px; padding: 12px; width: min(1100px, 94vw); display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 40px rgb(0 0 0 / 0.4); }
+
+/* Reroute: the dot moves; its ports are small points on its left and right */
+.reroute { width: 16px; height: 16px; border-radius: 50%; cursor: move; box-shadow: 0 0 0 2px var(--panel); }
+.reroute.selected { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--select); }
+.reroute .reroute-handle { width: 8px !important; height: 8px !important; min-width: 0; min-height: 0; opacity: 1 !important; border: 1px solid var(--panel) !important; top: 50% !important; transform: translate(0, -50%) !important; }
+.reroute .react-flow__handle-left.reroute-handle { left: -6px !important; right: auto !important; }
+.reroute .react-flow__handle-right.reroute-handle { left: auto !important; right: -6px !important; }
+.reroute .react-flow__handle.reroute-handle::after { display: none; }
+/* the connection a node dragged over it would go into */
+.react-flow__edge.edge-drop .react-flow__edge-path { stroke-dasharray: none; animation: none; filter: drop-shadow(0 0 4px var(--accent)); }
+
+/* the app's own tooltip (ui/quickTip.ts): its head, then the rest smaller */
+.quick-tip { position: fixed; z-index: 5000; max-width: 320px; padding: 6px 9px; border-radius: 6px; background: color-mix(in srgb, var(--text) 92%, var(--panel)); color: var(--panel); font-size: var(--fs-small); line-height: 1.4; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25); pointer-events: none; opacity: 0; transform: translateY(-2px); transition: opacity 0.12s ease, transform 0.12s ease; white-space: normal; }
+.quick-tip.on { opacity: 1; transform: none; }
+.quick-tip-head { font-weight: 500; }
+.quick-tip-more { margin-top: 4px; font-size: var(--fs-tiny); opacity: 0.82; }
+@media (prefers-reduced-motion: reduce) { .quick-tip { transition: none; } }
+
+/* ---- one look for the controls (as SciPlotFlow's): the app's own select, input, checkbox and button drawn as the
+   Mantine ones: text 12 px, corners 6 px, height 26 px, the accent when on. Kept at the weight of a tag (:where), so the
+   rules of a node's or a panel's own controls still win ---- */
+:root .mantine-Input-wrapper { --input-height-xs: 26px; }
+:root .mantine-Button-root { --button-height-xs: 26px; }
+:root .mantine-SegmentedControl-root { --sc-padding-xs: 2px 8px; }
+:where(textarea) { border-radius: 6px; }
+:where(button) { font-weight: 600; }
+/* (a button with text: 26 px high; the small ones, as a chip's ×, a colour dot, keep their sizes) */
+:where(.toolbar, .node, .library, .welcome, .help, .find-node, .projects) :where(button:not(.ctx-color, .chip button, .fig-tools button, .note-bar button)) { min-height: 26px; }
+button:disabled:hover { background-color: var(--input); border-color: var(--border); }
+:where(select, input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'])) { height: 26px; padding-top: 0; padding-bottom: 0; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input[type='range'] { accent-color: var(--accent); }
+/* a select: its arrows drawn as the Mantine ones (up and down, in the muted text's colour of the theme) */
+:root { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
+:root[data-theme='dark'] { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
+}
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 20px;
+  background-image: var(--select-arrows);
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px 10px;
+}
+/* (the open list takes its colours from the theme, not the browser's white) */
+select option { background: var(--panel); color: var(--text); }
+/* a checkbox, a radio: drawn as the Mantine ones (a box of the input's colour, the accent with a tick when on) */
+input[type='checkbox']:not([class*='mantine']), input[type='radio']:not([class*='mantine']) {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  padding: 0;
+  margin: 0 4px 0 0;
+  vertical-align: -2px;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, var(--border));
+  border-radius: 4px;
+  background: var(--input) no-repeat center / 10px 10px;
+  cursor: pointer;
+}
+input[type='radio']:not([class*='mantine']) { border-radius: 50%; }
+input[type='checkbox']:checked, input[type='radio']:checked { background-color: var(--accent); border-color: var(--accent); }
+input[type='checkbox']:checked { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"); }
+input[type='radio']:checked { background-image: radial-gradient(circle, white 0 3px, transparent 3.5px); background-size: auto; }
+input[type='checkbox']:indeterminate { background-color: var(--accent); border-color: var(--accent); background-image: linear-gradient(white, white); background-size: 8px 2px; }
+input[type='checkbox']:hover:not(:disabled), input[type='radio']:hover:not(:disabled) { border-color: var(--accent); }
+input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default; }
+
+/* ---- the Mantine controls in the nodes: a choice of a few (segmented), the materials' list with its search; an option of
+   its own a switch (the checks of a list stay boxes) ---- */
+.node .seg { align-self: flex-start; max-width: 100%; }
+/* (its track the colour of the fields, the choice on it the panel's, as in SciPlotFlow) */
+.mantine-SegmentedControl-root { --sc-color: var(--panel); background-color: var(--input); border: 1px solid var(--border); }
+.mantine-SegmentedControl-indicator { box-shadow: 0 1px 2px rgb(0 0 0 / 0.18); }
+.mantine-SegmentedControl-label { color: var(--muted); }
+.mantine-SegmentedControl-label[data-active] { color: var(--text); }
+.node .mantine-SegmentedControl-label { display: block; justify-content: normal; gap: 0; font-size: 12px; }
+.node .mat-select { flex: 1 1 auto; min-width: 150px; }
+.node .mat-select .mantine-Input-input { background: var(--input); border-color: var(--border); color: var(--text); font-size: 12px; }
+.node :is(label.radio, label.check):not(:is(.checks-inline, .checks, td, .chips, .layer-ga) *) > input[type='checkbox']:not([class*='mantine']) {
+  width: 28px;
+  min-width: 28px;
+  height: 16px;
+  margin-right: 4px;
+  vertical-align: -4px;
+  border-radius: 999px;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--muted) 35%, var(--input)) radial-gradient(circle, #fff 0 5.5px, transparent 6px) no-repeat 0 center / 14px 14px;
+  transition: background-color 0.15s, background-position 0.15s;
+}
+.node :is(label.radio, label.check):not(:is(.checks-inline, .checks, td, .chips, .layer-ga) *) > input[type='checkbox']:not([class*='mantine']):checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: radial-gradient(circle, #fff 0 5.5px, transparent 6px);
+  background-position: 12px center;
+  background-size: 14px 14px;
+}
+@media (prefers-reduced-motion: reduce) { .node label > input[type='checkbox'] { transition: none; } }

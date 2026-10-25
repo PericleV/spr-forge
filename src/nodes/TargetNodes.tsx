@@ -11,7 +11,7 @@ import { ColorField, Messages, NumInput, OutPort, Port, Radios, SliceControls } 
 import type { SpecKind } from '../engine/spec.ts';
 import { CHART_W } from './sizes.ts';
 
-const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}` : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(5)}` : '–');
 const AXIS_LABEL = { lambda: 'λ', theta: 'θ', x: 'x' } as const;
 const QUANTITIES: [string, string][] = [
   ['R', 'R'],
@@ -44,7 +44,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   return (
     <div className="node node-import">
       <div className="row">
-        <button className="nodrag" onClick={() => file.current?.click()}>Load file…</button>
+        <button className="nodrag" onClick={() => file.current?.click()}>Load file</button>
         <span className="muted ellipsis">{data.fileName || 'no file'}</span>
         <input
           ref={file}

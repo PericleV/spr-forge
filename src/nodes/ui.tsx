@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef } from 'react';
+import { SegmentedControl, Select } from '@mantine/core';
 import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode, MapView } from '../types.ts';
 import { COLOR_MAPS, type ColorMapName } from '../plot/colors.ts';
-import { isMultiInput, PORT_COLORS, type PortType } from '../engine/ports.ts';
+import { isMultiInput, PORT_COLORS, PORT_LABELS, type PortType } from '../engine/ports.ts';
 import type { NodeResult } from '../engine/types.ts';
 import { useLibrary } from '../library/context.ts';
 import { groupOf, MATERIAL_GROUPS, USER_GROUP } from '../physics/library.ts';
@@ -35,12 +36,22 @@ export function NumInput(props: {
   );
 }
 
+// A choice of a few: 2 to 4 short options side by side (Mantine's segmented control), else a list of radio buttons.
 export function Radios<T extends string>(props: {
   name: string;
   value: T;
   options: [T, string][];
   onChange: (v: T) => void;
 }) {
+  if (props.options.length <= 4 && props.options.every(([, l]) => l.length <= 18))
+    return (
+      <SegmentedControl
+        className="nodrag seg"
+        value={props.value}
+        onChange={(v) => props.onChange(v as T)}
+        data={props.options.map(([value, label]) => ({ value, label }))}
+      />
+    );
   return (
     <div className="radios">
       {props.options.map(([v, label]) => (
@@ -59,18 +70,6 @@ export function Radios<T extends string>(props: {
   );
 }
 
-const PORT_LABELS: Record<PortType, string> = {
-  material: 'material',
-  layer: 'layer',
-  stack: 'stack',
-  'param-theta': 'angle θ',
-  'param-lambda': 'wavelength λ',
-  'sweep-number': 'number sweep',
-  'sweep-polarization': 'polarization sweep',
-  data: 'data',
-  objective: 'objective',
-  note: 'note',
-};
 
 // A port; the tooltip names the type of value and where it comes from / goes to. Inputs that accept several
 // connections are drawn as squares.
@@ -113,25 +112,27 @@ export function Messages({ result }: { result?: NodeResult }) {
   );
 }
 
-// Library material picker; `none` adds an empty choice with that label.
+// Library material picker, with a search (type a part of the name); `none` adds an empty choice with that label.
 export function MaterialSelect({ value, onChange, none }: { value: string; onChange: (id: string) => void; none?: string }) {
   const { list, lib } = useLibrary();
+  // the sections of the library, then the user's own materials
+  const groups = [...MATERIAL_GROUPS, USER_GROUP]
+    .map((g) => ({ group: g, items: list.filter((m) => groupOf(m) === g).map((m) => ({ value: m.id, label: m.name })) }))
+    .filter((g) => g.items.length);
+  const data = [...(none !== undefined ? [{ value: '', label: none }] : []), ...(value && !lib.has(value) ? [{ value, label: `${value} (missing)` }] : []), ...groups];
   return (
-    <select className="nodrag" value={value} onChange={(e) => onChange(e.target.value)}>
-      {none !== undefined && <option value="">{none}</option>}
-      {value && !lib.has(value) && <option value={value}>{value} (missing)</option>}
-      {/* the sections of the library, then the user's own materials */}
-      {[...MATERIAL_GROUPS, USER_GROUP].map((g) => {
-        const ms = list.filter((m) => groupOf(m) === g);
-        return ms.length ? (
-          <optgroup key={g} label={g}>
-            {ms.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </optgroup>
-        ) : null;
-      })}
-    </select>
+    <Select
+      className="nodrag nowheel mat-select"
+      searchable
+      value={value}
+      data={data}
+      onChange={(v) => v !== null && onChange(v)}
+      nothingFoundMessage="No material matches"
+      // (the name selected when the list opens: typing replaces it)
+      onFocus={(e) => e.currentTarget.select()}
+      maxDropdownHeight={320}
+      aria-label="Material"
+    />
   );
 }
 
@@ -150,7 +151,7 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
     // two fixed lines: the colour scale (map, range, log), then how the picture is drawn (cap, interpolate, blur)
     <div className="map-view">
       <div className="row wrap">
-        <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0 — for Re / Im of a field)">
+        <label className="radio" title="Colour map (wave: diverging blue–white–red, its automatic range symmetric about 0; for Re / Im of a field)">
           <select className="nodrag" value={v.cmap ?? 'viridis'} onChange={(e) => set({ cmap: e.target.value === 'viridis' ? undefined : (e.target.value as ColorMapName) })}>
             {(Object.keys(COLOR_MAPS) as ColorMapName[]).map((k) => (
               <option key={k} value={k}>{COLOR_MAPS[k].label}</option>

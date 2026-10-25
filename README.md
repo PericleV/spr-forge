@@ -47,13 +47,14 @@ published papers (simulated annealing, gradient inverse design).
 
 ## Validation
 
-The physics is checked at every change of the code (`npm run check:tmm`), among others:
+The physics is checked at every change of the code (`npm run check:tmm`), among others (every check, its reference and the
+values compared: [VALIDATION.md](VALIDATION.md)):
 
 | Check | Result |
 |---|---|
 | TMM vs analytic formulas (Fresnel, Brewster, quarter-wave mirror) | exact |
-| Design TMM (with analytic gradients) vs Byrnes' TMM | 4·10⁻¹⁶ |
-| RCWA vs RETICOLO V10 (34 cases, 197 diffraction efficiencies) | max \|Δη\| 2.8·10⁻¹² |
+| Design TMM (with analytic gradients) vs Byrnes' TMM | 8·10⁻¹⁶ |
+| RCWA vs RETICOLO V10 (38 cases, 215 diffraction efficiencies; fields at 278 points) | max \|Δη\| 2.8·10⁻¹² (fields 1.4·10⁻¹²) |
 | RCWA, conical incidence and anisotropic layers (Berreman 4×4) vs RETICOLO V10 (37 cases, 396 efficiencies and TE / TM parts) | max \|Δη\| 6·10⁻¹² |
 | Berreman 4×4: cholesteric band edges vs n_o p … n_e p; 90° twisted nematic vs Gooch–Tarry | 0.07 %; 7·10⁻⁴ |
 | Chiral optical Tamm states, Pyatnov et al., Photonics 5, 30 (2018) | peaks 636.3 / 664.8 / 650.0 nm, Fabry–Pérot 625.8 / 639.0 nm (636 / 665 / 650, 625 / 639) |
@@ -97,3 +98,15 @@ browser's storage.
 ## License
 
 [MIT](LICENSE).
+
+## Third-party software
+
+Bundled with the app: React and React Flow (`@xyflow/react`), Mantine (`@mantine/core`, `@mantine/hooks`), CodeMirror 6
+(`@codemirror/*`, `@lezer/highlight`), all MIT; Lucide icons (`lucide-react`), ISC.
+
+Loaded only when a Python script runs: Pyodide (MPL-2.0) with CPython (PSF License), downloaded by the browser from the
+jsDelivr CDN (`cdn.jsdelivr.net/pyodide/`) the first time and kept in its cache, and the packages the code imports:
+numpy, scipy, pandas, scikit-learn, statsmodels, scikit-image, sympy (BSD-3-Clause), matplotlib (Matplotlib License,
+PSF-based), OpenCV (Apache-2.0), micropip (MPL-2.0); lmfit (BSD-3-Clause), seaborn (BSD-3-Clause), pingouin (GPL-3.0),
+pybaselines (BSD-3-Clause), emcee (MIT), pint (BSD-3-Clause), tifffile (BSD-3-Clause) and openpyxl (MIT) from PyPI.
+They are not part of the app's files, and the code and the data stay in the browser.

@@ -37,8 +37,8 @@ export function Welcome({ onClose, onEmpty, onHelp, examples, onExample, last }:
         <h2 id="welcome-title">Welcome to SPR Forge</h2>
         <p>
           A free, node-based simulator for thin films and 1D gratings, running entirely in your browser. Build a structure from Material, Layer and stack
-          nodes, compute its reflectance, transmittance and fields — transfer matrices, RCWA for gratings, Berreman 4×4 for anisotropic layers and liquid
-          crystals — then analyse, fit, optimize, design filters or estimate tolerances. Every result follows the parameters as you change them.
+          nodes, compute its reflectance, transmittance and fields (transfer matrices, RCWA for gratings, Berreman 4×4 for anisotropic layers and liquid
+          crystals), then analyse, fit, optimize, design filters or estimate tolerances. Every result follows the parameters as you change them.
         </p>
         <p className="muted">Nothing is uploaded: your projects stay in this browser and in the files you save.</p>
         <div className="welcome-actions">

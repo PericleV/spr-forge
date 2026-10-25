@@ -76,7 +76,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
   const maxShare = Math.max(1e-12, ...(info?.ranking.map((r) => r.share) ?? [0]));
   const criteria = data.criteria ?? [];
   const setCrit = (i: number, patch: Partial<ToleranceCriterion>) => set({ criteria: criteria.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
-  const fmtS = (v: number) => (Number.isFinite(v) ? String(+v.toPrecision(4)) : '—');
+  const fmtS = (v: number) => (Number.isFinite(v) ? String(+v.toPrecision(4)) : '–');
   // the histogram: the RMS deviation, or a criterion metric (index in data.criteria)
   const [hist, setHist] = useState(-1);
   const critRows = info?.criteria?.flatMap((c) => c.rows.map((r) => ({ ...r, name: c.name }))) ?? [];
@@ -249,7 +249,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
       {info?.preview && (
         <>
           <div className="row chart-head">
-            <span className="muted">measured signal ({data.field}) — sample</span>
+            <span className="muted">measured signal ({data.field}), sample</span>
             <NumInput className="tiny" value={info.preview.sample} step={1} onChange={(preview) => set({ preview })} />
           </div>
           <div className="nodrag nowheel chart">
@@ -284,7 +284,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
         <label className="radio" title="The axis the limits (or the target curve) and the chart follow; the other axes give more curves, and a sample passes only when all of its curves do. Automatic: the target curve's axis, else λ, else θ.">
           limits along
           <select className="nodrag" value={data.along ?? ''} onChange={(e) => set({ along: e.target.value })}>
-            <option value="">auto ({info!.axes.find((a) => a.id === info!.along)?.label ?? '—'})</option>
+            <option value="">auto ({info!.axes.find((a) => a.id === info!.along)?.label ?? '–'})</option>
             {info!.axes.map((a) => (
               <option key={a.id} value={a.id}>{a.label}</option>
             ))}

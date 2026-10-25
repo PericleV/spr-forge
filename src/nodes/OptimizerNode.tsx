@@ -24,7 +24,7 @@ const ALGORITHMS: [OptimizerAlgorithm, string, string][] = [
   ['lm', 'Levenberg-Marquardt (least squares)', 'Local, very fast for fitting a curve to a measurement (Curve match with RMS metric).'],
   ['nsga2', 'NSGA-II (multi-objective)', 'Pareto front of the objectives (each input is one objective); pick a trade-off on the chart.'],
   ['sa', 'Simulated annealing', 'Global search: random moves, worse ones accepted with probability exp(−Δ/T) while the temperature decreases (Kirkpatrick 1983; Pan et al. 2024).'],
-  ['layerga', 'Genetic — layer sequences (Sebek et al. 2023)', 'SPR sensors built layer by layer from the materials ticked for each role: mutations (thickness, material, swap, add, delete) and crossovers of whole structures, a wheel weighted by the sensitivity S = Δθ/Δn, 10 % elites (M. Sebek et al., ACS Omega 8, 20792 (2023)). Its own objective: no Design variables or objectives needed.'],
+  ['layerga', 'Genetic: layer sequences (Sebek et al. 2023)', 'SPR sensors built layer by layer from the materials ticked for each role: mutations (thickness, material, swap, add, delete) and crossovers of whole structures, a wheel weighted by the sensitivity S = Δθ/Δn, 10 % elites (M. Sebek et al., ACS Omega 8, 20792 (2023)). Its own objective: no Design variables or objectives needed.'],
 ];
 const POPULATION = new Set<OptimizerAlgorithm>(['de', 'ga', 'pso', 'nsga2']);
 const GENERATIONS = new Set<OptimizerAlgorithm>(['de', 'ga', 'nsga2']);
@@ -79,7 +79,7 @@ function ParetoPlot(props: { front: FrontPoint[]; i: number; j: number; names: s
   );
 }
 
-const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '–');
 const time = (s: number) => (s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
 
 // The part of the graph an optimization needs: the objectives and everything upstream of them.

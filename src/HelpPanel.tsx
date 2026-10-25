@@ -1,5 +1,5 @@
 // Help: getting started, the nodes by section, keyboard and mouse, the examples and the validation of the physics.
-import { GETTING_STARTED, GLOSSARY, NODE_HELP, SHORTCUTS, VALIDATION } from './help.ts';
+import { GETTING_STARTED, GLOSSARY, NODE_HELP, PYTHON_HELP, SHORTCUTS, VALIDATION } from './help.ts';
 import { GROUP_COLORS, HIDDEN_NODES, NODE_SECTION, NODE_TITLES } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
@@ -9,7 +9,7 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
   return (
     <aside className="library help-panel">
       <header>
-        <strong>Help — SPR Forge</strong>
+        <strong>Help</strong>
         <span className="row">
           <button onClick={onWelcome} title="The welcome window">Welcome</button>
           <button onClick={onClose}>✕</button>
@@ -35,6 +35,14 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
                 </div>
               ))}
           </dl>
+        </details>
+      ))}
+      <h4>Python script</h4>
+      {PYTHON_HELP.map(([k, v, code]) => (
+        <details key={k}>
+          <summary>{k}</summary>
+          <p className="help-text">{v}</p>
+          {code && <pre className="help-code">{code}</pre>}
         </details>
       ))}
       <h4>Glossary</h4>
@@ -75,7 +83,7 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
           </details>
         ))
       ) : (
-        <div className="hint">loading…</div>
+        <div className="hint">Loading the examples</div>
       )}
       <h4>Validation</h4>
       {/* a list (title, then its text), not a table: the texts are long for the width of the panel */}
@@ -87,7 +95,13 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
           </div>
         ))}
       </dl>
-      <div className="hint">All the checks run with every change of the code (npm run check:tmm).</div>
+      <div className="hint">
+        All the checks run with every change of the code (npm run check:tmm). Every check, its reference and the values compared:{' '}
+        <a href="https://github.com/PericleV/spr-forge/blob/main/VALIDATION.md" target="_blank" rel="noreferrer">
+          VALIDATION.md
+        </a>
+        .
+      </div>
     </aside>
   );
 }

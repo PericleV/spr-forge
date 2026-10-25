@@ -37,7 +37,7 @@ function Frame<T extends Common>(props: {
         <label className="radio">
           along
           <select className="nodrag" value={data.along || info?.along || ''} onChange={(e) => set({ along: e.target.value } as Partial<T>)}>
-            {!info?.axes.length && <option value="">—</option>}
+            {!info?.axes.length && <option value="">–</option>}
             {info?.axes.map((a) => (
               <option key={a.id} value={a.id}>{a.label}</option>
             ))}

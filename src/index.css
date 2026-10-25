@@ -4,8 +4,11 @@
   --panel: #ffffff;
   --input: #f6f7fa;
   --border: #d5d9e2;
-  --accent: #7b5bd6;
-  --select: #14b8a6; /* the selection (nodes, groups, connections) */
+  /* the selection (nodes, groups, connections) and the accent (active buttons, checks, progress): chosen in the top bar
+     (theme.ts applyColors sets their light and dark shades), teal by default */
+  --select: var(--select-l, #14b8a6);
+  --accent: var(--accent-l, #14b8a6);
+  --on-accent: var(--on-accent-l, #ffffff);
   --grid: #e3e6ec;
   --axis: #6b7385;
   --line: #7b5bd6;
@@ -28,8 +31,9 @@
   --panel: #1f232c;
   --input: #282d38;
   --border: #3d4454;
-  --accent: #a590f3;
-  --select: #2dd4bf;
+  --select: var(--select-d, #2dd4bf);
+  --accent: var(--accent-d, #2dd4bf);
+  --on-accent: var(--on-accent-d, #1d1d1f);
   --grid: #333948;
   --axis: #a3abbd;
   --line: #a590f3;
@@ -49,8 +53,9 @@
     --panel: #1f232c;
     --input: #282d38;
     --border: #3d4454;
-    --accent: #a590f3;
-  --select: #2dd4bf;
+    --select: var(--select-d, #2dd4bf);
+    --accent: var(--accent-d, #2dd4bf);
+    --on-accent: var(--on-accent-d, #1d1d1f);
     --grid: #333948;
     --axis: #a3abbd;
     --line: #a590f3;

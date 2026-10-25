@@ -1,9 +1,11 @@
-// Right-click menus of the canvas: add a node (with search) on the empty canvas, node actions on a node.
+// Right-click menus of the canvas: add a node (with search) on the empty canvas, node actions on a node; a connection let
+// go on the empty canvas: the nodes that fit it (added there and connected).
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { NODE_COLORS } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
-export type MenuItem = { type: AppNode['type']; label: string; group: string };
+// key: the template (a node type, or a variant of one, as the Parameter of λ)
+export type MenuItem = { key: string; type: AppNode['type']; label: string; group: string };
 // An entry of a node / selection menu; `colors` shows a row of swatches instead of a button.
 export type MenuAction =
   | { label: string; onClick: () => void; danger?: boolean; kbd?: string }
@@ -11,7 +13,8 @@ export type MenuAction =
 export type MenuState =
   | { kind: 'pane'; x: number; y: number }
   | { kind: 'node'; x: number; y: number; nodeId: string; label: string }
-  | { kind: 'selection'; x: number; y: number; ids: string[] };
+  | { kind: 'selection'; x: number; y: number; ids: string[] }
+  | { kind: 'connect'; x: number; y: number; from: { node: string; handle: string | null; type: 'source' | 'target' } };
 
 // Keeps the menu inside the window.
 const place = (x: number, y: number, w: number, h: number): CSSProperties => ({
@@ -22,7 +25,7 @@ const place = (x: number, y: number, w: number, h: number): CSSProperties => ({
 export function ContextMenu(props: {
   menu: MenuState;
   items: MenuItem[];
-  onAdd: (type: AppNode['type']) => void;
+  onAdd: (item: MenuItem) => void;
   title?: string;
   actions?: MenuAction[];
   onClose: () => void;
@@ -55,7 +58,7 @@ export function ContextMenu(props: {
     };
   }, [onClose]);
 
-  if (menu.kind !== 'pane') {
+  if (menu.kind === 'node' || menu.kind === 'selection') {
     return (
       <div className="ctx-menu" ref={box} style={place(menu.x, menu.y, 220, 60 + 30 * actions.length)} onContextMenu={(e) => e.preventDefault()}>
         <div className="ctx-title">{title}</div>
@@ -77,16 +80,17 @@ export function ContextMenu(props: {
   }
 
   const groups = [...new Set(shown.map((i) => i.group))];
-  const add = (t: AppNode['type']) => {
-    onAdd(t);
+  const add = (i: MenuItem) => {
+    onAdd(i);
     onClose();
   };
   return (
     <div className="ctx-menu add" ref={box} style={place(menu.x, menu.y, 260, 420)} onContextMenu={(e) => e.preventDefault()}>
+      {menu.kind === 'connect' && <div className="ctx-title">{menu.from.type === 'source' ? 'Connect to a new node' : 'Feed it from a new node'}</div>}
       <input
         ref={input}
         className="ctx-search"
-        placeholder="Add node… (type to search)"
+        placeholder="Add a node: type to search"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -95,13 +99,13 @@ export function ContextMenu(props: {
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') setActive((a) => Math.min(shown.length - 1, a + 1));
           else if (e.key === 'ArrowUp') setActive((a) => Math.max(0, a - 1));
-          else if (e.key === 'Enter' && shown[active]) add(shown[active].type);
+          else if (e.key === 'Enter' && shown[active]) add(shown[active]);
           else return;
           e.preventDefault();
         }}
       />
       <div className="ctx-list">
-        {!shown.length && <div className="muted ctx-empty">No node matches “{query}”.</div>}
+        {!shown.length && <div className="muted ctx-empty">{query ? `No node matches “${query}”.` : 'No node fits this port.'}</div>}
         {groups.map((g) => (
           <div key={g}>
             <div className="ctx-group">{g}</div>
@@ -111,11 +115,11 @@ export function ContextMenu(props: {
                 const k = shown.indexOf(i);
                 return (
                   <button
-                    key={i.type}
+                    key={i.key}
                     className={k === active ? 'active' : ''}
                     style={{ '--node-color': NODE_COLORS[i.type] } as CSSProperties}
                     onMouseEnter={() => setActive(k)}
-                    onClick={() => add(i.type)}
+                    onClick={() => add(i)}
                   >
                     <i className="ctx-swatch" />
                     {i.label}

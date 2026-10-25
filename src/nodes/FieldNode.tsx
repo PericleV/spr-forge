@@ -13,7 +13,7 @@ import type { AppNode, FieldData, FieldNode, FieldQuantity } from '../types.ts';
 import { MapViewControls, Messages, NumInput, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
-const fmt = (v: number, digits = 4) => (Number.isFinite(v) ? `${+v.toFixed(digits)}` : '—');
+const fmt = (v: number, digits = 4) => (Number.isFinite(v) ? `${+v.toFixed(digits)}` : '–');
 
 const RES_TITLES = { R: 'the minimum of R', T: 'the maximum of T', A: 'the maximum of A' } as const;
 // Which resonance λ / θ start at (and go back to with “res”): the minimum of R, or the maximum of T or A.
@@ -144,7 +144,7 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
           <option value="E2">|E|² / |E₀|² (enhancement)</option>
           <option value="H2">|H|² / |H₀|²</option>
           <option value="abs">Absorption density</option>
-          <option value="comp">Field component…</option>
+          <option value="comp">Field component</option>
         </select>
         {data.quantity === 'comp' && (
           <>
@@ -163,7 +163,7 @@ export function FieldNodeView({ id, data }: NodeProps<FieldNode>) {
         )}
         <select className="nodrag" value={data.view} onChange={(e) => set({ view: e.target.value as FieldData['view'] })}>
           <option value="profile">Profile at a point</option>
-          <option value="map">Map vs z and …</option>
+          <option value="map">Map vs z and another axis</option>
         </select>
         {data.view === 'map' && (
           <select className="nodrag" value={data.mapAxis} onChange={(e) => set({ mapAxis: e.target.value as FieldData['mapAxis'] })}>

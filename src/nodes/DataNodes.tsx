@@ -11,7 +11,7 @@ import { exportCsv } from '../plot/export.ts';
 import type { AppNode, CustomData, CustomNode, ExtractData, ExtractNode, MergeData, MergeNode } from '../types.ts';
 import { AutoText, Messages, NumInput, OutPort, Port } from './ui.tsx';
 
-const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? `${+v.toPrecision(6)}` : '–');
 const PREVIEW = 12;
 
 // The first rows of a data set as a table (its swept axes as columns next to the quantities), with a CSV of all rows.
@@ -133,7 +133,7 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
                   >
                     <option value="all">all ({a.labels.length})</option>
                     <option value="mean">mean over all (± std)</option>
-                    {a.numeric && <option value="at">at a value (interpolated)…</option>}
+                    {a.numeric && <option value="at">at a value (interpolated)</option>}
                     {a.labels.map((l, i) => (
                       <option key={i} value={i}>
                         at {l}

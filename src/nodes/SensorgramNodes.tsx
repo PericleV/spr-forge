@@ -15,7 +15,7 @@ import { Messages, NumInput, OutPort, Port } from './ui.tsx';
 import { CHART_W } from './sizes.ts';
 
 const PALETTE = ['#2e86c1', '#e15759', '#59a14f', '#f28e2b', '#b07aa1', '#76b7b2', '#edc948', '#9c755f'];
-const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '—');
+const fmt = (v: number, p = 4) => (Number.isFinite(v) ? `${+v.toPrecision(p)}` : '–');
 
 // The protocol steps as bands on a time chart (injections shaded).
 const stepBands = (steps: { t0: number; t1: number; label: string; c: number }[], color: string): Overlay[] =>

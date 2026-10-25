@@ -67,7 +67,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
       </header>
       <div className="row wrap">
         <button onClick={() => add({ name: 'New material', model: defaultModel('constant') })}>+ New</button>
-        <button onClick={() => file.current?.click()}>Import CSV…</button>
+        <button onClick={() => file.current?.click()}>Import CSV</button>
         <input
           ref={file}
           type="file"
@@ -82,7 +82,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
       </div>
       {msg && <div className="hint">{msg}</div>}
 
-      <input className="lib-search" value={query} placeholder="Search: name, formula or source…" onChange={(e) => setQuery(e.target.value)} />
+      <input className="lib-search" value={query} placeholder="Search: name, formula or source" onChange={(e) => setQuery(e.target.value)} />
       <div className="lib-list">
         {[...MATERIAL_GROUPS, USER_GROUP].map((g) => {
           const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -332,7 +332,7 @@ function TableEditor({ def, ro, onChange }: { def: MaterialDef; ro: boolean; onC
           <textarea rows={5} value={text} placeholder={'Paste rows, e.g.\n400  1.47  0.001\n500  1.46  0.000\n(header lines are skipped; comma, tab or space separated)'} onChange={(e) => setText(e.target.value)} />
           <div className="row">
             <button onClick={() => apply(text)}>Apply pasted data</button>
-            <button onClick={() => file.current?.click()}>Load CSV…</button>
+            <button onClick={() => file.current?.click()}>Load CSV</button>
             <input ref={file} type="file" hidden accept=".csv,.txt,.dat,.tsv" onChange={async (e) => {
               const f = e.target.files?.[0];
               if (f) apply(await f.text());

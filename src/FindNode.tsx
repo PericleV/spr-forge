@@ -41,7 +41,7 @@ export function FindNode({ onClose }: { onClose: () => void }) {
         ref={input}
         className="nodrag"
         value={q}
-        placeholder="Find a node: type, label or name…"
+        placeholder="Find a node: type, label or name"
         onChange={(e) => {
           setQ(e.target.value);
           setSel(0);

@@ -20,7 +20,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
       <div className="port-row">
         <Port kind="target" id="in" port="layer" />
         <span className="muted">layer</span>
-        <span className="val">{info?.target ?? '—'}</span>
+        <span className="val">{info?.target ?? '–'}</span>
       </div>
       <label title="Which interface of the layer is rough: its top (towards the incident medium) or its bottom">
         Interface
@@ -53,14 +53,14 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           {seedSwept ? <span className="val swept">swept</span> : <NumInput value={data.seed} step={1} onChange={(seed) => set({ seed })} />}
         </label>
       </div>
-      <label title="How much this interface copies the rough interface before it (on the incident side), e.g. a film that replicates its substrate: 0 = independent, 1 = the same shape (conformal). Empty: automatic — a film thinner than the sum of the two RMS heights is conformal, a thicker one independent.">
+      <label title="How much this interface copies the rough interface before it (on the incident side), e.g. a film that replicates its substrate: 0 = independent, 1 = the same shape (conformal). Empty: automatic; a film thinner than the sum of the two RMS heights is conformal, a thicker one independent.">
         Follows the interface before
         <NumInput className="tiny" value={data.corr ?? NaN} placeholder="auto" min={0} step={0.1} onChange={(corr) => set({ corr })} />
       </label>
       {info && <ProfileView info={info} side={data.side} />}
       {info && (
         <div className="hint">
-          profile: RMS {info.rms.toFixed(2)} nm · peak-to-peak {info.pp.toFixed(2)} nm · cl ≈ {Number.isFinite(info.clFit) ? info.clFit.toFixed(1) : '—'} nm
+          profile: RMS {info.rms.toFixed(2)} nm · peak-to-peak {info.pp.toFixed(2)} nm · cl ≈ {Number.isFinite(info.clFit) ? info.clFit.toFixed(1) : '–'} nm
           {info.swept.length > 0 && <> (first step of {info.swept.join(', ')})</>}
         </div>
       )}
@@ -74,7 +74,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           <NumInput className="short" value={data.px} min={16} step={100} onChange={(px) => set({ px })} />
         </label>
       </div>
-      <label title="How Compute TMM (and Berreman) describes the rough zone. This profile: the slices of the realization above (it changes with the seed and the cell). Ensemble: the heights of a Gaussian distribution of the same RMS — the limit of a large illuminated area, no seed, smooth for optimizers. Linear ramp: a uniform distribution (the fractions, and with “linear in n” the index, change linearly across the zone). Compute RCWA always computes the profile.">
+      <label title="How Compute TMM (and Berreman) describes the rough zone. This profile: the slices of the realization above (it changes with the seed and the cell). Ensemble: the heights of a Gaussian distribution of the same RMS; the limit of a large illuminated area, no seed, smooth for optimizers. Linear ramp: a uniform distribution (the fractions, and with “linear in n” the index, change linearly across the zone). Compute RCWA always computes the profile.">
         TMM zone
         <select className="nodrag" value={tmm} onChange={(e) => set({ tmm: e.target.value as RoughData['tmm'] })}>
           <option value="ensemble">ensemble (Gaussian heights)</option>
@@ -87,7 +87,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           Slices
           <NumInput className="tiny" value={data.slices} min={1} step={1} onChange={(slices) => set({ slices })} />
         </label>
-        <label title="Compute TMM: each slice becomes an effective medium of its material fractions. Bruggeman, shape of the features: a Bruggeman medium per direction with the depolarization factors of features σ high and cl wide — between the two Wiener bounds, follows RCWA of the smooth profile (rough gold: the SPR dip within ~0.1°; recommended). Wiener, horizontal laminae: in-plane the weighted mean of ε, along the normal the harmonic one (a very gentle surface; to first order the roughness disappears). Wiener, vertical walls: the reverse (columnar roughness). The tensor media run through Berreman. Compute RCWA uses the profile itself.">
+        <label title="Compute TMM: each slice becomes an effective medium of its material fractions. Bruggeman, shape of the features: a Bruggeman medium per direction with the depolarization factors of features σ high and cl wide; between the two Wiener bounds, follows RCWA of the smooth profile (rough gold: the SPR dip within ~0.1°; recommended). Wiener, horizontal laminae: in-plane the weighted mean of ε, along the normal the harmonic one (a very gentle surface; to first order the roughness disappears). Wiener, vertical walls: the reverse (columnar roughness). The tensor media run through Berreman. Compute RCWA uses the profile itself.">
           TMM medium
           <select className="nodrag" value={data.ema} onChange={(e) => set({ ema: e.target.value as RoughData['ema'] })}>
             <option value="shape">Bruggeman, shape of the features (σ/cl)</option>

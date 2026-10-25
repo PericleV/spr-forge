@@ -6,9 +6,9 @@ import type { FieldMeta } from './types.ts';
 export type ImportedTable = { xs: number[]; columns: { meta: FieldMeta; values: Float64Array }[] };
 
 const KNOWN: Record<string, FieldMeta> = {
-  r: { key: 'R', label: 'R — reflectance', short: 'R', unit: '', domain: [0, 1] },
-  t: { key: 'T', label: 'T — transmittance', short: 'T', unit: '', domain: [0, 1] },
-  a: { key: 'A', label: 'A — absorptance', short: 'A', unit: '', domain: [0, 1] },
+  r: { key: 'R', label: 'R: reflectance', short: 'R', unit: '', domain: [0, 1] },
+  t: { key: 'T', label: 'T: transmittance', short: 'T', unit: '', domain: [0, 1] },
+  a: { key: 'A', label: 'A: absorptance', short: 'A', unit: '', domain: [0, 1] },
 };
 
 // Converts x to the unit of the axis: wavelengths in nm, angles in degrees.
