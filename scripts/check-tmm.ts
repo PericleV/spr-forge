@@ -183,6 +183,37 @@ console.log('sweep grid vs pointwise, max |ΔR|', maxErr.toExponential(2), 'poin
   console.log(`Lorentzian: centre ${e.x.toFixed(5)} (exact ${x0}), FWHM ${h.width.toFixed(5)} (exact ${w})`);
 }
 
+// The same on a fine grid far from 0 (λ ≈ 1650 nm in steps down to 0.1 pm): the parabola about the middle sample keeps
+// the bottom value (in x itself its coefficients cancel: R_min 58.7 for 0.0026, FWHM doubled). A Lorentzian centred on a
+// sample, a parabola between two samples (exact), FWHM at half depth; 'data' still the lowest sample itself.
+{
+  const x0 = 1649.561;
+  const g = 0.007;
+  const dev = (a: number, b: number) => (Number.isFinite(a) ? Math.abs(a - b) : Infinity);
+  let eL = 0;
+  let eQ = 0;
+  let eW = 0;
+  let okData = true;
+  for (const h of [1e-3, 5e-4, 2e-4, 1e-4]) {
+    const n = Math.round(0.3 / h) + 1;
+    const xs = Array.from({ length: n }, (_, i) => 1649.4 + i * h);
+    const xq = xs.map((x) => x + 0.37 * h);
+    const ys = xs.map((x) => 1 - 0.997 / (1 + ((x - x0) / g) ** 2));
+    const yq = xq.map((x) => 0.003 + 0.997 * ((x - x0) / g) ** 2);
+    const e = extremum(xs, ys, 0, n - 1, 'min');
+    const p = locate(xs, ys, 0, n - 1, 'min', { method: 'parabola' });
+    const w = halfWidth(xs, ys, 0, n - 1, 'dip', 'local');
+    const q = extremum(xq, yq, 0, n - 1, 'min');
+    const d = locate(xq, yq, 0, n - 1, 'min', { method: 'data' });
+    eL = Math.max(eL, dev(e.y, 0.003), dev(e.x, x0), dev(p.y, 0.003), dev(w.extreme, 0.003));
+    eQ = Math.max(eQ, dev(q.y, 0.003), dev(q.x, x0));
+    eW = Math.max(eW, dev(w.width, 2 * g));
+    okData &&= d.i === q.i && d.x === xq[q.i] && d.y === yq[q.i] && d.y === Math.min(...yq) && q.x !== d.x;
+  }
+  if (!(eL < 1e-6 && eQ < 1e-9 && eW < 1e-4 && okData)) throw new Error(`fine-grid extremum: Lorentzian ${eL}, parabola ${eQ}, FWHM ${eW}, data ${okData}`);
+  console.log(`fine-grid extremum (λ ≈ 1650 nm, steps 1–0.1 pm): Lorentzian R_min and centre within ${eL.toExponential(1)}, parabola between samples ${eQ.toExponential(1)}, FWHM ${(2 * g).toFixed(3)} within ${eW.toExponential(1)} nm; 'data' = the lowest sample`);
+}
+
 // Sensitivity through the node graph (engine jobs run inline) vs the analytic surface-plasmon condition
 // n_p sinθ = Re √(εm εd / (εm + εd)).
 {

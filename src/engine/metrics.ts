@@ -37,13 +37,17 @@ export function extremum(xs: ArrayLike<number>, ys: ArrayLike<number>, i0: numbe
   if (k === i0 || k === i1) return { x: xs[k], y: ys[k], i: k };
   const [x0, x1, x2] = [xs[k - 1], xs[k], xs[k + 1]];
   const [y0, y1, y2] = [ys[k - 1], ys[k], ys[k + 1]];
-  const den = (x0 - x1) * (x0 - x2) * (x1 - x2);
-  const A = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den;
-  const B = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
-  const C = (x1 * x2 * (x1 - x2) * y0 + x2 * x0 * (x2 - x0) * y1 + x0 * x1 * (x0 - x1) * y2) / den;
-  const xv = -B / (2 * A);
+  // the parabola y = y1 + B·t + A·t² in t = x − x1 (about the middle sample: written in x itself, its coefficients
+  // cancel catastrophically on a fine grid far from 0, e.g. λ ≈ 1650 nm in steps of 0.001 nm)
+  const h0 = x0 - x1;
+  const h2 = x2 - x1;
+  const D = h0 * h2 * (h0 - h2);
+  const A = ((y0 - y1) * h2 - (y2 - y1) * h0) / D;
+  const B = (h0 * h0 * (y2 - y1) - h2 * h2 * (y0 - y1)) / D;
+  const tv = -B / (2 * A);
+  const xv = x1 + tv;
   if (!(sgn * A > 0) || !(xv >= x0 && xv <= x2)) return { x: x1, y: y1, i: k };
-  return { x: xv, y: C - (B * B) / (4 * A), i: k };
+  return { x: xv, y: y1 - (B * B) / (4 * A), i: k };
 }
 
 // How the position of a dip (peak) is found. 'parabola': through the three samples around the lowest one (exact on a
