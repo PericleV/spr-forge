@@ -4879,6 +4879,66 @@ if (full('Hu 2011 grating SPR (9 s)')) {
     throw new Error(`robustness: memory ${memOk} (${rcErr}), files ${filesOk}, published ${intact} / ${files.length}: ${failed.join('; ')}`);
   console.log(`robustness: conical RCWA of ${(99 * 20001).toLocaleString('en')} points refused for its memory (“${rcErr.slice(0, 80)}…”), not sent to the workers; newer / older formats refused with their messages; a damaged file opens with “${(repaired as Project).repaired}” (not saved); the ${files.length} project files of the published version (107bcf8) open intact, ${files.length - heavy.length} TMM ones evaluated without an error (${heavy.length} with RCWA / Berreman in the slow block)`);
 }
+
+// A project dropped on a canvas that has nodes (projectInsert.ts): examples put into themselves get new ids everywhere,
+// their references follow (Compare curves, formula terms, Tolerance criteria, Custom data names, the optimizer's runs
+// and stages) and words of the data equal to an id stay ('map', 'field', 'tmm'); the copy computes the same numbers as
+// the original; a material under a taken id with another definition is renamed and its nodes follow.
+{
+  const { EXAMPLES } = await import('../src/examples.ts');
+  const { placeProject } = await import('../src/projectInsert.ts');
+  const numbers = (v: unknown, out: number[] = []): number[] => {
+    if (typeof v === 'number') out.push(v);
+    else if (ArrayBuffer.isView(v)) for (const x of v as unknown as ArrayLike<number> & Iterable<number>) out.push(x);
+    else if (Array.isArray(v)) v.forEach((x) => numbers(x, out));
+    else if (v instanceof Map) [...v.values()].forEach((x) => numbers(x, out));
+    else if (v && typeof v === 'object') Object.values(v).forEach((x) => numbers(x, out));
+    return out;
+  };
+  const names = ['SPR (Kretschmann)', 'SPR sensor design (custom objective)', 'Robust SPR sensor', 'Protein adsorption', 'Graphene SPR biosensor for malaria, Sys3', 'Inverse design of a Tamm emitter', 'Dual-band absorber'];
+  const bad: string[] = [];
+  let compared = 0;
+  for (const nm of names) {
+    const ex = EXAMPLES.find((e) => e.name.startsWith(nm));
+    if (!ex) throw new Error(`project insert: no example “${nm}”`);
+    const p = ex.make();
+    const r = placeProject(p, p.materials, { x: 5000, y: 3000 });
+    const old = new Set(p.nodes.map((n) => n.id));
+    const ids = r.nodes.map((n) => n.id);
+    if (new Set(ids).size !== ids.length || ids.some((id) => old.has(id))) bad.push(`${nm}: ids`);
+    if (r.edges.length !== p.edges.length || r.edges.some((e) => !ids.includes(e.source) || !ids.includes(e.target))) bad.push(`${nm}: connections`);
+    if (r.materials.length) bad.push(`${nm}: the same materials added again`);
+    // the strings of the data that are not references are unchanged
+    const back = new Map(p.nodes.map((n, i) => [r.nodes[i].id, n.id]));
+    p.nodes.forEach((n, i) => {
+      const d0 = n.data as Record<string, unknown>, d1 = r.nodes[i].data as Record<string, unknown>;
+      for (const k of ['mode', 'name', 'field', 'x', 'y', 'series', 'label']) if (JSON.stringify(d0[k]) !== JSON.stringify(d1[k])) bad.push(`${nm} ${n.id}.${k}: ${JSON.stringify(d0[k])} → ${JSON.stringify(d1[k])}`);
+    });
+    const lib = makeLibrary(p.materials);
+    const [a, b] = [evaluateHeadless(p.nodes, p.edges, lib), evaluateHeadless(r.nodes, r.edges, lib)];
+    for (const [id1, rb] of b.results) {
+      const ra = a.results.get(back.get(id1)!);
+      if (!ra) continue;
+      const [na, nb] = [numbers([ra.outs, ra.info]), numbers([rb.outs, rb.info])];
+      if (ra.errors.length !== rb.errors.length || na.length !== nb.length || na.some((x, j) => !Object.is(x, nb[j]))) bad.push(`${nm} ${back.get(id1)}: ${rb.errors[0] ?? 'other numbers'}`);
+      compared++;
+    }
+  }
+  // a material of the user (the ones of the examples are built in: skipped, as Open does) whose id is taken by a
+  // different one: renamed, its Material nodes follow; the same one: not added
+  const p = EXAMPLES.find((e) => e.name.startsWith('Graphene SPR biosensor for malaria, Sys3'))!.make();
+  const [o0, o1] = [p.materials[0].id, p.materials[1].id];
+  const own = (id: string) => (id === o0 ? 'user-insert-test' : id === o1 ? 'user-insert-test-b' : id);
+  p.materials = p.materials.map((m) => ({ ...m, id: own(m.id) }));
+  p.nodes = p.nodes.map((n) => (n.type === 'material' ? ({ ...n, data: { ...n.data, materialId: own(n.data.materialId) } } as AppNode) : n));
+  const [m0, m1] = [p.materials[0], p.materials[1]];
+  const r = placeProject(p, [{ ...m0, name: `${m0.name} (another)` }, m1], { x: 0, y: 0 });
+  const id2 = `${m0.id}-2`;
+  const uses = (id: string, ns: AppNode[]) => ns.filter((n) => n.type === 'material' && n.data.materialId === id).length;
+  const matOk = r.materials.length === 1 && r.materials[0].id === id2 && uses(m0.id, p.nodes) > 0 && uses(id2, r.nodes) === uses(m0.id, p.nodes) && uses(m0.id, r.nodes) === 0 && uses(m1.id, r.nodes) === uses(m1.id, p.nodes);
+  if (bad.length || !matOk) throw new Error(`project insert: ${bad.slice(0, 6).join('; ')}${matOk ? '' : '; materials'}`);
+  console.log(`project insert: ${names.length} examples put into themselves — new ids, connections and references followed, words of the data kept, the same numbers in ${compared} nodes; a material under a taken id renamed ${id2} (${uses(id2, r.nodes)} Material nodes follow), the same ones not added`);
+}
 if (full('published project files with RCWA / Berreman (2 min)')) {
   const failed: string[] = [];
   for (const f of PUBLISHED_HEAVY) {

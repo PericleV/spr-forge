@@ -1,15 +1,15 @@
 // The welcome window: at every start (until "Don't show this again" is kept) and from Help. It continues the last project,
-// starts an empty one, or opens an example from the gallery (the examples by subject, each with one line).
+// starts an empty one, or opens an example from the gallery (the examples by subject and heading, each with one line).
 import { useEffect, useState } from 'react';
+import { sectionsOf, type ExampleInfo } from './exampleSections.ts';
 import { Logo } from './Logo.tsx';
 import { rememberWelcome } from './welcomeState.ts';
 
-export type WelcomeExample = { group: string; name: string; desc: string };
 type Props = {
   onClose: () => void;
   onEmpty: () => void;
   onHelp: () => void;
-  examples: WelcomeExample[];
+  examples: ExampleInfo[];
   onExample: (index: number) => void;
   last?: { name: string; saved: number; open: () => void }; // the project open when the page was left
 };
@@ -26,7 +26,7 @@ export function Welcome({ onClose, onEmpty, onHelp, examples, onExample, last }:
     window.addEventListener('keydown', esc);
     return () => window.removeEventListener('keydown', esc);
   });
-  const groups = [...new Set(examples.map((e) => e.group))];
+  const sections = sectionsOf(examples);
   return (
     <div className="welcome-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
@@ -55,19 +55,22 @@ export function Welcome({ onClose, onEmpty, onHelp, examples, onExample, last }:
         <h3 className="welcome-sub">Examples</h3>
         <div className="welcome-gallery">
           {examples.length ? (
-            groups.map((g) => (
-              <section key={g}>
-                <h4>{g}</h4>
-                <div className="welcome-cards">
-                  {examples.map((ex, i) =>
-                    ex.group === g ? (
-                      <button key={ex.name} className="welcome-card" onClick={() => close(() => onExample(i))}>
-                        <b>{ex.name}</b>
-                        <span>{ex.desc}</span>
-                      </button>
-                    ) : null,
-                  )}
-                </div>
+            sections.map((s) => (
+              <section key={s.group}>
+                <h4>{s.group}</h4>
+                {s.subs.map((b) => (
+                  <div key={b.sub}>
+                    {b.sub && <h5>{b.sub}</h5>}
+                    <div className="welcome-cards">
+                      {b.items.map(({ ex, i }) => (
+                        <button key={i} className="welcome-card" onClick={() => close(() => onExample(i))}>
+                          <b>{ex.name}</b>
+                          <span>{ex.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </section>
             ))
           ) : (

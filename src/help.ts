@@ -83,6 +83,7 @@ export const GLOSSARY: [string, string][] = [
 export const SHORTCUTS: [string, string][] = [
   ['Right click on the canvas', 'add a node (with search)'],
   ['Right click on a node / a selection', 'duplicate, disconnect, collapse, group, remove'],
+  ['A project file (.json) dropped on the canvas', 'opens on an empty canvas; else it is added where it is dropped, as a group named after it (its own materials added, its Python code held until allowed)'],
   ['Shift / Ctrl + click', 'select several nodes'],
   ['Delete / Backspace', 'remove the selection'],
   ['Ctrl + Z, Ctrl + Y (Ctrl + Shift + Z)', 'undo, redo'],

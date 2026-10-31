@@ -117,6 +117,11 @@ export function openProject(codes: string[], fresh: boolean) {
   const ok = fresh || !codes.some((c) => c.trim()) || allowedDigests().includes(codeDigest(codes));
   set({ allowed: ok, held: 0 });
 }
+// a project put into the one open (dropped on the canvas): its code, unless allowed here before, holds the runs until
+// allowed (before the code written here is kept as allowed with it)
+export function insertCode(codes: string[]) {
+  if (state.allowed && codes.some((c) => c.trim()) && !allowedDigests().includes(codeDigest(codes))) set({ allowed: false });
+}
 // the code written here while allowed is ours: kept as allowed (the project opens again without asking)
 export function codeChanged(codes: string[]) {
   codesNow = codes;

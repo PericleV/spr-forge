@@ -25,7 +25,7 @@ import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
 import { RerouteNodeView } from './nodes/RerouteNode.tsx';
 import { PythonNodeView } from './nodes/PythonNode.tsx';
-import { codeChanged, openProject } from './python/runner.ts';
+import { codeChanged, insertCode, openProject } from './python/runner.ts';
 import {
   ANALYSIS_DEFAULTS,
   COMPARE_DEFAULTS,
@@ -75,6 +75,9 @@ import { withShell } from './nodes/NodeShell.tsx';
 import { FrameNodeView } from './nodes/FrameNode.tsx';
 import { applyColors, applyTheme, loadColors, loadPrefs, loadTheme, savePrefs, STEPS, type CanvasPrefs, type Theme, type UiColors } from './theme.ts';
 import { ColorChoice } from './ColorChoice.tsx';
+import { ExamplesMenu } from './ExamplesMenu.tsx';
+import { placeProject } from './projectInsert.ts';
+import type { ExampleInfo } from './exampleSections.ts';
 import { IC } from './ui/iconProps.ts';
 import { CircleHelp, FilePlus2, FlaskConical, FolderOpen, Library, Monitor, Moon, Redo2, Save, Search, Sun, TriangleAlert, Undo2 } from 'lucide-react';
 import { autosave, decodeProject, keepLastSession, parseProject, stringifyProject, toProject, type Project } from './project.ts';
@@ -267,7 +270,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
 ];
 
 // The example projects are a separate chunk, loaded after the first render.
-type ExampleList = { group: string; name: string; desc: string; make: () => Project }[];
+type ExampleList = (ExampleInfo & { make: () => Project })[];
 const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as ExampleList);
 // The page starts with Welcome, or (Welcome turned off) an empty project; the project open when the page was left is the
 // last session (Welcome: “Continue the last project”, Projects: “Last session”).
@@ -657,17 +660,86 @@ function Flow() {
   );
   const canvasRef = useRef<HTMLDivElement>(null);
   const template = (type: AppNode['type']) => GROUPS.flatMap((g) => g.items).find((i) => i.type === type);
-  // a node dragged from the panel: dropped where the mouse is
+  // a node dragged from the panel: dropped where the mouse is; project files (.json) from the computer: dropFiles
+  const [fileOver, setFileOver] = useState(false);
+  const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes('Files');
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    const file = hasFiles(e);
+    if (!file && !e.dataTransfer.types.includes(DRAG_TYPE)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = file ? 'copy' : 'move';
+    if (file && !fileOver) setFileOver(true);
+  };
+  const onDragLeave = (e: DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) setFileOver(false);
   };
   const onDrop = (e: DragEvent) => {
+    setFileOver(false);
+    if (hasFiles(e)) {
+      e.preventDefault();
+      void dropFiles([...e.dataTransfer.files], { x: e.clientX, y: e.clientY });
+      return;
+    }
     const t = template(e.dataTransfer.getData(DRAG_TYPE) as AppNode['type']);
     if (!t) return;
     e.preventDefault();
     addNode(t, { x: e.clientX, y: e.clientY });
+  };
+  // a file dropped beside the canvas (the top bar, a panel) is not opened by the browser in place of the page
+  useEffect(() => {
+    const keep = (e: globalThis.DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+    };
+    window.addEventListener('dragover', keep);
+    window.addEventListener('drop', keep);
+    return () => {
+      window.removeEventListener('dragover', keep);
+      window.removeEventListener('drop', keep);
+    };
+  }, []);
+
+  // Project files dropped on the canvas: on an empty canvas one opens (as Open); else each goes in beside the nodes there,
+  // as a group named after it, where it was dropped (the next ones a little lower and to the right).
+  const dropFiles = async (files: File[], at: { x: number; y: number }) => {
+    const json = files.filter((f) => /\.json$/i.test(f.name));
+    if (!json.length) return alert('Only SPR Forge project files (.json) can be dropped on the canvas.');
+    let mats = userMaterials;
+    let k = 0;
+    for (const f of json) {
+      const p = parseProject(await f.text());
+      if (typeof p === 'string') {
+        alert(`${f.name}: ${p}`);
+        continue;
+      }
+      const name = p.name ?? f.name.replace(/\.json$/i, '');
+      if (json.length === 1 && !getNodes().length) load(p, name);
+      else if (p.nodes.length) {
+        mats = [...mats, ...insertProject(p, name, mats, { x: at.x + 40 * k, y: at.y + 40 * k })];
+        k++;
+      }
+      if (p.repaired) alert(`${f.name}: ${p.repaired}`);
+    }
+  };
+  // (the frame is drawn around the nodes once the browser has measured them; a timer, not an animation frame: those wait
+  // while the page is hidden)
+  const whenMeasured = (ids: string[], fn: () => void, tries = 60) =>
+    setTimeout(() => (ids.every((id) => getNode(id)?.measured?.width) || tries <= 0 ? fn() : whenMeasured(ids, fn, tries - 1)), 30);
+  // returns the materials it added
+  const insertProject = (p: Project, name: string, mats: MaterialDef[], at: { x: number; y: number }): MaterialDef[] => {
+    const r = placeProject(p, mats, screenToFlowPosition(at));
+    insertCode(pyCodes(r.nodes));
+    if (r.materials.length) setUserMaterials((ms) => [...ms, ...r.materials]);
+    setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), ...r.nodes]);
+    setEdges((es) => [...es, ...r.edges]);
+    // (a project with frames of its own stays as it is, its nodes selected: frames are one level)
+    if (!r.frames)
+      whenMeasured(r.top, () =>
+        setNodes((ns) => {
+          const g = groupNodes(ns, r.top, name, FRAME_COLORS[0]);
+          return g.nodes.map((n) => (n.id === g.frameId ? { ...n, selected: true } : n));
+        }),
+      );
+    return r.materials;
   };
 
   const addNode = (t: Template, at?: { x: number; y: number }): string => {
@@ -708,29 +780,13 @@ function Flow() {
         )}
         <span className="tb-group" role="group" aria-label="Project">
         <button onClick={newProject} title="Remove everything and start an empty project"><FilePlus2 {...IC} /> <span className="tb-label">New</span></button>
-        <select
-          className="examples-menu"
-          value=""
-          title="Open a complete example"
-          onChange={(e) => {
-            const ex = examples[Number(e.target.value)];
-            if (ex && confirm(`Replace the current project with the “${ex.name}” example?`)) load(ex.make(), ex.name, true);
+        <ExamplesMenu
+          examples={examples}
+          onPick={(i) => {
+            const ex = examples[i];
+            if (ex && (!nodes.length || confirm(`Replace the current project with the “${ex.name}” example?`))) load(ex.make(), ex.name, true);
           }}
-        >
-          <option value="">Examples</option>
-          {/* grouped by subject, each group titled */}
-          {[...new Set(examples.map((ex) => ex.group))].map((g) => (
-            <optgroup key={g} label={g}>
-              {examples.map((ex, i) =>
-                ex.group === g ? (
-                  <option key={ex.name} value={i}>
-                    {ex.name}
-                  </option>
-                ) : null,
-              )}
-            </optgroup>
-          ))}
-        </select>
+        />
         <button onClick={() => openFile.current?.click()} title="Open a project file (.json)">
           <FolderOpen {...IC} /> <span className="tb-label">Open</span>
         </button>
@@ -801,7 +857,8 @@ function Flow() {
       <NodePalette groups={paletteGroups} onAdd={(type) => { const t = template(type); if (t) addNode(t); }} />
       <LibraryContext.Provider value={library}>
         <EngineContext.Provider value={engine}>
-          <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
+          <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+            {fileOver && <div className="drop-hint">{nodes.length ? 'Drop to add the project here, as a group' : 'Drop to open the project'}</div>}
             <ReactFlow
               nodes={nodes}
               edges={styledEdges}

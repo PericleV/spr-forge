@@ -13,45 +13,6 @@
   "group": "From articles (examples)"
  },
  {
-  "id": "user-glass152",
-  "name": "glass (n = 1.52)",
-  "color": "#dfe7ee",
-  "model": {
-   "type": "constant",
-   "n": 1.52,
-   "k": 0
-  },
-  "source": "assumed (glass substrate)",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
-  "id": "user-au-treebu",
-  "name": "Au (0.18344 + 3.4332i) · Treebupachatsakul 2021",
-  "color": "#d4af37",
-  "model": {
-   "type": "constant",
-   "n": 0.18344,
-   "k": 3.4332
-  },
-  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), gold at 633 nm",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
-  "id": "user-n133",
-  "name": "water (n = 1.33) · Treebupachatsakul 2021",
-  "color": "#6fb3e0",
-  "model": {
-   "type": "constant",
-   "n": 1.33,
-   "k": 0
-  },
-  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), sensing medium",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
   "id": "user-bk7-15151",
   "name": "BK7 (n = 1.5151) · Tene 2025",
   "color": "#9fc9e6",
@@ -179,6 +140,45 @@
    "k": 0
   },
   "source": "typical polymer (pNIPAAm-like) value",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-glass152",
+  "name": "glass (n = 1.52)",
+  "color": "#dfe7ee",
+  "model": {
+   "type": "constant",
+   "n": 1.52,
+   "k": 0
+  },
+  "source": "assumed (glass substrate)",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-au-treebu",
+  "name": "Au (0.18344 + 3.4332i) · Treebupachatsakul 2021",
+  "color": "#d4af37",
+  "model": {
+   "type": "constant",
+   "n": 0.18344,
+   "k": 3.4332
+  },
+  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), gold at 633 nm",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-n133",
+  "name": "water (n = 1.33) · Treebupachatsakul 2021",
+  "color": "#6fb3e0",
+  "model": {
+   "type": "constant",
+   "n": 1.33,
+   "k": 0
+  },
+  "source": "T. Treebupachatsakul et al., Sensors 21, 6164 (2021), sensing medium",
   "builtin": true,
   "group": "From articles (examples)"
  },
@@ -566,6 +566,45 @@
   "group": "From articles (examples)"
  },
  {
+  "id": "user-cots-no",
+  "name": "CLC / PPAM n_o = 1.54 · Pyatnov 2018",
+  "color": "#d9c3e6",
+  "model": {
+   "type": "constant",
+   "n": 1.54,
+   "k": 0
+  },
+  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cots-ne",
+  "name": "CLC / PPAM n_e = 1.71 · Pyatnov 2018",
+  "color": "#8e5bb5",
+  "model": {
+   "type": "constant",
+   "n": 1.71,
+   "k": 0
+  },
+  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
+  "id": "user-cots-nm",
+  "name": "Surrounding medium, n = 1.625",
+  "color": "#cfe3f2",
+  "model": {
+   "type": "constant",
+   "n": 1.625,
+   "k": 0
+  },
+  "source": "the mean CLC index (n_o + n_e)/2, as in Pyatnov et al. 2018",
+  "builtin": true,
+  "group": "From articles (examples)"
+ },
+ {
   "id": "user-pankin-1",
   "name": "Isotropic, n = 1 · Pankin 2022",
   "color": "#cfe3f2",
@@ -653,45 +692,6 @@
    "k": 0.001
   },
   "source": "Z. Liu et al., Opt. Express 31, 8384 (2023)",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
-  "id": "user-cots-no",
-  "name": "CLC / PPAM n_o = 1.54 · Pyatnov 2018",
-  "color": "#d9c3e6",
-  "model": {
-   "type": "constant",
-   "n": 1.54,
-   "k": 0
-  },
-  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
-  "id": "user-cots-ne",
-  "name": "CLC / PPAM n_e = 1.71 · Pyatnov 2018",
-  "color": "#8e5bb5",
-  "model": {
-   "type": "constant",
-   "n": 1.71,
-   "k": 0
-  },
-  "source": "M. V. Pyatnov et al., Photonics 5, 30 (2018): nematic + chiral dopant S-811",
-  "builtin": true,
-  "group": "From articles (examples)"
- },
- {
-  "id": "user-cots-nm",
-  "name": "Surrounding medium, n = 1.625",
-  "color": "#cfe3f2",
-  "model": {
-   "type": "constant",
-   "n": 1.625,
-   "k": 0
-  },
-  "source": "the mean CLC index (n_o + n_e)/2, as in Pyatnov et al. 2018",
   "builtin": true,
   "group": "From articles (examples)"
  },
