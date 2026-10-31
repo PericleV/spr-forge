@@ -161,7 +161,7 @@ export function lambdaAt(ds: Dataset, fallback?: number): ((k: number) => number
   }
   const one = ds.spec?.lambda.length === 1 ? ds.spec.lambda[0] : fallback;
   if (one !== undefined && Number.isFinite(one)) return () => one;
-  return 'the data have no wavelength axis: connect a λ Parameter (one value) too';
+  return 'the data have no wavelength axis, so connect a λ Parameter (a single value) as well';
 }
 
 // A result is complex when some point has an imaginary part above rounding.

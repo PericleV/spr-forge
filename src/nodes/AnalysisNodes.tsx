@@ -152,7 +152,7 @@ function ZoneEditor({ value, info, along, onChange }: { value: Interval; info?: 
         </tbody>
       </table>
       <button className="nodrag" onClick={add}>+ point</button>
-      <div className="hint">Straight lines between the points. On a 2D map of this data (Plot): drag the points, double-click inside the zone to add one, on a point to remove it.</div>
+      <div className="hint">Straight lines between the points. On a 2D map of this data (Plot), drag the points to move them, double-click inside the zone to add one, or double-click a point to remove it.</div>
     </div>
   );
 }
@@ -160,10 +160,10 @@ function ZoneEditor({ value, info, along, onChange }: { value: Interval; info?: 
 // How the position of the dip / peak is found (engine/metrics.ts `locate`): the parabola follows the noise of three
 // points; a polynomial fit or the centroid of the dip average it over the points below the level.
 const LOCATE: [LocateMethod, string, string][] = [
-  ['data', 'data (the sample)', 'No model: the lowest (highest) computed or measured sample itself, its x and its value. The position moves in steps of the grid; FWHM: the half level from that value, the edges interpolated linearly between the samples around them'],
-  ['parabola', '3-point parabola', 'A parabola through the lowest sample and its two neighbours: exact on smooth computed curves, but it follows the noise of those three points'],
-  ['poly', 'polynomial fit', 'Least-squares polynomial through the points of the dip below the level; its extreme is the position. Averages the noise over the dip'],
-  ['centroid', 'centroid', 'Centre of mass of the dip below the level, weights (level − y)·dx (Piliarik & Homola 2009). Robust to noise; on an asymmetric dip it is shifted from the minimum, but follows it'],
+  ['data', 'data (the sample)', 'No model: the lowest (or highest) sample itself, computed or measured, with its x and its value. The position moves in steps of the grid. For FWHM the half level comes from that value, and the edges are interpolated linearly between the samples around them'],
+  ['parabola', '3-point parabola', 'A parabola through the lowest sample and its two neighbours. It is exact on smooth computed curves, but it follows the noise of those three points'],
+  ['poly', 'polynomial fit', 'A least-squares polynomial through the points of the dip below the level, whose extreme gives the position. It averages the noise over the dip'],
+  ['centroid', 'centroid', 'The centre of mass of the dip below the level, with weights (level − y)·dx (Piliarik & Homola 2009). It copes well with noise. On an asymmetric dip it sits off the minimum, but it moves with it'],
 ];
 export function LocateControls({ data, set }: { data: LocateFields; set: (patch: LocateFields) => void }) {
   const m = data.locate ?? 'parabola';
@@ -193,10 +193,10 @@ export function LocateControls({ data, set }: { data: LocateFields; set: (patch:
 }
 // What the chosen method does, and how it differs from the others (shown under the choice)
 const LOCATE_NOTE: Record<LocateMethod, string> = {
-  data: 'Data: the sample itself, no interpolation of the extreme. Its position moves in steps of the grid (Sensitivity then in steps of grid step / Δn); the parabola, the fit and the centroid place it between the samples.',
-  parabola: 'Parabola: through the extreme sample and its two neighbours. Between the samples, exact on smooth curves, but it follows the noise of three points; data takes the sample itself, fit and centroid average the dip.',
-  poly: 'Polynomial fit: through the points below the level. Averages the noise over the dip; the value stays the lowest sample (the FWHM level unchanged). Data and parabola use one or three samples only.',
-  centroid: 'Centroid: the centre of mass of the dip below the level. The most robust to noise, but shifted from the minimum on an asymmetric dip; data and parabola use one or three samples only.',
+  data: 'Data: the extreme sample itself, with no interpolation. Its position moves in steps of the grid (so Sensitivity moves in steps of grid step / Δn), whereas the parabola, the fit and the centroid place it between the samples.',
+  parabola: 'Parabola: through the extreme sample and its two neighbours. It lands between the samples and is exact on smooth curves, but it follows the noise of those three points. Data takes the sample itself, while the fit and the centroid average over the dip.',
+  poly: 'Polynomial fit: through the points below the level. It averages the noise over the dip, while the value stays that of the lowest sample (so the FWHM level does not change). Data and parabola use only one or three samples.',
+  centroid: 'Centroid: the centre of mass of the dip below the level. It is the least sensitive to noise, but on an asymmetric dip it sits off the minimum. Data and parabola use only one or three samples.',
 };
 
 export function ExtremumNodeView({ id, data }: NodeProps<ExtremumNode>) {
@@ -215,7 +215,7 @@ export function ExtremumNodeView({ id, data }: NodeProps<ExtremumNode>) {
       </div>
       <ZoneEditor value={data} info={info} along={data.along} onChange={({ lo, hi, path }) => set({ lo, hi, path })} />
       <LocateControls data={data} set={set} />
-      <div className="hint">Empty interval = whole range. For noisy (measured or degraded) curves: polynomial fit or centroid.</div>
+      <div className="hint">An empty interval means the whole range. For noisy curves (measured or degraded), use the polynomial fit or the centroid.</div>
     </Frame>
   );
 }

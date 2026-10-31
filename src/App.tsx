@@ -774,7 +774,7 @@ function Flow() {
         />
         {history.canUndo && <span className="muted" title="Modified since it was loaded">•</span>}
         {autosaveFailed && (
-          <span className="save-warning" title="The browser storage is full: the changes are not kept for the next visit. Save the project to a file (Save), or delete projects kept in the browser (Projects).">
+          <span className="save-warning" title="The browser storage is full, so your changes will not be kept for your next visit. Save the project to a file (Save), or delete some projects kept in the browser (Projects).">
             <TriangleAlert {...IC} /> not autosaved: use Save
           </span>
         )}

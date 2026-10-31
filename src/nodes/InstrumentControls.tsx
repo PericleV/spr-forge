@@ -7,7 +7,7 @@ import { NumInput } from './ui.tsx';
 export function InstrumentControls({ data, set }: { data: InstrumentFields; set: (patch: Partial<InstrumentFields>) => void }) {
   return (
     <>
-      <label className="radio" title="The beam is not collimated: the curves are averaged over the angles of the beam (a convolution along θ, in the plane of incidence). Needs a computed range of θ, finer than the spread.">
+      <label className="radio" title="The beam is not collimated, so the curves are averaged over the angles in the beam (a convolution along θ, in the plane of incidence). This needs a computed range of θ with steps finer than the spread.">
         <input className="nodrag" type="checkbox" checked={!!data.spreadOn} onChange={(e) => set({ spreadOn: e.target.checked })} />
         beam angular spread
         {data.spreadOn && (
@@ -21,7 +21,7 @@ export function InstrumentControls({ data, set }: { data: InstrumentFields; set:
           </>
         )}
       </label>
-      <label className="radio" title="The source is not monochromatic: the curves are averaged over its spectrum (a Gaussian convolution along λ). Needs a computed range of λ, finer than the bandwidth.">
+      <label className="radio" title="The source is not monochromatic, so the curves are averaged over its spectrum (a Gaussian convolution along λ). This needs a computed range of λ with steps finer than the bandwidth.">
         <input className="nodrag" type="checkbox" checked={!!data.bandOn} onChange={(e) => set({ bandOn: e.target.checked })} />
         source bandwidth
         {data.bandOn && (
@@ -30,7 +30,7 @@ export function InstrumentControls({ data, set }: { data: InstrumentFields; set:
           </>
         )}
       </label>
-      <label className="radio" title="Detector noise on R and T (A = 1 − R − T), its own for every sample; the model of Piliarik & Homola, Opt. Express 17, 16505 (2009)">
+      <label className="radio" title="Detector noise on R and T (A = 1 − R − T), drawn separately for every sample, following the model of Piliarik & Homola, Opt. Express 17, 16505 (2009)">
         <input className="nodrag" type="checkbox" checked={!!data.noise} onChange={(e) => set({ noise: e.target.checked })} />
         detector noise
       </label>

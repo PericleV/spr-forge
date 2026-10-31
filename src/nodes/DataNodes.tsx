@@ -103,7 +103,7 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
       )}
       {info?.axes.some((a) => a.labels.length > 1) && (
         <>
-          <div className="section" title="Keep every curve along an axis, take the values at one of its steps or at any value (interpolated between the two neighbouring steps; every axis fixed: single values), or average over it (e.g. over the seeds of a rough interface: the mean and the standard deviation of every quantity)">
+          <div className="section" title="Keep every curve along an axis, take the values at one of its steps or at any value (interpolated between the two neighbouring steps; with every axis fixed you get single values), or average over it, for example over the seeds of a rough interface, which gives the mean and standard deviation of every quantity">
             Along the axes
           </div>
           {info.axes
@@ -200,7 +200,7 @@ export function MergeNodeView({ id, data }: NodeProps<MergeNode>) {
           ))}
         </div>
       ) : null}
-      <div className="hint">Each source keeps its own points. In a Plot: one curve per source; X can be any quantity (e.g. the resonance angle); three quantities make a map.</div>
+      <div className="hint">Each source keeps its own points. In a Plot you get one curve per source, X can be any quantity (the resonance angle, for example), and three quantities make a map.</div>
       {ds && <ValuesTable ds={ds} name={data.name || 'merged'} />}
       <Messages result={result} />
       <OutPort label="data" port="data" />

@@ -36,11 +36,12 @@ export function Welcome({ onClose, onEmpty, onHelp, examples, onExample, last }:
         <Logo height={72} />
         <h2 id="welcome-title">Welcome to SPR Forge</h2>
         <p>
-          A free, node-based simulator for thin films and 1D gratings, running entirely in your browser. Build a structure from Material, Layer and stack
-          nodes, compute its reflectance, transmittance and fields (transfer matrices, RCWA for gratings, Berreman 4×4 for anisotropic layers and liquid
-          crystals), then analyse, fit, optimize, design filters or estimate tolerances. Every result follows the parameters as you change them.
+          SPR Forge simulates thin films and 1D gratings, free and in your browser. You build a structure out of Material, Layer and stack nodes, then
+          compute its reflectance, transmittance and fields: transfer matrices for films, RCWA for gratings, Berreman 4×4 for anisotropic layers and
+          liquid crystals. From there you can analyse, fit, optimize, design filters or estimate tolerances. Change a parameter and every result after it
+          updates.
         </p>
-        <p className="muted">Nothing is uploaded: your projects stay in this browser and in the files you save.</p>
+        <p className="muted">Nothing is uploaded. Your projects stay in this browser and in the files you save.</p>
         <div className="welcome-actions">
           {last && (
             <button className="primary" onClick={() => close(last.open)} title={`Saved ${new Date(last.saved).toLocaleString()}`}>
@@ -74,12 +75,12 @@ export function Welcome({ onClose, onEmpty, onHelp, examples, onExample, last }:
               </section>
             ))
           ) : (
-            <div className="hint">loading the examples…</div>
+            <div className="hint">Loading the examples</div>
           )}
         </div>
         <label className="radio welcome-check">
           <input type="checkbox" checked={dontShow} onChange={(e) => setDontShow(e.target.checked)} />
-          Don’t show this at start (it stays in Help; the page then opens an empty project)
+          Don’t show this at start. You can still open it from Help, and the page will start with an empty project.
         </label>
       </div>
     </div>

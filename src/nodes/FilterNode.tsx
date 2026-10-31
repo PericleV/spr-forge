@@ -179,7 +179,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
       </div>
       <MatPort id="incident" label="Incident medium" hint="connect (e.g. Air)" />
       <MatPort id="sub" label="Substrate" hint="connect (e.g. BK7)" />
-      <label className="radio" title="A plate of finite thickness: no interference inside it; both faces count">
+      <label className="radio" title="A plate of finite thickness, with no interference inside it; both faces count">
         <input
           className="nodrag"
           type="checkbox"
@@ -246,7 +246,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
               <select
                 className="nodrag"
                 value={b.avg ?? ''}
-                title="The target applies at every wavelength of the band, or to its mean (trapezoid in λ), or to its photopic mean (weights V(λ)·D65, e.g. Rv ≤ 0.5 % on 380–780 nm). A mean counts as one target point: raise its weight to stress it."
+                title="The target applies at every wavelength of the band, or to its mean (trapezoid in λ), or to its photopic mean (weights V(λ)·D65, e.g. Rv ≤ 0.5 % on 380–780 nm). A mean counts as a single target point, so raise its weight to give it more importance."
                 onChange={(e) => setBand(i, { avg: (e.target.value || undefined) as FilterBand['avg'] })}
               >
                 <option value="">at each λ</option>
@@ -296,7 +296,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
         </label>
       </div>
       <div className="row wrap">
-        <label className="radio" title="A converging beam around each angle: the spectra are averaged over its rays (pupil filled uniformly; s / p in each ray's own plane of incidence: exact for unpolarized light)">
+        <label className="radio" title="A converging beam around each angle. The spectra are averaged over its rays, with the pupil filled uniformly and s / p taken in each ray’s own plane of incidence, which is exact for unpolarized light">
           <input className="nodrag" type="checkbox" checked={!!data.cone} onChange={(e) => set({ cone: e.target.checked })} />
           cone of light
         </label>
@@ -344,7 +344,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
             ))}
           </tbody>
         </table>
-        <div className="hint">Empty: the global min d / max d. Locked and tied layers are set in the layer list below.</div>
+        <div className="hint">Empty means the global min d / max d. Locked and tied layers are set in the layer list below.</div>
       </details>
 
       <div className="section">Design</div>
@@ -465,7 +465,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
                 <th>material</th>
                 <th>d [nm]</th>
                 <th title="Locked: the thickness is kept (never refined, split or removed)">lock</th>
-                <th title="Tie: layers with the same name (e.g. a) have one thickness, refined together">tie</th>
+                <th title="Tie: layers with the same name (a, for example) share one thickness and are refined together">tie</th>
               </tr>
             </thead>
             <tbody>

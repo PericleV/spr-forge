@@ -299,7 +299,7 @@ function makePlan(list: LayerSpec[], dims: number[], idx: number[], cellFixed?: 
         S[k][x] = S[k - 1][x];
         pinched = true;
       }
-  if (pinched) notes.push({ text: 'a rough surface reaches the next interface: the film is pinched off there (zero thickness)' });
+  if (pinched) notes.push({ text: 'a rough surface reaches the next interface, so the film is pinched off there (zero thickness)' });
   // zones: interfaces whose surfaces overlap in depth are cut together
   const span = S.map((s) => statsOf(s));
   const groups: { k0: number; k1: number; z0: number; z1: number }[] = [];

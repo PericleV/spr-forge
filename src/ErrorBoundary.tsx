@@ -46,13 +46,13 @@ export function AppCrash({ error }: { error: Error }) {
     <div className="crash">
       <h2>SPR Forge stopped because of an error</h2>
       <pre>{error.message}</pre>
-      <p>Your project is kept in this browser. Download it first, then reload the page; if the error comes back with this project, start over.</p>
+      <p>Your project is still kept in this browser. Download it first, then reload the page. If the error comes back with this project, start over.</p>
       <div className="row">
         <button onClick={download} disabled={!saved}>Download the project (JSON)</button>
         <button onClick={() => location.reload()}>Reload</button>
         <button
           onClick={() => {
-            if (!confirm('Start over? The project kept in this browser is removed (download it first); SPR Forge opens with its first example.')) return;
+            if (!confirm('Start over? This removes the project kept in this browser, so download it first. SPR Forge then opens with its first example.')) return;
             try {
               localStorage.removeItem('spr-flow:project');
             } catch {

@@ -68,7 +68,7 @@ export function MaterialNodeView({ id, data }: NodeProps<MaterialNode>) {
         </div>
       )}
       {porous && (
-        <label title="What fills the pores. A neighbouring layer: its index as computed at every step (index sweeps, the Δn of a Sensitivity analysis), so the porous layer follows it; e.g. porous gold under water, with water swept.">
+        <label title="What fills the pores. With a neighbouring layer, its index is taken as computed at every step (index sweeps, the Δn of a Sensitivity analysis), so the porous layer follows it; for example porous gold under water, with the water swept.">
           <span className="muted">pores filled with</span>
           <select className="nodrag pores-fill" value={data.poresFill ?? 'library'} onChange={(e) => set({ poresFill: e.target.value as MaterialData['poresFill'] })}>
             <option value="library">{lib.get(porous.filler)?.name ?? porous.filler} (library)</option>
@@ -217,7 +217,7 @@ export function LayerNodeView({ id, data }: NodeProps<LayerNode>) {
       {mono && !dSwept && <div className="hint">= {+(data.layers2D * mono).toFixed(3)} nm ({mono} nm per layer)</div>}
       {aniso && (
         <>
-          <label title="Cholesteric pitch: the director turns 360° over this length; > 0 right-handed, < 0 left-handed. Set, it replaces the twist and follows a swept thickness. Empty: use the twist.">
+          <label title="Cholesteric pitch, the length over which the director turns 360°; positive is right-handed, negative left-handed. When set, it replaces the twist and follows a swept thickness. Leave it empty to use the twist.">
             Pitch [nm]
             <NumInput value={data.pitch ?? NaN} step={1} placeholder="(twist)" onChange={(pitch) => set({ pitch })} />
           </label>
@@ -235,7 +235,7 @@ export function LayerNodeView({ id, data }: NodeProps<LayerNode>) {
             <NumInput value={data.tiltEnd ?? NaN} step={1} placeholder="constant" onChange={(tiltEnd) => set({ tiltEnd })} />
           </label>
           {lcSlices !== undefined && (
-            <label title="A pure twist is solved exactly at normal incidence; at oblique incidence, or with a tilt profile, the layer is cut into this many uniform sublayers; empty = auto (one per 4.5° of twist, at least 20)">
+            <label title="A pure twist is solved exactly at normal incidence. At oblique incidence, or with a tilt profile, the layer is cut into this many uniform sublayers; empty means automatic (one per 4.5° of twist, at least 20)">
               Sublayers
               <NumInput value={data.slices ?? NaN} min={1} step={1} placeholder={`auto (${lcSlices})`} onChange={(slices) => set({ slices })} />
             </label>

@@ -197,7 +197,7 @@ export function TargetNodeView({ id, data }: NodeProps<TargetNode>) {
         )}
       </div>
       <div className="row wrap">
-        <span className="muted" title="What the target is: quantity ('matched' = the quantity chosen in Curve match / the Filter designer), polarization, angle, kind and tolerance (the error is divided by it: 0.01 gives MF = 100·RMS). Bands can override each of them.">target is</span>
+        <span className="muted" title="What the target is: the quantity (“matched” means the one chosen in Curve match or the Filter designer), polarization, angle, kind and tolerance. The error is divided by the tolerance, so 0.01 gives MF = 100·RMS. Bands can override each of these.">target is</span>
         <select className="nodrag" value={data.quantity ?? ''} onChange={(e) => set({ quantity: e.target.value })}>
           <option value="">the matched quantity</option>
           {QUANTITIES.map(([k, l]) => (

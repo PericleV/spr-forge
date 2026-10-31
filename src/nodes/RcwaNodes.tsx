@@ -190,7 +190,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       </div>
       <div className="port-row">
         <Port kind="target" id="phi" port="sweep-number" />
-        <label title="Azimuth of the plane of incidence, from the grating vector (x, across the grating lines). 0: classical (planar) diffraction; ≠ 0: conical incidence, TE and TM coupled; the outputs add the TE / TM parts of every order. A Sweep or a Design variable can drive it.">
+        <label title="Azimuth of the plane of incidence, measured from the grating vector (x, across the grating lines). At 0 the diffraction is classical (planar); otherwise it is conical incidence, where TE and TM couple and the outputs include the TE / TM parts of every order. A Sweep or a Design variable can drive it.">
           <span>Azimuth φ [°]{phiSwept && <span className="val swept"> swept</span>}</span>
           {!phiSwept && <NumInput className="short" value={data.phi ?? 0} step={5} onChange={(phi) => set({ phi: Number.isFinite(phi) ? phi : 0 })} />}
         </label>
@@ -223,7 +223,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       )}
       <div className="port-row">
         <Port kind="target" id="orders" port="sweep-number" />
-        <label className="radio" title="Fourier orders −N … +N kept in the computation (accuracy vs speed). A Sweep on this port computes every step at its own N: the data get an axis “orders N” (convergence figures: R, a Min / max or FWHM result vs N).">
+        <label className="radio" title="The Fourier orders −N to +N kept in the computation, trading accuracy for speed. A Sweep on this port computes each step with its own N and gives the data an “orders N” axis, for convergence plots of R or of a Min / max or FWHM result against N.">
           orders N {ordersSwept ? <span className="val swept">swept</span> : <NumInput className="tiny" value={data.orders} min={0} step={1} onChange={(orders) => set({ orders: Math.round(orders) })} />}
         </label>
         <label className="radio" title="Diffraction efficiencies output for the orders −M … +M">
@@ -233,7 +233,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       <div className="row wrap">
         <label
           className="radio"
-          title="How trapezoid, sinus and blazed gratings are computed. Staircase: cut into the Nz slices of the Grating layer (as RETICOLO); in TM a metal profile converges slowly with N (the corners of the steps). Smooth (FFF): the true profile integrated through its depth with the normal-vector factorization (differential method, Popov & Nevière); far fewer orders for metals in TM. Lamellar and pixel gratings are computed as drawn either way."
+          title="How trapezoid, sinus and blazed gratings are computed. Staircase cuts them into the Nz slices of the Grating layer, as RETICOLO does; in TM a metal profile then converges slowly with N because of the corners of the steps. Smooth (FFF) integrates the true profile through its depth with the normal-vector factorization (differential method, Popov & Nevière) and needs far fewer orders for metals in TM. Lamellar and pixel gratings are computed as drawn either way."
         >
           profiles
           <select className="nodrag" value={data.profiles ?? 'staircase'} onChange={(e) => set({ profiles: e.target.value === 'fff' ? 'fff' : 'staircase' })}>
@@ -245,7 +245,7 @@ export function RcwaNodeView({ id, data }: NodeProps<RcwaNode>) {
       {/* ASR hidden for now (the code stays): shown only where a saved project has it on, to turn it off */}
       {(SHOW_ASR || data.asr) && (
       <div className="row wrap">
-        <label className="radio" title="Adaptive spatial resolution (Granet): a change of coordinate that puts more harmonics near the edges of the profile; faster convergence, above all for metals in TM">
+        <label className="radio" title="Adaptive spatial resolution (Granet): a change of coordinates that puts more harmonics near the edges of the profile, so it converges faster, above all for metals in TM">
           <input className="nodrag" type="checkbox" checked={!!data.asr} onChange={(e) => set({ asr: e.target.checked || undefined })} />
           ASR
         </label>

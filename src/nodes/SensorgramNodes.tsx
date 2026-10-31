@@ -150,7 +150,7 @@ export function KineticsNodeView({ id, data }: NodeProps<KineticsNode>) {
 
           <div className="section">Surface</div>
           {rsaOk && (
-            <label title="Ligand sites: the analyte binds to immobilized ligands, Rmax typed (free sites Rmax − R). Free surface: the molecules adsorb anywhere and cannot overlap (random sequential adsorption): the area left shrinks faster than the free sites, and Rmax is the jamming capacity of a random monolayer.">
+            <label title="Ligand sites: the analyte binds to immobilized ligands, with Rmax typed in (free sites Rmax − R). Free surface: the molecules adsorb anywhere but cannot overlap (random sequential adsorption), so the available area shrinks faster than the number of free sites, and Rmax is the jamming capacity of a random monolayer.">
               binding to
               <select className="nodrag" value={rsa ? 'rsa' : 'ligand'} onChange={(e) => set({ surface: e.target.value as KineticsData['surface'] })}>
                 <option value="ligand">ligand sites (Rmax)</option>
@@ -273,7 +273,7 @@ export function SensorgramNodeView({ id, data }: NodeProps<SensorgramNode>) {
         </select>
       </label>
       {toExit && !info?.swelling && (
-        <label title="The binding layer. Monolayer → multilayer: as high as the molecule (its orientation in Binding kinetics), the bound mass filling it, up to a full random monolayer; more mass makes it thicker. Compact: all the mass as a dense layer of the analyte, d = Γ/ρ (what an SPR fit at the protein index reports).">
+        <label title="The binding layer. Monolayer → multilayer: a layer as tall as the molecule (set by its orientation in Binding kinetics) that the bound mass fills up to a full random monolayer; more mass than that makes it thicker. Compact: all the mass as a dense layer of analyte, d = Γ/ρ, which is what an SPR fit at the protein index reports.">
           layer
           <select className="nodrag" value={data.thick === 'compact' ? 'compact' : 'auto'} onChange={(e) => set({ thick: e.target.value as SensorgramData['thick'] })}>
             <option value="auto">monolayer → multilayer (from the molecule)</option>
@@ -329,7 +329,7 @@ export function SensorgramNodeView({ id, data }: NodeProps<SensorgramNode>) {
           </label>
         )}
         {data.readout === 'dip' && (
-          <label className="radio" title="The dip found exactly between the grid points at every time (golden-section search with the transfer matrix); without detector noise">
+          <label className="radio" title="Finds the dip exactly between the grid points at every time step (a golden-section search with the transfer matrix); only without detector noise">
             <input className="nodrag" type="checkbox" checked={data.track} onChange={(e) => set({ track: e.target.checked })} />
             exact dip tracking
           </label>
@@ -342,7 +342,7 @@ export function SensorgramNodeView({ id, data }: NodeProps<SensorgramNode>) {
       <InstrumentControls data={data} set={set} />
       <div className="port-row">
         <Port kind="target" id="seed" port="sweep-number" />
-        <span className="radio" title="The realization of the detector noise (same seed = the same noise). A Sweep of seeds gives one noisy series per seed (a new axis of both outputs).">
+        <span className="radio" title="Which realization of the detector noise to use; the same seed gives the same noise. A Sweep of seeds gives one noisy series per seed, as a new axis on both outputs.">
           seed {seedOn ? <span className="val swept">swept{info?.seeds ? ` (${info.seeds})` : ''}</span> : <NumInput className="tiny" value={data.seed ?? 1} step={1} onChange={(seed) => set({ seed })} />}
         </span>
       </div>

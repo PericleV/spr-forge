@@ -48,12 +48,12 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
       </div>
       <div className="port-row">
         <Port kind="target" id="seed" port="sweep-number" />
-        <label title="The random realization: sweep it (integers) and average the results for the statistics">
+        <label title="The random realization. Sweep it (integers) and average the results to get the statistics">
           Seed
           {seedSwept ? <span className="val swept">swept</span> : <NumInput value={data.seed} step={1} onChange={(seed) => set({ seed })} />}
         </label>
       </div>
-      <label title="How much this interface copies the rough interface before it (on the incident side), e.g. a film that replicates its substrate: 0 = independent, 1 = the same shape (conformal). Empty: automatic; a film thinner than the sum of the two RMS heights is conformal, a thicker one independent.">
+      <label title="How closely this interface copies the rough interface before it (on the incident side), as in a film that replicates its substrate: 0 is independent, 1 the same shape (conformal). Empty means automatic: a film thinner than the sum of the two RMS heights is conformal, a thicker one independent.">
         Follows the interface before
         <NumInput className="tiny" value={data.corr ?? NaN} placeholder="auto" min={0} step={0.1} onChange={(corr) => set({ corr })} />
       </label>
@@ -74,7 +74,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           <NumInput className="short" value={data.px} min={16} step={100} onChange={(px) => set({ px })} />
         </label>
       </div>
-      <label title="How Compute TMM (and Berreman) describes the rough zone. This profile: the slices of the realization above (it changes with the seed and the cell). Ensemble: the heights of a Gaussian distribution of the same RMS; the limit of a large illuminated area, no seed, smooth for optimizers. Linear ramp: a uniform distribution (the fractions, and with “linear in n” the index, change linearly across the zone). Compute RCWA always computes the profile.">
+      <label title="How Compute TMM (and Berreman) describes the rough zone. This profile uses the slices of the realization above, so it changes with the seed and the cell. Ensemble uses the heights of a Gaussian distribution with the same RMS: the limit of a large illuminated area, with no seed, and smooth for optimizers. Linear ramp uses a uniform distribution, so the fractions (and, with “linear in n”, the index) change linearly across the zone. Compute RCWA always computes the profile.">
         TMM zone
         <select className="nodrag" value={tmm} onChange={(e) => set({ tmm: e.target.value as RoughData['tmm'] })}>
           <option value="ensemble">ensemble (Gaussian heights)</option>
@@ -87,7 +87,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           Slices
           <NumInput className="tiny" value={data.slices} min={1} step={1} onChange={(slices) => set({ slices })} />
         </label>
-        <label title="Compute TMM: each slice becomes an effective medium of its material fractions. Bruggeman, shape of the features: a Bruggeman medium per direction with the depolarization factors of features σ high and cl wide; between the two Wiener bounds, follows RCWA of the smooth profile (rough gold: the SPR dip within ~0.1°; recommended). Wiener, horizontal laminae: in-plane the weighted mean of ε, along the normal the harmonic one (a very gentle surface; to first order the roughness disappears). Wiener, vertical walls: the reverse (columnar roughness). The tensor media run through Berreman. Compute RCWA uses the profile itself.">
+        <label title="In Compute TMM each slice becomes an effective medium of its material fractions. “Bruggeman, shape of the features” (recommended) uses a Bruggeman medium per direction, with the depolarization factors of features σ high and cl wide; it lies between the two Wiener bounds and follows RCWA of the smooth profile (on rough gold, the SPR dip within about 0.1°). “Wiener, horizontal laminae” takes the weighted mean of ε in the plane and the harmonic mean along the normal, which describes a very gentle surface (to first order the roughness disappears). “Wiener, vertical walls” does the reverse, for columnar roughness. The tensor media go through Berreman. Compute RCWA uses the profile itself.">
           TMM medium
           <select className="nodrag" value={data.ema} onChange={(e) => set({ ema: e.target.value as RoughData['ema'] })}>
             <option value="shape">Bruggeman, shape of the features (σ/cl)</option>
@@ -100,7 +100,7 @@ export function RoughNodeView({ id, data }: NodeProps<RoughNode>) {
           </select>
         </label>
         {data.ema === 'shape' && (
-          <select className="nodrag" value={data.surf ?? '1d'} title="The features: ridges of a 1D profile (the profile of this node, as Compute RCWA sees it; checked against RCWA) or bumps of a surface rough in both directions (a real film; spheroids, not checkable by the 1D RCWA)" onChange={(e) => set({ surf: e.target.value as RoughData['surf'] })}>
+          <select className="nodrag" value={data.surf ?? '1d'} title="The shape of the features: ridges of a 1D profile (the profile of this node, as Compute RCWA sees it, checked against RCWA) or bumps on a surface that is rough in both directions (a real film, modelled as spheroids, which the 1D RCWA cannot check)" onChange={(e) => set({ surf: e.target.value as RoughData['surf'] })}>
             <option value="1d">1D profile (ridges)</option>
             <option value="2d">2D surface (bumps)</option>
           </select>

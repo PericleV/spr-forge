@@ -168,7 +168,7 @@ export function MapViewControls({ view, onChange }: { view?: MapView; onChange: 
         </label>
       </div>
       <div className="row wrap">
-        <span className="interval" title="Cap: the values above it are drawn in the colour of the cap (saturate) or not drawn (hide); the colour scale ends at the cap. The data are not changed.">
+        <span className="interval" title="Values above the cap are drawn in the colour of the cap (saturate) or left out (hide), and the colour scale ends at the cap. The data themselves are not changed.">
           cap <NumInput className="short" value={v.cap ?? NaN} placeholder="none" onChange={(c) => set({ cap: Number.isFinite(c) ? c : undefined })} />
           {Number.isFinite(v.cap ?? NaN) && (
             <select className="nodrag" value={v.capHide ? 'hide' : 'saturate'} onChange={(e) => set({ capHide: e.target.value === 'hide' || undefined })}>

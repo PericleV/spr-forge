@@ -95,7 +95,7 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
         })}
         {!shown.length && <div className="muted palette-empty">No node matches “{query}”.</div>}
       </div>
-      <div className="hint palette-foot">Drag a node onto the canvas, or click it. Right-click on the canvas: the same list.</div>
+      <div className="hint palette-foot">Drag a node onto the canvas or click it. Right-clicking the canvas opens the same list.</div>
     </aside>
   );
 }

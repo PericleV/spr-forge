@@ -2,53 +2,58 @@
 
 **Live app:** https://periclev.github.io/spr-forge/
 
-A free, node-based simulator for thin films and 1D gratings that runs entirely in the browser. Structures, computations,
-analyses and optimizations are nodes connected into a graph; every result updates when a parameter changes.
+SPR Forge is a free simulator for thin films and 1D gratings that runs in the browser. You build a structure, its
+computations, analyses and optimizations as nodes connected into a graph, and every result updates when you change a
+parameter.
 
-- **Thin films (TMM)**: reflectance, transmittance, absorptance and phases over wavelength, angle and any number of sweeps;
-  thick incoherent substrates with coatings on both faces; fields and absorption inside the stack.
+- **Thin films (TMM)**: reflectance, transmittance, absorptance and phases over wavelength, angle and any number of sweeps,
+  thick incoherent substrates with coatings on both faces, and the fields and absorption inside the stack.
 - **1D gratings (RCWA)**: lamellar, trapezoid, sinusoidal, blazed and pixel profiles, diffraction orders, adaptive spatial
-  resolution (ASR), field maps in the x–z plane, convergence check; conical incidence (azimuth φ) and any incident
-  polarization (Jones ψ, δ).
+  resolution (ASR), field maps in the x–z plane and a convergence check. Conical incidence (azimuth φ) and any incident
+  polarization (Jones ψ, δ) are supported.
 - **Anisotropic layers (Berreman 4×4)**: uniaxial and biaxial media with any orientation of their axes, liquid crystals
-  with a twisted / tilting director (cholesterics solved exactly at normal incidence), anisotropic exit media (a semi-infinite
-  crystal), fields inside the stack; Compute TMM switches to the 4×4 method by itself and splits R and T into TE / TM and
-  circular (σ±) parts; circularly polarized light.
-- **Analysis**: resonance minima / maxima, FWHM and Q, sensitivity and FOM of sensors, fits (Lorentz, Fano, coupled
-  oscillators, anticrossing dispersion / Rabi splitting), Monte Carlo tolerance analysis with yield.
+  with a twisted or tilting director (cholesterics are solved exactly at normal incidence), anisotropic exit media (a
+  semi-infinite crystal) and the fields inside the stack. Compute TMM switches to the 4×4 method on its own, works with
+  circularly polarized light, and splits R and T into TE / TM and circular (σ±) parts.
+- **Analysis**: resonance minima and maxima, FWHM and Q, sensor sensitivity and FOM, fits (Lorentz, Fano, coupled
+  oscillators, anticrossing dispersion and Rabi splitting), and Monte Carlo tolerance analysis with yield.
 - **Optimization**: Adam (two stages, decaying rate), differential evolution, Nelder-Mead, genetic algorithm, particle
-  swarm, simulated annealing, Levenberg-Marquardt, NSGA-II (Pareto fronts); objectives from bands, target curves, measured
-  data or any expression.
-- **SPR sensor design**: in the Optimization Engine, a genetic algorithm over layer sequences (after Sebek et al., ACS Omega
-  2023) builds sensors from the materials you tick for each role — prisms, plasmonic metals, other metals, dielectrics, 2D
-  materials in monolayers — with the limits of each role, and maximizes the angular sensitivity or S / FWHM.
-- **Filter design**: needle optimization, deep search, gradual evolution, design cleaner, random perturbations; N coating
-  materials, targets with =, ≥, ≤, tolerances and optical density (OD), polarization and angle; one or both faces of a plate;
-  start designs from formulas such as `(HL)^8 2H (LH)^8`; deep search refines its candidates in parallel on several cores.
-- **Materials**: a built-in library (refractiveindex.info data, including the 2D materials graphene, hBN, MoS₂, WS₂) and your own materials (constant, tabulated CSV,
-  dispersion formulas, Drude-Lorentz, porous effective media, doped semiconductors with the carrier density as a
-  parameter).
+  swarm, simulated annealing, Levenberg-Marquardt and NSGA-II (Pareto fronts), with objectives built from bands, target
+  curves, measured data or any expression.
+- **SPR sensor design**: a genetic algorithm over layer sequences in the Optimization Engine (after Sebek et al., ACS Omega
+  2023). You tick the candidate materials for each role (prisms, plasmonic metals, other metals, dielectrics, 2D materials
+  in monolayers) and set its limits, and it builds sensors that maximize the angular sensitivity or S / FWHM.
+- **Filter design**: needle optimization, deep search, gradual evolution, a design cleaner and random perturbations, with
+  N coating materials, targets with =, ≥, ≤, tolerances, optical density (OD), polarization and angle, and one or both faces
+  of a plate. Designs can start from formulas such as `(HL)^8 2H (LH)^8`, and deep search refines its candidates in parallel
+  on several cores.
+- **Materials**: a built-in library (refractiveindex.info data, including the 2D materials graphene, hBN, MoS₂ and WS₂)
+  plus your own materials: constant, tabulated CSV, dispersion formulas, Drude-Lorentz, porous effective media, and doped
+  semiconductors with the carrier density as a parameter.
 
-Notes on the canvas can be combined into one document exported as Markdown or plain text.
+Notes on the canvas can be combined into one document and exported as Markdown or plain text.
 
-Projects are saved as JSON files or kept in the browser (several, by name); nothing is uploaded anywhere. The *Help*
-button explains every node; each node also has its own `?`.
+Projects are saved as JSON files or kept in the browser under their names, and nothing is uploaded anywhere. A saved file
+dropped onto the canvas opens, or joins the current project as a group. The *Help* button explains every node, and each
+node also has its own `?`.
 
 ## Examples
 
-The *Examples…* menu opens complete graphs, each with a note: surface plasmon resonance (Kretschmann, sensor design, grating
-coupling), Bragg mirrors and microcavities, strong coupling (polaritons, dispersion vs angle), a dual-band absorber, thin-film
-metrology (fitting a measurement), filter design (long-pass, narrow notch ≤ 10 nm, three-cavity band-pass, AR on both faces,
-a castle-contour filter), tolerance analysis, a guided-mode resonance filter, Tamm plasmons, SPR sensors with 2D materials
-designed by a genetic algorithm (and a dual-mode plasmon–waveguide sensor), a liquid-crystal microcavity tuned by the director
-tilt, bound states in the continuum of photonic crystals with anisotropic layers (Pankin et al. 2022, Liu et al. 2023), chiral
-optical Tamm states of a cholesteric between anisotropic mirrors as a quasi-BIC (Pyatnov et al. 2018, Timofeev et al. 2017), and optimization benchmarks after
-published papers (simulated annealing, gradient inverse design).
+The *Examples* menu opens complete graphs, each with a note that explains it. They are grouped by subject and can be
+searched. They cover surface plasmon resonance (Kretschmann, sensor design, grating coupling, binding kinetics and
+sensorgrams, rough gold), Bragg mirrors and microcavities, strong coupling (polaritons, dispersion against angle), a
+dual-band absorber, thin-film metrology (fitting a measurement), filter design (long-pass, a notch of 10 nm or less,
+three-cavity band-pass, AR on both faces, a castle-contour filter and the OIC 2025 problems), tolerance analysis, a
+guided-mode resonance filter and Tamm plasmons. There are also SPR sensors with 2D materials designed by a genetic
+algorithm, a dual-mode plasmon–waveguide sensor, a liquid-crystal microcavity tuned by the director tilt, bound states in
+the continuum of photonic crystals with anisotropic layers (Pankin et al. 2022, Liu et al. 2023), chiral optical Tamm
+states of a cholesteric between anisotropic mirrors as a quasi-BIC (Pyatnov et al. 2018, Timofeev et al. 2017), and
+optimization benchmarks from published papers (simulated annealing, gradient inverse design).
 
 ## Validation
 
-The physics is checked at every change of the code (`npm run check:tmm`), among others (every check, its reference and the
-values compared: [VALIDATION.md](VALIDATION.md)):
+The physics is checked after every change to the code (`npm run check:tmm`). A few of the checks are below; the full
+list, with each reference and the values compared, is in [VALIDATION.md](VALIDATION.md).
 
 | Check | Result |
 |---|---|
@@ -68,7 +73,7 @@ values compared: [VALIDATION.md](VALIDATION.md)):
 
 ## Running it
 
-Requirements: Node.js 22.18 or newer (24 recommended; the checks run TypeScript directly).
+You need Node.js 22.18 or newer (24 is recommended, since the checks run TypeScript directly).
 
 ```bash
 npm install
@@ -83,17 +88,17 @@ npx tsc -b && npx oxlint
 
 ## Structure
 
-- `src/physics/` — TMM, fields, RCWA (with ASR, conical incidence and thick substrates), Berreman 4×4, materials, complex
+- `src/physics/`: TMM, fields, RCWA (with ASR, conical incidence and thick substrates), Berreman 4×4, materials and complex
   matrices.
-- `src/engine/` — the graph evaluator (pure, also used by the scripts), workers, analyses, fits, optimizers, filter design,
-  target specifications.
-- `src/nodes/`, `src/plot/` — the node views and the charts.
-- `scripts/check-tmm.ts` — the checks; `scripts/gen-builtins.ts` — regenerates the built-in materials.
+- `src/engine/`: the graph evaluator (pure, so the scripts use it too), workers, analyses, fits, optimizers, filter design
+  and target specifications.
+- `src/nodes/`, `src/plot/`: the node views and the charts.
+- `scripts/check-tmm.ts` holds the checks, and `scripts/gen-builtins.ts` regenerates the built-in materials.
 
 ## Privacy
 
-Everything runs in your browser; there is no server, no account and no tracking. Projects stay in your files and in the
-browser's storage.
+Everything runs in your browser. There is no server, no account and no tracking, and your projects stay in your files and
+in the browser's storage.
 
 ## License
 

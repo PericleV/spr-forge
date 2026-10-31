@@ -498,7 +498,7 @@ function evalMaterial(ctx: Ctx, node: MaterialNode): NodeResult {
   if (pores) {
     if (doped) {
       if (pores.values.some((v) => !(v > 0))) errors.push('Carrier density values must be > 0.');
-    } else if (!porous) errors.push('The pore-fraction sweep needs a porous (effective-medium) material (or a doped semiconductor: carrier density).');
+    } else if (!porous) errors.push('The pore-fraction sweep needs a porous (effective-medium) material, or a doped semiconductor for its carrier density.');
     else if (pores.values.some((v) => !(v >= 0 && v <= 1))) errors.push('Pore fraction sweep values must be between 0 and 1.');
     mat.porositySweep = pores;
     if (doped) mat.paramLabel = 'N';
@@ -653,10 +653,10 @@ function evalCombine(ctx: Ctx, node: CombineNode): NodeResult {
     const out = materialInput(ctx, node.id, 'backMedium', 'Back medium', errors, false, true);
     const dSub = d.dSub ?? 1;
     if (!(dSub > 0)) errors.push('The substrate thickness must be > 0 mm.');
-    if (back?.incident || back?.exit) warnings.push('The back coating’s own media are ignored (substrate and back medium are set here).');
+    if (back?.incident || back?.exit) warnings.push('The back coating’s own media are ignored; the substrate and the back medium are set here.');
     if (items.at(-1)?.substrate || back?.substrate) errors.push('A thick substrate cannot be inside another one.');
     substrate = { d: dSub * 1e6, back: back?.layers ?? [], out };
-  } else if (items.some((s) => s.substrate)) errors.push('An item has a thick substrate: it must be the whole structure (use it directly).');
+  } else if (items.some((s) => s.substrate)) errors.push('One of the inputs has a thick substrate, so it has to be the whole structure. Use it directly instead.');
   if (errors.length) return fail(errors, warnings, { items: itemText });
   const stack: StackValue = {
     incident: incident ?? items[0]?.incident,
@@ -801,7 +801,7 @@ function evalDbr(ctx: Ctx, node: DbrNode): NodeResult {
   if (steps.length > MAX_VARIANTS) return fail([`Too many structure variants (${steps.length}).`]);
   const variants = steps.map(build);
   if (variants.some((v) => v.some((L) => !(L.d >= 0 && Number.isFinite(L.d))))) return fail(['Invalid layer thickness (check the materials at λ₀).']);
-  if (clamped) warnings.push('Some cavity positions exceed the number of periods; placed after the last period.');
+  if (clamped) warnings.push('Some cavity positions are beyond the number of periods; those cavities are placed after the last period.');
 
   // Align the variants slot by slot; slots missing in a variant get zero thickness (no optical effect).
   const nominal = variants[0];
@@ -950,7 +950,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     if (method === 'rcwa') {
       info.gratings = gratings.length;
       if (stack.substrate)
-        warnings.add('Thick substrate: coherent RCWA above and below it, orders added in power inside it; T and its orders leave through the back.');
+        warnings.add('Thick substrate: RCWA is coherent above and below it, while inside it the orders add in power. T and its orders leave through the back.');
       // (swept periods are checked point by point when computing)
       if (new Set(gratings.map((L) => L.grating!.period)).size > 1)
         errors.push('All grating layers of the stack must have the same period (connect the same Design variable or Sweep to their period ports).');
@@ -1106,7 +1106,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     if (cd.cone) {
       const h = cd.coneHalf ?? 5;
       if (!(h > 0 && h < 60)) errors.push('Cone: the half-angle must be in (0, 60)°.');
-      else if (info.berreman) warnings.add('The cone of light is computed for isotropic stacks only (not with anisotropic layers or a Jones polarization): it is ignored.');
+      else if (info.berreman) warnings.add('The cone of light works only for isotropic stacks, not with anisotropic layers or a Jones polarization, so it is ignored here.');
       else if (theta.some((t) => t + h >= 90)) errors.push('Cone: θ plus the half-angle reaches grazing incidence.');
       else coneHalf = h;
     }
@@ -1128,7 +1128,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     }
     if (anisoUsed) conical = true;
     if (ordersSweep) ordersBind = { s: [sweepIndex({ sweep: ordersSweep, label: 'orders N', unit: '' })], v: ordersSweep.values };
-    if (conical && rd.asr) warnings.add('ASR is not used at φ ≠ 0 or with a Jones polarization (the conical solver): the plain RCWA with Li’s factorization.');
+    if (conical && rd.asr) warnings.add('ASR is not used at φ ≠ 0 or with a Jones polarization, where the conical solver runs; plain RCWA with Li’s factorization is used instead.');
     info.conical = conical;
   }
   const polIdx = polSweep ? sweepIndex({ sweep: polSweep, label: 'polarization', unit: '', labels: ['p (TM)', 's (TE)'] }) : undefined;
@@ -1201,7 +1201,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
     // gentle roughness on a metal (RMS below the correlation length): slices of an effective medium overstate it by far
     // (measured against RCWA with the smooth profile, see ROADMAP); Compute RCWA is the check
     if (method === 'tmm' && roughAll.some((r) => r.bind.seed && r.tmm && r.tmm !== 'profile'))
-      warnings.add('Roughness: TMM takes the statistics of the heights (ensemble / ramp), so the swept seed repeats the same result (it shapes the profiles of Compute RCWA only).');
+      warnings.add('Roughness: TMM uses the height statistics (ensemble or ramp), so sweeping the seed gives the same result every time. The seed only shapes the profiles for Compute RCWA.');
     if (method === 'tmm') {
       const lam0 = lambda[Math.floor(lambda.length / 2)];
       const metal = (L: LayerSpec | undefined) => !!L && keysOf(L).some((k) => {
@@ -1212,7 +1212,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
         list.forEach((L, i) => {
           for (const r of L.rough ?? [])
             if (r.ema !== 'shape' && r.ema !== 'wiener' && r.size < r.cl && (metal(L) || metal(list[r.side === 'top' ? i - 1 : i + 1])))
-              warnings.add(`${nameOf(list, i)}: gentle roughness on a metal (height below the correlation length): an isotropic effective medium per slice overstates its effect on a plasmon many times (an SPR dip moved 1.5–2.6° instead of 0.2° for RMS 1 nm); the medium “Bruggeman, shape of the features” follows RCWA within ~0.1°.`);
+              warnings.add(`${nameOf(list, i)}: gentle roughness on a metal (height below the correlation length). An isotropic effective medium per slice overstates its effect on a plasmon many times over, moving an SPR dip by 1.5–2.6° instead of 0.2° for RMS 1 nm; the medium “Bruggeman, shape of the features” follows RCWA within about 0.1°.`);
         });
     }
     if (!errors.length)
@@ -1275,7 +1275,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   }
   if (manual) {
     info.job = { requester: node.id, key: out.key, state: out.idle ? (out.dataset ? 'stale' : 'idle') : out.pending ? 'running' : 'done' };
-    if (out.idle && out.dataset) warnings.add('The inputs changed: the output is the previous result; press Run to recompute.');
+    if (out.idle && out.dataset) warnings.add('The inputs have changed, so the output still shows the previous result. Press Run to recompute.');
     // nothing computed yet: no output, the downstream nodes say "press Run"
     if (out.idle && !out.dataset) return { errors, warnings: [...warnings], outs: {}, info };
   }
@@ -1425,7 +1425,7 @@ function evalRough(ctx: Ctx, node: RoughNode): NodeResult {
   if (errors.length) return fail(errors);
   const cellPx = d.cell / d.px;
   if (Math.min(d.cl, ...(sweeps.cl?.values ?? [])) < 2 * cellPx) warnings.push(`The correlation length is below 2 points of the profile (${cellPx.toFixed(2)} nm each): more points or a smaller cell.`);
-  if (Math.max(d.cl, ...(sweeps.cl?.values ?? [])) > d.cell / 10) warnings.push('The correlation length is above a tenth of the cell: few features per cell, the statistics of one seed vary much (a longer cell or several seeds).');
+  if (Math.max(d.cl, ...(sweeps.cl?.values ?? [])) > d.cell / 10) warnings.push('The correlation length is more than a tenth of the cell, so there are few features per cell and the statistics vary a lot from seed to seed. Use a longer cell or several seeds.');
   const name = L0.label || L0.mat.name;
   const params = { kind: d.kind, size: d.size, cl: d.cl, cell: d.cell, px: d.px, seed: d.seed, slices: d.slices, ema: d.ema, tmm: d.tmm ?? ('profile' as const), ...(Number.isFinite(d.corr) ? { corr: d.corr } : {}), ...(d.surf ? { surf: d.surf } : {}) };
   const vary = (sw: SweepValue | undefined, label: string, unit: string): VaryAxis | undefined => sw && { sweep: sw, label: `${label}[${name}]`, unit };
@@ -2658,7 +2658,7 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
   // every candidate)
   const pyNode = [...seen].find((id) => ctx.nodes.get(id)?.type === 'python');
   if (pyNode)
-    return fail([`A Python script (${(ctx.nodes.get(pyNode)?.data as { caption?: string } | undefined)?.caption || pyNode}) feeds the objectives: the Optimization Engine cannot run Python for every candidate. Compute the objective with Custom data or a Custom objective, or run the optimization without the script.`]);
+    return fail([`A Python script (${(ctx.nodes.get(pyNode)?.data as { caption?: string } | undefined)?.caption || pyNode}) feeds the objectives, but the Optimization Engine cannot run Python for every candidate. Compute the objective with Custom data or a Custom objective, or run the optimization without the script.`]);
   const variables = [...seen].flatMap((id) => {
     const n = ctx.nodes.get(id);
     return n?.type === 'variable' ? [{ id, name: n.data.name || id, value: n.data.value, min: n.data.min, max: n.data.max, integer: n.data.integer }] : [];
@@ -2680,7 +2680,7 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   if (!objectives.length && !failed.length) errors.push('Connect one or more Objective / Zones / Formula / Curve match nodes.');
-  if (onlyWaiting) warnings.push(...(waiting as string[]).map((w) => `${w} (to see the start merit; Start works anyway: the optimizer computes it)`));
+  if (onlyWaiting) warnings.push(...(waiting as string[]).map((w) => `${w} (to see the starting merit; Start works anyway, since the optimizer computes it)`));
   else if (failed.length) errors.push(`${failed.length} objective input(s) have errors.`);
   if (!variables.length) errors.push('No Design variable feeds the objectives.');
   if (seen.has(node.id)) return fail(['The optimizer output feeds its own objectives (cycle).'], [], info);
@@ -2702,9 +2702,9 @@ function evalOptimizer(ctx: Ctx, node: OptimizerNode): NodeResult {
   if (tols.length)
     info.robust = `Robust design: every candidate computes the ${tols.join(' + ')} samples of ${tols.length > 1 ? 'the Tolerance nodes' : 'the Tolerance'} (the same errors for every candidate: same seed), so one evaluation costs about ${tols.reduce((a, b) => a + b, 0)} × a single structure.`;
   if (stepYield && (node.data.algorithm === 'adam' || node.data.algorithm === 'lm'))
-    warnings.push('The yield of a Tolerance changes in steps of 1/N samples: a gradient method (Adam, LM) sees no slope. Choose differential evolution, genetic, particle swarm, annealing or Nelder–Mead, or optimize the smooth yield.');
+    warnings.push('The yield of a Tolerance changes in steps of 1/N samples, so a gradient method (Adam, LM) sees no slope. Choose differential evolution, genetic, particle swarm, annealing or Nelder–Mead, or optimize the smooth yield instead.');
   if (tmmUsed && oneProfile.length)
-    warnings.push(`${oneProfile.join(', ')}: Compute TMM sees one random profile (“this profile (seed)”), so the optimum fits that realization; choose “ensemble” in the Roughness node for its statistics (no seed, smooth for the optimizer).`);
+    warnings.push(`${oneProfile.join(', ')}: Compute TMM sees a single random profile (“this profile (seed)”), so the optimum fits that one realization. Choose “ensemble” in the Roughness node to use its statistics instead (no seed, and smooth for the optimizer).`);
 
   // Outputs: the chosen solution (a run's best, or a point of its Pareto front; the live best during a run with
   // preview), re-simulated with the Compute node that feeds the objectives.
@@ -3035,7 +3035,7 @@ function evalMerge(ctx: Ctx, node: MergeNode): NodeResult {
   const errors: string[] = [];
   const info: MergeInfo = { sources: [] };
   const ins = inputs(ctx, node.id, 'in');
-  if (!ins.length) return fail(['Connect data outputs (Extract data, analyses, Compute…): each keeps its own points.'], [], info);
+  if (!ins.length) return fail(['Connect data outputs (Extract data, analyses, Compute and so on). Each keeps its own points.'], [], info);
   let pending = false;
   const sources: { label: string; ds: Dataset }[] = [];
   for (const inp of ins) {
@@ -3115,7 +3115,7 @@ function evalCustom(ctx: Ctx, node: CustomNode): NodeResult {
   if (bad.length) errors.push(`Input names must be letters, digits or _: ${bad.join(', ')}.`);
   if (new Set(names).size < names.length) errors.push('Two inputs have the same name.');
   if (errors.length) return { ...fail(errors, [], info), pending };
-  if (!got.length) return { ...fail(pending ? [] : ['Connect data (several connections allowed): Extract data, analyses, Compute…, or materials with a λ Parameter.'], [], info), pending };
+  if (!got.length) return { ...fail(pending ? [] : ['Connect data, as many as you need: Extract data, analyses, Compute and so on, or materials together with a λ Parameter.'], [], info), pending };
   const r = customData(got, d.rows, node.id, extras);
   info.vars = r.vars;
   if (!r.dataset) return { ...fail(r.errors, [], info), pending };
@@ -3332,7 +3332,7 @@ function evalLayerGa(ctx: Ctx, node: OptimizerNode): NodeResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const info: LayerGaInfo = { library: [], ns: NaN, thetas: [], R0: [], R1: [] };
-  if (inputs(ctx, node.id, 'obj').length) warnings.push('This algorithm has its own objective (S = Δθ/Δn of the dip): the connected objectives are not used.');
+  if (inputs(ctx, node.id, 'obj').length) warnings.push('This algorithm has its own objective (S = Δθ/Δn of the dip), so the connected objectives are not used.');
   if (!(d.lambda > 0)) errors.push('λ must be > 0.');
   if (!(d.dn > 0)) errors.push('Δn must be > 0.');
   if (!(d.thetaMin >= 0 && d.thetaMax < 90 && d.thetaMin < d.thetaMax)) errors.push('Angle range: need 0 ≤ min < max < 90°.');
@@ -3425,7 +3425,7 @@ function evalLayerGa(ctx: Ctx, node: OptimizerNode): NodeResult {
     const m = mats.findIndex((x) => x.cls === L.role && x.id === L.mat);
     return m >= 0 ? [{ m, t: L.t }] : [];
   });
-  if (pi < 0 || genes.length < best.layers.length) warnings.push('The best structure uses a prism or materials that are no longer ticked: they are left out.');
+  if (pi < 0 || genes.length < best.layers.length) warnings.push('The best structure uses a prism or materials that are no longer ticked, so they are left out.');
   const structure: SprStructure = { p: Math.max(0, pi), genes };
   info.structure = structure;
   info.eval = evaluateSensor(problem, structure);
@@ -3549,7 +3549,7 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   }
   const QS: Quantity[] = ['R', 'T', 'A', 'OD'];
   for (const t of terms) if (!QS.includes((t.q || d.targetQ) as Quantity)) errors.push(`${t.label}: the designer handles R, T, A or OD (not ${t.q}).`);
-  if (!errors.length && !terms.some((t) => t.x.length)) errors.push('No target points: add bands inside the wavelength range (or connect a target).');
+  if (!errors.length && !terms.some((t) => t.x.length)) errors.push('There are no target points. Add bands inside the wavelength range, or connect a target.');
   if (!(d.minD >= 0 && d.maxD > d.minD)) errors.push('Thickness limits: need 0 ≤ min < max.');
   if (!(d.lambdaRef > 0)) errors.push('λ ref must be > 0.');
   if (d.thick && !(d.dSub > 0)) errors.push('The substrate thickness must be > 0 mm.');
@@ -3559,7 +3559,7 @@ function evalFilter(ctx: Ctx, node: FilterNode): NodeResult {
   if (lambdas.some((l) => nAt2(incident, l).im > 1e-6)) errors.push(`Incident medium must be transparent (k = 0); ${incident.name} absorbs.`);
   if (errors.length) return fail(errors, warnings, info);
   const sidesWanted: Side[] = !d.thick ? ['front'] : d.sides === 'both' ? ['front', 'back'] : [d.sides];
-  if (!d.thick && d.sides !== 'front') warnings.push('Coating the back side needs a thick substrate: only the front is designed.');
+  if (!d.thick && d.sides !== 'front') warnings.push('Coating the back side needs a thick substrate, so only the front is designed.');
   const li = new Map(lambdas.map((l, i) => [l, i]));
   const pols: PolMode[] = d.pol === 'unpolarized' ? ['avg'] : d.pol === 'both' ? ['s', 'p'] : [d.pol];
   // angles of the terms that set one are added to the node's list
@@ -4042,7 +4042,7 @@ function evalTolerance(ctx: Ctx, node: ToleranceNode): NodeResult {
     const entry: ToleranceCriterionInfo = { source: src.id, name: (src.data as { caption?: string }).caption || kindName, options: [], rows: [] };
     info.criteria.push(entry);
     if (src.type !== 'extremum' && src.type !== 'fwhm' && src.type !== 'sensitivity') {
-      entry.error = 'Only Min / max, FWHM and Sensitivity nodes can be criteria: their metrics are recomputed on every sample.';
+      entry.error = 'Only Min / max, FWHM and Sensitivity nodes can be criteria, because their metrics are recomputed on every sample.';
       continue;
     }
     if (ci.handle !== 'metrics') {
@@ -4373,9 +4373,9 @@ function evalKinetics(ctx: Ctx, node: KineticsNode): NodeResult {
   const hit = memoKey && kineticsMemo.get(memoKey);
   if (hit) return hit;
   const cRef = Math.max(0, ...d.steps.map((s) => s.c));
-  if (sw && d.sweepOf === 'c' && !swelling && !(cRef > 0)) errors.push('A concentration sweep scales the injections: give a step a concentration.');
+  if (sw && d.sweepOf === 'c' && !swelling && !(cRef > 0)) errors.push('A concentration sweep scales the injections, so at least one step needs a concentration.');
   if (sw && d.sweepOf === 'ionic' && sw.values.some((v) => !(v > 0))) errors.push('The ionic strength must be > 0.');
-  if (sw && d.sweepOf === 'rmax' && rsa) errors.push('On a free surface Rmax is the jamming capacity: sweep the ionic strength or ζ instead.');
+  if (sw && d.sweepOf === 'rmax' && rsa) errors.push('On a free surface Rmax is the jamming capacity, so sweep the ionic strength or ζ instead.');
   if (errors.length) return fail(errors, [], info);
 
   // the surface of every series (a swept I or ζ changes the repulsion)
@@ -4510,14 +4510,14 @@ function steadyState(setups: { p: KineticParams; steps: { t: number; c: number }
     const p0 = setups[0].p;
     const model = oneToOne && p0.kd > 0 && !rsa ? ` (the model: KD ${fmt((p0.kd / p0.ka) * 1e9)} nM, Rmax ${fmt(p0.rmax)} RU)` : '';
     rows.push(`steady state (end of each injection, ${cs.length} concentrations): KD ${fmt(best.K)} nM, Rmax ${fmt(best.rm)} RU${model}`);
-    if (best.K > 3 * cs[cs.length - 1]) rows.push('the highest concentration is far below KD: the isotherm does not bend, KD and Rmax are poorly defined (inject higher concentrations)');
+    if (best.K > 3 * cs[cs.length - 1]) rows.push('the highest concentration is far below KD, so the isotherm does not bend and KD and Rmax are poorly defined (inject higher concentrations)');
   }
   if (oneToOne) {
     const reached = cs.map((c) => mean(pts.get(c)!.reached));
     const i = reached.reduce((m, v, k) => (v < reached[m] ? k : m), 0);
     rows.push(
       reached[i] < 0.95
-        ? `${fmt(cs[i])} nM reached only ${fmt(100 * reached[i])} % of its equilibrium: a steady-state KD is biased (longer injections, or fit the kinetics)`
+        ? `${fmt(cs[i])} nM reached only ${fmt(100 * reached[i])} % of its equilibrium, so a steady-state KD is biased (use longer injections, or fit the kinetics)`
         : `every injection reached ≥ ${fmt(100 * reached[i])} % of its equilibrium`,
     );
   }
@@ -4610,7 +4610,7 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   const free = ds.axes.map((a, i) => ({ a, i })).filter(({ a }) => (a.id === 'theta' || a.id === 'lambda') && a.values.length > 2);
   info.axes = free.map(({ a }) => ({ id: a.id, label: a.label }));
   const pick = free.find(({ a }) => a.id === (d.along || 'theta')) ?? free[0];
-  if (!pick) errors.push('The Compute must scan θ or λ (a range of at least 3 points): the signal is read along it.');
+  if (!pick) errors.push('The Compute must scan θ or λ over a range of at least 3 points, since the signal is read along it.');
   if (errors.length || !K || !pick) return fail(errors, warnings, info);
   const along = pick.a;
   info.along = along.id;
@@ -4746,7 +4746,7 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   if (inst && blurs(inst)) warnings.push(...blurWarnings(grid, inst));
   let seeds = seedSw ? seedSw.values : null;
   if (seeds && !(inst && noisy(inst))) {
-    warnings.push('The seed sweep needs detector noise (a seed is one realization of the noise): ignored.');
+    warnings.push('A seed is one realization of the detector noise, so the seed sweep is ignored without noise.');
     seeds = null;
   }
   const one = (sd: number) => {
@@ -4774,7 +4774,7 @@ function evalSensorgram(ctx: Ctx, node: SensorgramNode): NodeResult {
   const off = seeds ? 1 : 0; // the seed axis before those of the grid
   const exact = d.readout === 'dip' && d.track && !(inst && noisy(inst)) && !spec.cone;
   info.exact = exact;
-  if (d.readout === 'dip' && d.track && !exact) warnings.push('The dip is not refined exactly with detector noise (or a cone of light): it is located on the measured curves.');
+  if (d.readout === 'dip' && d.track && !exact) warnings.push('With detector noise (or a cone of light) the dip is not refined exactly; it is located on the measured curves.');
   const aIdx = off + (along.id === 'lambda' ? sK + 2 : sK + 3);
   const xs = along.values;
   const nOut = meas.size / xs.length;
@@ -5560,7 +5560,7 @@ function evalPython(ctx: Ctx, node: PythonNode): NodeResult {
   const code = d.code ?? '';
   const run = d.run ?? 0;
   if (!code.trim()) return { errors: [], warnings: ['Write the code: the inputs are variables here (A, B, …).', ...warnings], outs: {}, info: info({ vars: shown, running: false, stale: false }) };
-  if (!ctx.py) return { errors: [], warnings: ['Python runs in the app only: not in the Optimization Engine’s workers nor in the scripts.', ...warnings], outs: {}, info: info({ vars: shown, running: false, stale: false, headless: true }) };
+  if (!ctx.py) return { errors: [], warnings: ['Python runs only in the app itself, not in the Optimization Engine’s workers or in the scripts.', ...warnings], outs: {}, info: info({ vars: shown, running: false, stale: false, headless: true }) };
   const key = digest(code, vars, run);
   const last = ctx.py.get(node.id);
   // a new run only when Run was pressed (a project opened again: its last run done once more, for its outputs); by itself

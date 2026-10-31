@@ -281,7 +281,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
         <NumInput className="short" value={data.specTol} step={0.01} onChange={(specTol) => set({ specTol })} />
       </div>
       {data.spec && (info?.axes.length ?? 0) > 1 && (
-        <label className="radio" title="The axis the limits (or the target curve) and the chart follow; the other axes give more curves, and a sample passes only when all of its curves do. Automatic: the target curve's axis, else λ, else θ.">
+        <label className="radio" title="The axis that the limits (or the target curve) and the chart follow. The other axes give more curves, and a sample passes only when all its curves do. On automatic it is the axis of the target curve, else λ, else θ.">
           limits along
           <select className="nodrag" value={data.along ?? ''} onChange={(e) => set({ along: e.target.value })}>
             <option value="">auto ({info!.axes.find((a) => a.id === info!.along)?.label ?? '–'})</option>
@@ -412,7 +412,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
           )}
           {Number.isFinite(info.yieldPct) && (
             <div className="hint">
-              Yield counts the samples that pass: it moves in steps of 1/{info.samples}, so an optimizer needs a method without gradients (differential evolution, genetic, particle swarm, annealing, Nelder–Mead). The smooth yield counts every sample by how far inside its limits it is (on a limit ½, a quarter of the spread inside 0.84, half of it 0.98): it changes continuously, works with every method (also Adam, LM), and equals the yield when the samples are far from the limits.
+              Yield counts the samples that pass: it moves in steps of 1/{info.samples}, so an optimizer needs a method without gradients (differential evolution, genetic, particle swarm, annealing, Nelder–Mead). The smooth yield counts every sample by how far inside its limits it lies (½ on a limit, 0.84 a quarter of the spread inside, 0.98 half of it inside). It changes continuously, works with every method (Adam and LM included), and equals the yield when the samples are far from the limits.
             </div>
           )}
           {info.specWhere && <div className="hint">{info.specWhere}</div>}
@@ -474,7 +474,7 @@ export function ToleranceNodeView({ id, data }: NodeProps<ToleranceNode>) {
         errors per sample (+ deviation, pass)
         <Port kind="source" id="errors" port="data" />
       </div>
-      <div className="port-row out" title="One value each: yield, smooth yield, the RMS deviation (mean, median, upper percentile), and for every criterion its mean, σ, percentiles and pass rate over the samples. Into an Objective (e.g. yield → maximize): the optimizer then computes every sample of this Tolerance for every candidate design, with the same errors (same seed)">
+      <div className="port-row out" title="One value each: the yield, the smooth yield, the RMS deviation (mean, median, upper percentile), and for every criterion its mean, σ, percentiles and pass rate over the samples. Connected to an Objective (yield → maximize, say), it makes the optimizer compute every sample of this Tolerance for every candidate design, with the same errors (same seed)">
         robust (yield, statistics) → Objective
         <Port kind="source" id="robust" port="data" />
       </div>

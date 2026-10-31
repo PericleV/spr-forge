@@ -24,7 +24,7 @@ const ALGORITHMS: [OptimizerAlgorithm, string, string][] = [
   ['lm', 'Levenberg-Marquardt (least squares)', 'Local, very fast for fitting a curve to a measurement (Curve match with RMS metric).'],
   ['nsga2', 'NSGA-II (multi-objective)', 'Pareto front of the objectives (each input is one objective); pick a trade-off on the chart.'],
   ['sa', 'Simulated annealing', 'Global search: random moves, worse ones accepted with probability exp(−Δ/T) while the temperature decreases (Kirkpatrick 1983; Pan et al. 2024).'],
-  ['layerga', 'Genetic: layer sequences (Sebek et al. 2023)', 'SPR sensors built layer by layer from the materials ticked for each role: mutations (thickness, material, swap, add, delete) and crossovers of whole structures, a wheel weighted by the sensitivity S = Δθ/Δn, 10 % elites (M. Sebek et al., ACS Omega 8, 20792 (2023)). Its own objective: no Design variables or objectives needed.'],
+  ['layerga', 'Genetic: layer sequences (Sebek et al. 2023)', 'Builds SPR sensors layer by layer from the materials ticked for each role, using mutations (thickness, material, swap, add, delete), crossovers of whole structures, a wheel weighted by the sensitivity S = Δθ/Δn and 10 % elites (M. Sebek et al., ACS Omega 8, 20792 (2023)). It has its own objective, so no Design variables or objectives are needed.'],
 ];
 const POPULATION = new Set<OptimizerAlgorithm>(['de', 'ga', 'pso', 'nsga2']);
 const GENERATIONS = new Set<OptimizerAlgorithm>(['de', 'ga', 'nsga2']);
@@ -410,7 +410,7 @@ export function OptimizerNodeView({ id, data }: NodeProps<OptimizerNode>) {
       <div className="hint">{ALGORITHMS.find(([a]) => a === data.algorithm)?.[2]}</div>
       <AlgorithmSettings data={data} set={set} objectives={info?.objectives ?? []} />
       {data.algorithm === 'nsga2' && (info?.objectives.length ?? 0) < 2 && <div className="msg warn">NSGA-II needs two or more objectives connected.</div>}
-      {noResiduals && <div className="msg warn">Levenberg-Marquardt needs least-squares objectives (Curve match, RMS); an objective here has a negative cost.</div>}
+      {noResiduals && <div className="msg warn">Levenberg-Marquardt needs least-squares objectives (Curve match, RMS), but one of the objectives here has a negative cost.</div>}
       <div className="row wrap">
         {!['nm', 'lm', 'nsga2'].includes(data.algorithm) && (
           <label className="radio">

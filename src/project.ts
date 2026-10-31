@@ -172,7 +172,7 @@ export function saveToBrowser(p: Project, name: string): SavedEntry | string {
     localStorage.setItem(INDEX_KEY, JSON.stringify([entry, ...list.filter((e) => e.id !== entry.id)]));
     return entry;
   } catch {
-    return 'The browser storage is full: delete some saved projects, or use Save (a file).';
+    return 'The browser storage is full. Delete some saved projects, or use Save to keep this one in a file.';
   }
 }
 

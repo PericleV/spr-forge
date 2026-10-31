@@ -99,7 +99,7 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
       </div>
       {!status.allowed && (
         <div className="msg warn">
-          This project came from a file, a link or another session: its Python code has not run. Run it only if you trust where it came from (Python in this page can read the projects kept in this browser).{' '}
+          This project came from a file, a link or another session, so its Python code has not run yet. Run it only if you trust where it came from, because Python in this page can read the projects kept in this browser.{' '}
           <button className="nodrag" onClick={allowProject}>
             Allow and run
           </button>
@@ -121,7 +121,7 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
       )}
       <details className="py-options">
         <summary>Options and examples</summary>
-        <label className="check" title="Off (the default): the code runs only when you press Run (Ctrl+Enter). On: again at every change of the code or the data">
+        <label className="check" title="Off (the default): the code runs only when you press Run (Ctrl+Enter). On: it also runs again whenever the code or the data change">
           <input className="nodrag" type="checkbox" checked={data.auto === true} onChange={(e) => set({ auto: e.target.checked || undefined })} />
           Auto run
         </label>

@@ -51,14 +51,14 @@ export function penetrationDepth(absE: (zs: number[]) => Float64Array, lo: numbe
     if (!r) return out(NaN, false, '|E| does not fall to 1/e inside the region (it propagates, or the region is thinner than the depth)');
     // refine around the crossing
     const f = scan(Math.min(len, r.at * 1.02 + len / 1000), 1200) ?? r;
-    return out(f.at, r.monotonic, r.monotonic ? undefined : '|E| is not a monotonic decay here: the value is where it first falls to 1/e');
+    return out(f.at, r.monotonic, r.monotonic ? undefined : '|E| does not decay monotonically here; the value given is where it first falls to 1/e');
   }
   // semi-infinite: lengthen the window until the fall is inside it
   for (let L = 50; L <= 2e5; L *= 4) {
     const r = scan(L, 400);
     if (!r) continue;
     const f = scan(r.at * 1.05, 1500) ?? r;
-    return out(f.at, r.monotonic, r.monotonic ? undefined : '|E| is not a monotonic decay here: the value is where it first falls to 1/e');
+    return out(f.at, r.monotonic, r.monotonic ? undefined : '|E| does not decay monotonically here; the value given is where it first falls to 1/e');
   }
   return out(NaN, false, 'the wave propagates in this medium (no decay)');
 }

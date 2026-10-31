@@ -5449,7 +5449,7 @@ if (full('FFF: Popov aluminium sinus, gold trapezoid and blazed (80 s)')) {
   const py = [...p.nodes, { id: 'py', type: 'python', position: { x: 0, y: 0 }, data: { code: 'x = 1.0', run: 1, outs: [{ name: 'x', kind: 'data' }] } }] as AppNode[];
   const pyEdges = [...p.edges.filter((e) => !(e.target === 'obj')), { id: 'p-a', source: 'tmm', sourceHandle: 'out', target: 'py', targetHandle: 'in-0' }, { id: 'p-b', source: 'py', sourceHandle: 'py-x', target: 'obj', targetHandle: 'in' }];
   const pr = evaluateHeadless(py, pyEdges, lib3).results;
-  const note = pr.get('py')!.warnings.some((w) => w.includes('app only'));
+  const note = pr.get('py')!.warnings.some((w) => w.includes('only in the app'));
   const refused = pr.get('opt')!.errors.some((e) => e.includes('Python script'));
   if (!(same && note && refused)) throw new Error(`reroute / python: same ${same}, note ${note}, refused ${refused} (${pr.get('opt')!.errors})`);
   console.log('reroute and python: two Reroutes leave FWHM and the yield as they were; a Python script gives nothing in the scripts, the Optimization Engine refuses an objective fed by one');

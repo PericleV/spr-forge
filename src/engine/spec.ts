@@ -122,7 +122,7 @@ export function sliceCurves(ds: Dataset, q: string, along: number, sl: Slice): {
     } else if (pa < 0) {
       const thetas = ta >= 0 ? ds.axes[ta].values : [0];
       const normal = thetas.every((t) => t === 0) && !ds.spec.thetaOffset;
-      if (sl.pol === 'avg' && !normal) return 'The mean of s and p needs both: connect a polarization sweep to the Compute node.';
+      if (sl.pol === 'avg' && !normal) return 'The mean of s and p needs both polarizations, so connect a polarization sweep to the Compute node.';
       if ((sl.pol === 's' || sl.pol === 'p') && ds.spec.pol !== sl.pol && !normal)
         return `The data is ${ds.spec.pol}-polarized: connect a polarization sweep to the Compute node to use ${sl.pol}.`;
     }

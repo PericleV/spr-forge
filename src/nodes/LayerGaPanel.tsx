@@ -135,7 +135,7 @@ export function LayerGaPanel({ id, data, info, canStart }: { id: string; data: O
         );
       })}
       <div className="row wrap">
-        <label className="radio" title="The maximum numbers of layers of the roles hold in every generation (the article: only in the first population)">
+        <label className="radio" title="Keep the maximum number of layers of each role in every generation (the article applies it only to the first population)">
           <input className="nodrag" type="checkbox" checked={g.holdCounts} disabled={running} onChange={(e) => setG({ holdCounts: e.target.checked })} /> keep the limits in every generation
         </label>
         <label className="radio" title="At most this many layers in a structure">
@@ -172,14 +172,14 @@ export function LayerGaPanel({ id, data, info, canStart }: { id: string; data: O
             <option value="FOM">FOM = S / FWHM</option>
           </select>
         </label>
-        <label className="radio" title="Dips beyond this angle do not count: near-grazing resonances are hard to use (the article notes it)">
+        <label className="radio" title="Dips beyond this angle do not count, since near-grazing resonances are hard to use in practice (as the article notes)">
           <input className="nodrag" type="checkbox" checked={g.maxTheta < 90} disabled={running} onChange={(e) => setG({ maxTheta: e.target.checked ? 85 : 90 })} /> dip at most
           {g.maxTheta < 90 && <NumInput className="tiny" value={g.maxTheta} step={1} onChange={(maxTheta) => setG({ maxTheta })} />}
           {g.maxTheta < 90 && '°'}
         </label>
       </div>
       <div className="row wrap">
-        <label className="radio" title="The conditions of the article's single-mode sensors: a deep dip, not wider on the low-angle side, smooth">
+        <label className="radio" title="The conditions the article sets for single-mode sensors: a deep, smooth dip that is not wider on the low-angle side">
           <input className="nodrag" type="checkbox" checked={g.single} disabled={running} onChange={(e) => setG({ single: e.target.checked })} /> single-mode dip
         </label>
         {g.single && (
@@ -191,7 +191,7 @@ export function LayerGaPanel({ id, data, info, canStart }: { id: string; data: O
             </label>
           </>
         )}
-        <label className="radio" title="With several dips: the dip of n_s + Δn with the same shape (ratio of the steepest slopes), not simply the deepest">
+        <label className="radio" title="When there are several dips, use the dip of n_s + Δn that has the same shape (by the ratio of the steepest slopes), not just the deepest one">
           <input className="nodrag" type="checkbox" checked={g.trace} disabled={running} onChange={(e) => setG({ trace: e.target.checked })} /> follow the dip
         </label>
       </div>
@@ -201,7 +201,7 @@ export function LayerGaPanel({ id, data, info, canStart }: { id: string; data: O
         <label className="radio">population <NumInput className="tiny" value={g.population} step={10} onChange={(population) => setG({ population })} /></label>
         <label className="radio">generations <NumInput className="tiny" value={g.generations} step={10} onChange={(generations) => setG({ generations })} /></label>
         <label className="radio" title="The best structures kept unchanged in the next generation">elites <NumInput className="tiny" value={Math.round(g.elite * 100)} step={5} onChange={(v) => setG({ elite: v / 100 })} /> %</label>
-        <label className="radio" title="Children made by one mutation (the rest by one crossover); the article: 33 %">mutations <NumInput className="tiny" value={Math.round(g.mutation * 100)} step={5} onChange={(v) => setG({ mutation: v / 100 })} /> %</label>
+        <label className="radio" title="The share of children made by one mutation; the rest come from one crossover (33 % in the article)">mutations <NumInput className="tiny" value={Math.round(g.mutation * 100)} step={5} onChange={(v) => setG({ mutation: v / 100 })} /> %</label>
         <label className="radio" title="Random seed (same seed = same run)">seed <NumInput className="tiny" value={g.seed} step={1} onChange={(seed) => setG({ seed })} /></label>
       </div>
 

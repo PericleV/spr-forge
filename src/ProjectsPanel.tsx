@@ -22,7 +22,7 @@ export function ProjectsPanel(props: { onClose: () => void; current: () => Proje
         <button onClick={props.onClose}>✕</button>
       </header>
       <div className="row wrap">
-        <button className="btn-run" onClick={save} title="Keep the current project in this browser, under its name (a project of the same name is replaced)">
+        <button className="btn-run" onClick={save} title="Keep the current project in this browser under its name (a project with the same name is replaced)">
           Save “{props.name.trim() || 'untitled'}” here
         </button>
       </div>

@@ -22,7 +22,7 @@ export function LayerListView({ stack, name, names }: { stack: StackValue; name:
         Layer list ({list.count} layer{list.count === 1 ? '' : 's'} · {fmt(list.total)} nm)
       </summary>
       <div className="row">
-        <button className="nodrag" title="Copy the table (tab-separated: pasted into a spreadsheet it fills the columns)" onClick={copy}>
+        <button className="nodrag" title="Copy the table as tab-separated text, which fills the columns when pasted into a spreadsheet" onClick={copy}>
           Copy
         </button>
         <button className="nodrag" title="Export the table as a CSV file" onClick={() => download(layerListCsv(list), file, 'text/csv')}>

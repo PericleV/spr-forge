@@ -96,7 +96,7 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
         ))}
       </dl>
       <div className="hint">
-        All the checks run with every change of the code (npm run check:tmm). Every check, its reference and the values compared:{' '}
+        All the checks run after every change to the code (npm run check:tmm). The full list, with each reference and the values compared, is in{' '}
         <a href="https://github.com/PericleV/spr-forge/blob/main/VALIDATION.md" target="_blank" rel="noreferrer">
           VALIDATION.md
         </a>

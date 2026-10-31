@@ -189,10 +189,10 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
         </label>
       </div>
       <div className="row wrap">
-        <label className="radio" title="Orders N of the map: a field map needs more orders than a spectrum (its ripples have the width Λ / (2N + 1)); empty = the Compute RCWA's N. Only this point is recomputed, so a larger N is affordable here.">
+        <label className="radio" title="Orders N of the map. A field map needs more orders than a spectrum, since its ripples are Λ / (2N + 1) wide; empty means the N of Compute RCWA. Only this point is recomputed, so a larger N is affordable here.">
           map orders N <NumInput className="tiny" value={data.orders ?? NaN} min={0} step={5} placeholder={info?.job ? `${info.job.spec.rcwa?.orders ?? ''}` : ''} onChange={(orders) => set({ orders })} />
         </label>
-        <label className="radio" title="Gibbs ringing of the Fourier sums in x: Lanczos σ (or Fejér) weights the harmonic of order p by sinc(πp/(N+1)) (1 − |p|/(N+1)): the map becomes the field averaged in x over about Λ/(N+1); the ripples go, sharp features blur over that length. None = the exact truncated sums (as RETICOLO).">
+        <label className="radio" title="Gibbs ringing of the Fourier sums in x. Lanczos σ (or Fejér) weights the harmonic of order p by sinc(πp/(N+1)) (or 1 − |p|/(N+1)), so the map shows the field averaged in x over about Λ/(N+1): the ripples go, and sharp features blur over that length. None keeps the exact truncated sums, as RETICOLO does.">
           Gibbs
           <select className="nodrag" value={data.sigma ?? 'none'} onChange={(e) => set({ sigma: e.target.value as NonNullable<typeof data.sigma> })}>
             <option value="none">none (exact sums)</option>
@@ -206,7 +206,7 @@ export function RcwaFieldNodeView({ id, data }: NodeProps<RcwaFieldNode>) {
         <label className="radio">show <NumInput className="tiny" value={data.zIn} min={0} step={50} disabled={winZ} onChange={(zIn) => set({ zIn })} /> nm above</label>
         <label className="radio"><NumInput className="tiny" value={data.zOut} min={0} step={50} disabled={winZ} onChange={(zOut) => set({ zOut })} /> nm below</label>
       </div>
-      <div className="section" title="Compute the map only in a part of the structure: all Nx × Nz points go into it (finer detail at the same cost). Empty = the whole map.">
+      <div className="section" title="Compute the map in only part of the structure, with all Nx × Nz points inside it for finer detail at the same cost. Empty means the whole map.">
         Window
       </div>
       <div className="row wrap">
