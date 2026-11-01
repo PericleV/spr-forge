@@ -435,7 +435,7 @@ function materialInput(ctx: Ctx, id: string, handle: string, what: string, error
     }
     return sel;
   }
-  errors.push(`${what}: the connected material has errors.`);
+  errors.push(missingInput(ctx, inp.source) ?? `${what}: the connected material has errors.`);
   return undefined;
 }
 
@@ -585,7 +585,7 @@ function stackInput(ctx: Ctx, id: string, handle: string, what: string, errors: 
   return undefined;
 }
 
-const WAITING = ['The optimizer has no result yet', 'The RCWA field map has no', 'Compute RCWA has no result yet'];
+const WAITING = ['The optimizer has no result yet', 'The RCWA field map has no', 'Compute RCWA has no result yet', 'The Python script has no result yet'];
 const isWaiting = (m: string) => WAITING.some((w) => m.startsWith(w));
 
 // Why an input has no value, when it is not an error of the source (an optimizer before its first run, a Compute RCWA
@@ -597,6 +597,8 @@ function missingInput(ctx: Ctx, source: string): string | undefined {
   if (n?.type === 'optimizer' && !n.data.runs.length) return 'The optimizer has no result yet: press Start in the Optimization Engine.';
   if (n?.type === 'rcwafield') return 'The RCWA field map has no (up-to-date) result: press Run in it.';
   if (n?.type === 'rcwa' && (r?.info as ComputeInfo | undefined)?.job?.state === 'idle') return 'Compute RCWA has no result yet: press Run in it.';
+  // (running, held until its code is allowed, or waiting for Run: no outputs yet, and no error of its own)
+  if (n?.type === 'python' && !r?.errors.length && !Object.keys(r?.outs ?? {}).length) return 'The Python script has no result yet: its outputs come once it has run.';
   return r?.warnings.find(isWaiting);
 }
 
@@ -939,7 +941,7 @@ function evalCompute(ctx: Ctx, node: ComputeNode | RcwaNode, method: 'tmm' | 'rc
   const stackIn = input(ctx, node.id, 'stack');
   let stack: StackValue | undefined;
   if (!stackIn.connected) errors.push('Connect a stack.');
-  else if (stackIn.value?.type !== 'stack') errors.push('The stack has errors.');
+  else if (stackIn.value?.type !== 'stack') errors.push(missingInput(ctx, stackIn.source) ?? 'The stack has errors.');
   else {
     stack = stackIn.value.stack;
     info.stackRows = describeStack(stack).rows;
@@ -3097,7 +3099,12 @@ function evalCustom(ctx: Ctx, node: CustomNode): NodeResult {
       info.inputs.push({ key: keys[i], alias: names[i], name: `λ ${rangeText(v.values, ' nm')}` });
       return;
     }
-    if (v?.type !== 'data') return void errors.push(`Input ${names[i]} (${inp.source}) has errors.`);
+    if (v?.type !== 'data') {
+      // a source only waiting for a Run / Start upstream (Compute RCWA, the optimizer): said once, a warning in the end
+      const why = missingInput(ctx, inp.source) ?? `Input ${names[i]} (${inp.source}) has errors.`;
+      if (!errors.includes(why)) errors.push(why);
+      return;
+    }
     pending ||= v.pending;
     info.inputs.push({ key: keys[i], alias: names[i], name: v.name });
     if (v.dataset) got.push([names[i], v.dataset]);
@@ -3109,7 +3116,8 @@ function evalCustom(ctx: Ctx, node: CustomNode): NodeResult {
     if (lam.values.length === 1) lamFallback = lam.values[0];
     else if (got.length && !got[0][1].axes.some((a) => a.id === 'lambda')) errors.push('With data, the λ Parameter must be a single value (the wavelength of data without a λ axis).');
   }
-  if (mats.length && !got.length && !pending && !lam) errors.push('A material needs wavelengths: connect data with a λ axis (a computation) or a λ Parameter.');
+  const waiting = errors.length > 0 && errors.every(isWaiting);
+  if (mats.length && !got.length && !pending && !lam && !waiting) errors.push('A material needs wavelengths: connect data with a λ axis (a computation) or a λ Parameter.');
   const extras: CustomExtra[] = mats.map((m) => ({ alias: m.alias, make: (base) => materialVars(ctx, m.sel, base, lamFallback) }));
   const bad = names.filter((n) => !/^[A-Za-z_]\w*$/.test(n));
   if (bad.length) errors.push(`Input names must be letters, digits or _: ${bad.join(', ')}.`);

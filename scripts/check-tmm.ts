@@ -4970,6 +4970,35 @@ if (full('Hu 2011 grating SPR (9 s)')) {
   if (bad.length || !matOk) throw new Error(`project insert: ${bad.slice(0, 6).join('; ')}${matOk ? '' : '; materials'}`);
   console.log(`project insert: ${names.length} examples put into themselves — new ids, connections and references followed, words of the data kept, the same numbers in ${compared} nodes; a material under a taken id renamed ${id2} (${uses(id2, r.nodes)} Material nodes follow), the same ones not added`);
 }
+// The examples as they open in the app (Compute RCWA waiting for Run, Python scripts not run yet): no node shows an error.
+// A node fed by one that only waits (Custom data after an RCWA analysis, a Layer after a Python material) says so as a
+// warning; the slow part opens every example.
+{
+  const { EXAMPLES } = await import('../src/examples.ts');
+  const asInApp = (names?: string[]) => {
+    const red: string[] = [];
+    const warned: string[] = [];
+    for (const ex of EXAMPLES.filter((e) => !names || names.some((nm) => e.name.startsWith(nm)))) {
+      const p = ex.make();
+      const ev = evaluateHeadless(p.nodes, p.edges, makeLibrary(p.materials), { cache: new Map(), lastDone: new Map(), failed: new Map(), armed: new Map(), py: new Map() });
+      for (const [id, r] of ev.results) {
+        red.push(...r.errors.map((e) => `${ex.name.slice(0, 40)} ${id}: ${e}`));
+        if (r.warnings.some((w) => /has no result yet/.test(w))) warned.push(id);
+      }
+    }
+    return { red, warned };
+  };
+  const some = asInApp(['Grating SPR sensor with the −1st order', 'RCWA convergence', 'Python scripts']);
+  const waitsOk = ['sens', 'cu', 'film', 'stack', 'tmm'].every((id) => some.warned.includes(id));
+  if (some.red.length || !waitsOk) throw new Error(`waiting inputs: ${some.red.slice(0, 4).join('; ')}${waitsOk ? '' : `; warned ${some.warned}`}`);
+  let all = '';
+  if (full('every example as opened in the app (25 s)')) {
+    const r = asInApp();
+    if (r.red.length) throw new Error(`examples as opened in the app: ${r.red.slice(0, 6).join('; ')}`);
+    all = `; all ${EXAMPLES.length} examples open without an error`;
+  }
+  console.log(`waiting inputs: Custom data after an RCWA analysis and a Layer, a stack and Compute TMM after a Python material wait with a warning instead of an error before Run${all}`);
+}
 if (full('published project files with RCWA / Berreman (2 min)')) {
   const failed: string[] = [];
   for (const f of PUBLISHED_HEAVY) {
