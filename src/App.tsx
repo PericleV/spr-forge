@@ -363,11 +363,18 @@ function Flow() {
     setProjectName(name ?? p.name ?? '');
     engine.control.reset();
     history.reset();
-    setNodes(p.nodes);
-    setEdges(p.edges);
     setUserMaterials(p.materials.filter((m) => !BUILTINS.some((b) => b.id === m.id)));
-    if (p.nodes.length) setFitPending(true);
-    else setViewport({ x: 0, y: 0, zoom: 1 });
+    // An empty graph first: React Flow takes the new nodes one render after the app, so the old nodes are drawn once more
+    // with the results of the graph just evaluated; node ids repeat across projects (an 'obj' that was a Custom objective
+    // and is now an Objective), and an old view must not meet a result of the new project.
+    setNodes([]);
+    setEdges([]);
+    setTimeout(() => {
+      setNodes(p.nodes);
+      setEdges(p.edges);
+      if (p.nodes.length) setFitPending(true);
+      else setViewport({ x: 0, y: 0, zoom: 1 });
+    }, 0);
   };
 
   // The page and the app container never stay scrolled (the toolbar must stay in view): a scroll that the browser makes
