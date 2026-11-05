@@ -102,6 +102,16 @@ export function HelpPanel({ onClose, onWelcome, examples }: { onClose: () => voi
         </a>
         .
       </div>
+      <h4>Licences</h4>
+      <div className="hint">
+        SPR Forge is free software under the MIT licence. It is built with open-source packages (React, React Flow, Mantine,
+        CodeMirror, Lucide, d3 and others) whose licences are listed in{' '}
+        <a href="./third-party-licenses.txt" target="_blank" rel="noreferrer">
+          third-party-licenses.txt
+        </a>
+        . The built-in optical constants come from the refractiveindex.info database (CC0) and the original papers it cites;
+        the OIC 2025 examples use the data files of the article (CC BY 4.0).
+      </div>
     </aside>
   );
 }

@@ -1,6 +1,6 @@
 # Validation
 
-SPR Forge, 2026-10-25: **every check of `npm run check:tmm` passes** (the full run: 13 min on a laptop).
+SPR Forge, 2026-11-05: **every check of `npm run check:tmm` passes** (the full run: 13 min on a laptop).
 
 Every computation is checked by [`scripts/check-tmm.ts`](scripts/check-tmm.ts). Each block computes something, compares
 it and stops the run with an error when a value leaves its tolerance; the numbers below are the ones that run printed.
@@ -90,6 +90,9 @@ library (refractiveindex.info, cited in each material), which a paper may not ha
 - Fits of synthetic spectra recover their parameters: Lorentz, Gauss, Fano (q 1.5001 for 1.5), coupled oscillators, the
   polariton dispersion (x₁ 649.990, Ω 24.998 for 650, 25), in angle (to 10⁻¹⁴).
 - Dip of a noisy Lorentzian (σ 0.002): position spread 7.8·10⁻³ (parabola), 4.7·10⁻⁴ (polynomial), 5.4·10⁻⁴ (centroid).
+- Dip on a fine grid far from 0 (λ ≈ 1650 nm in steps of 1 to 0.1 pm): R_min and centre of a Lorentzian within 2.6·10⁻¹⁸,
+  a parabola between samples within 1.3·10⁻¹⁸, FWHM 0.014 nm within 2.6·10⁻⁵ nm. The parabola is fitted about its middle
+  sample; written in x itself, its coefficients cancelled on such a grid.
 - Instrument: a Gaussian blur of σ 0.5 on x² adds 0.2498 (σ² = 0.25); detector noise 0.00200 (0.002), 4 scans 0.00100
   (0.001), shot noise √(R/N).
 - Penetration depth, Extract / Merge / Custom data, formulas (complex, trigonometric identities to 3.6·10⁻¹⁵), materials
@@ -169,6 +172,11 @@ library (refractiveindex.info, cited in each material), which a paper may not ha
 - Share links round-trip exactly; NaN / Infinity survive a save.
 - Compute RCWA starts only after Run, Stop cancels it, changed inputs keep the previous result.
 - Formatted notes: the markup, the 42 example notes unchanged, the exports.
+- A project file dropped on a canvas that has nodes: 7 examples put into themselves get new ids everywhere, their
+  references follow (curves, formula terms, criteria, the optimizer's runs, the Sweep axes) and the copy gives the same
+  numbers in all 145 nodes; a material under a taken id with another definition is renamed and its nodes follow.
+- The 42 examples as they open in the app (Compute RCWA before Run, Python scripts not run yet) show no error: a node
+  fed by a source that only waits says so as a warning.
 - Reroute points leave every result as it was; a Python script gives nothing outside the app, and the Optimization Engine
   refuses an objective that depends on one.
 - The material library: 99 built-in materials, those of the examples as in their articles; anisotropic pairs within

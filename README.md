@@ -100,14 +100,32 @@ npx tsc -b && npx oxlint
 Everything runs in your browser. There is no server, no account and no tracking, and your projects stay in your files and
 in the browser's storage.
 
+## Data
+
+- **Optical constants**: the built-in materials come from the
+  [refractiveindex.info database](https://github.com/polyanskiy/refractiveindex.info-database) (CC0 1.0), by
+  M. N. Polyanskiy, Sci. Data 11, 94 (2024). Each material names its source dataset and the original paper (Materials
+  panel); please cite those papers when you use the data.
+- **OIC 2025 examples**: the target of Problem A and the committee's example designs of Problems A and B are the data
+  files of J. D. T. Kruschwitz, M. Trubetskov and J. Keck, Appl. Opt. 65, A12 (2026), published on figshare under CC BY
+  4.0 ([Data File 1](https://doi.org/10.6084/m9.figshare.29664845),
+  [Data File 2](https://doi.org/10.6084/m9.figshare.29664914),
+  [Data File 3](https://doi.org/10.6084/m9.figshare.29664917)); they are used unchanged, converted to the app's format.
+- **Materials of the examples** (Drude and Lorentz parameters, constant indices) are taken from the papers each example
+  reproduces, cited in the material and in the example's note.
+
 ## License
 
 [MIT](LICENSE).
 
 ## Third-party software
 
-Bundled with the app: React and React Flow (`@xyflow/react`), Mantine (`@mantine/core`, `@mantine/hooks`), CodeMirror 6
-(`@codemirror/*`, `@lezer/highlight`), all MIT; Lucide icons (`lucide-react`), ISC.
+The app's JavaScript files contain code of open-source packages: React and React Flow (`@xyflow/react`, with parts of d3),
+Mantine (`@mantine/core`, `@mantine/hooks`), CodeMirror 6 (`@codemirror/*`, `@lezer/*`) and Lucide icons
+(`lucide-react`), among others, under the MIT, ISC, BSD-3-Clause and 0BSD licences. Every build writes the full list,
+with each package's version and licence text, to
+[`third-party-licenses.txt`](https://periclev.github.io/spr-forge/third-party-licenses.txt) next to the page (also linked
+from Help).
 
 Loaded only when a Python script runs: Pyodide (MPL-2.0) with CPython (PSF License), downloaded by the browser from the
 jsDelivr CDN (`cdn.jsdelivr.net/pyodide/`) the first time and kept in its cache, and the packages the code imports:
